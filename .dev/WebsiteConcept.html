@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TokenScavenger | The Intelligent Free LLM Router</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <style>
+      :root {
+        /* Organic Fox Palette */
+        --color-fox-orange: #d35400;
+        --color-fox-white: #f5f5f5;
+        /* Tech Accents */
+        --color-cyan: #00f5ff;
+        --color-emerald: #00ff9f;
+        /* Backgrounds */
+        --color-navy: #0a1428;
+        --color-deep-blue: #020617;
+      }
+
+      body {
+        background-color: var(--color-deep-blue);
+        color: var(--color-fox-white);
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        overflow-x: hidden;
+      }
+
+      .gradient-text-fox {
+        background: linear-gradient(90deg, #ff7e2e, var(--color-fox-orange));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .btn-primary {
+        background: var(--color-fox-orange);
+        color: white;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(211, 84, 0, 0.2);
+      }
+
+      .btn-primary:hover {
+        background: #e67e22;
+        box-shadow: 0 4px 20px rgba(211, 84, 0, 0.4);
+        transform: translateY(-1px);
+      }
+
+      .glass-card {
+        background: rgba(10, 20, 40, 0.6);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .hero-mesh {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-image: radial-gradient(
+          circle at 50% 20%,
+          rgba(211, 84, 0, 0.1) 0%,
+          transparent 50%
+        );
+        z-index: -1;
+      }
+
+      .token-float {
+        animation: float 6s ease-in-out infinite;
+      }
+
+      @keyframes float {
+        0%,
+        100% {
+          transform: translateY(0px) rotate(0deg);
+        }
+        50% {
+          transform: translateY(-20px) rotate(5deg);
+        }
+      }
+
+      .provider-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 1rem;
+      }
+    </style>
+  </head>
+  <body class="antialiased">
+    <!-- Navigation -->
+    <nav class="fixed top-0 w-full z-50 glass-card border-b border-white/5">
+      <div
+        class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between"
+      >
+        <div class="flex items-center gap-3">
+          <!-- SVG Logo with updated organic colors -->
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 100 100"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M50 15L85 45L70 85L50 70L30 85L15 45L50 15Z"
+              fill="#D35400"
+            />
+            <path d="M50 15L30 45L50 70L70 45L50 15Z" fill="#E67E22" />
+            <circle cx="50" cy="45" r="8" fill="#00FF9F" class="token-float">
+              <animate
+                attributeName="opacity"
+                values="0.5;1;0.5"
+                dur="3s"
+                repeatCount="indefinite"
+              />
+            </circle>
+          </svg>
+          <span class="text-xl font-bold tracking-tight text-white"
+            >Token<span class="text-[#D35400]">Scavenger</span></span
+          >
+        </div>
+        <div
+          class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400"
+        >
+          <a href="#features" class="hover:text-white transition-colors"
+            >Features</a
+          >
+          <a href="#providers" class="hover:text-white transition-colors"
+            >Providers</a
+          >
+          <a href="#docs" class="hover:text-white transition-colors">Docs</a>
+          <a
+            href="https://github.com"
+            class="text-white bg-white/10 px-4 py-2 rounded-full hover:bg-white/20 transition-all border border-white/10"
+          >
+            <i class="fab fa-github mr-2"></i>GitHub
+          </a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Hero Section (Restored Copy) -->
+    <section class="relative pt-32 pb-20 px-6 overflow-hidden">
+      <div class="hero-mesh"></div>
+      <div class="max-w-7xl mx-auto text-center relative z-10">
+        <div
+          class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#D35400]/10 border border-[#D35400]/20 text-[#D35400] text-xs font-bold mb-6 tracking-widest uppercase"
+        >
+          <span class="relative flex h-2 w-2">
+            <span
+              class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D35400] opacity-75"
+            ></span>
+            <span
+              class="relative inline-flex rounded-full h-2 w-2 bg-[#D35400]"
+            ></span>
+          </span>
+          Now Supporting 12+ Providers
+        </div>
+        <h1
+          class="text-5xl md:text-7xl font-extrabold mb-6 tracking-tighter leading-tight text-white"
+        >
+          Scavenge Every <br /><span class="gradient-text-fox">Free Token</span>
+          on Earth.
+        </h1>
+        <p
+          class="text-slate-400 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed"
+        >
+          A lightweight LLM router that intelligently hunts for free tiers
+          across Groq, Gemini, Mistral, and more. One API endpoint. Infinite
+          free inference.
+        </p>
+        <div
+          class="flex flex-col sm:flex-row items-center justify-center gap-4"
+        >
+          <button
+            class="btn-primary w-full sm:w-auto px-8 py-4 font-bold rounded-xl"
+          >
+            Get Started Free
+          </button>
+          <div
+            class="flex items-center gap-2 text-sm text-slate-500 font-mono bg-white/5 border border-white/10 px-4 py-3 rounded-xl"
+          >
+            <span class="text-[#D35400]">$</span> curl -sSL scavenger.sh | sh
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard Mockup -->
+      <div
+        class="max-w-5xl mx-auto mt-20 p-1 rounded-2xl bg-gradient-to-b from-[#D35400]/20 to-transparent shadow-2xl"
+      >
+        <div class="bg-[#0A1428]/90 rounded-xl overflow-hidden glass-card">
+          <div
+            class="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-slate-900/50"
+          >
+            <div class="flex gap-2">
+              <div class="w-3 h-3 rounded-full bg-red-500/30"></div>
+              <div class="w-3 h-3 rounded-full bg-yellow-500/30"></div>
+              <div class="w-3 h-3 rounded-full bg-green-500/30"></div>
+            </div>
+            <div
+              class="text-[10px] text-slate-500 font-mono uppercase tracking-widest"
+            >
+              TOKEN_SCAVENGER_V1.0.4 // STATUS: ACTIVE
+            </div>
+            <div class="w-12"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6 p-8">
+            <div class="md:col-span-1 flex flex-col gap-4">
+              <div class="p-4 rounded-lg bg-white/5 border border-white/5">
+                <div
+                  class="text-[10px] text-slate-500 uppercase font-bold mb-1"
+                >
+                  Total Savings
+                </div>
+                <div class="text-2xl font-bold text-[#00FF9F]">$4,281.42</div>
+              </div>
+              <div class="p-4 rounded-lg bg-white/5 border border-white/5">
+                <div
+                  class="text-[10px] text-slate-500 uppercase font-bold mb-1"
+                >
+                  Scavenged Tokens
+                </div>
+                <div class="text-2xl font-bold text-white">12.4M</div>
+              </div>
+            </div>
+            <div class="md:col-span-3">
+              <div
+                class="p-6 rounded-lg bg-white/5 border border-white/5 h-full min-h-[200px]"
+              >
+                <div class="flex justify-between items-center mb-6">
+                  <h3 class="text-sm font-semibold">Real-time Traffic (t/s)</h3>
+                  <div
+                    class="text-[10px] bg-[#00FF9F]/20 text-[#00FF9F] px-2 py-0.5 rounded"
+                  >
+                    LIVE
+                  </div>
+                </div>
+                <div class="flex items-end gap-1.5 h-32">
+                  <div class="flex-1 bg-[#D35400]/10 h-1/2 rounded-t"></div>
+                  <div class="flex-1 bg-[#D35400]/20 h-2/3 rounded-t"></div>
+                  <div class="flex-1 bg-[#D35400]/10 h-1/3 rounded-t"></div>
+                  <div
+                    class="flex-1 bg-[#D35400]/40 h-3/4 rounded-t border-t border-[#D35400]"
+                  ></div>
+                  <div class="flex-1 bg-[#D35400]/10 h-1/2 rounded-t"></div>
+                  <div
+                    class="flex-1 bg-[#00FF9F]/40 h-full rounded-t border-t border-[#00FF9F]"
+                  ></div>
+                  <div class="flex-1 bg-[#D35400]/20 h-2/3 rounded-t"></div>
+                  <div class="flex-1 bg-[#D35400]/30 h-3/4 rounded-t"></div>
+                  <div class="flex-1 bg-[#D35400]/10 h-1/2 rounded-t"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Providers Section (Restored Grid) -->
+    <section id="providers" class="py-24 px-6">
+      <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl font-bold mb-4 text-white">
+            Native Support for
+            <span class="text-[#D35400]">12+ Free Tier</span> Providers
+          </h2>
+          <p class="text-slate-400">
+            TokenScavenger understands the rate limits and nuances of every
+            major free LLM endpoint.
+          </p>
+        </div>
+
+        <div class="provider-grid">
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">Groq</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">
+              Llama 3 / Mixtral
+            </div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">Gemini</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">
+              1.5 Flash / Pro
+            </div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">Cloudflare</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">Workers AI</div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">GitHub</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">Azure Models</div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">Cerebras</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">
+              CSoft Inference
+            </div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">NVIDIA</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">
+              NIM Endpoints
+            </div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">Mistral</div>
+            <div class="text-[10px] text-yellow-500 font-mono">
+              La Plateforme
+            </div>
+          </div>
+          <div
+            class="glass-card p-6 rounded-xl text-center border border-white/5 hover:border-[#D35400]/40 transition-all group"
+          >
+            <div class="font-bold text-lg mb-1">SiliconFlow</div>
+            <div class="text-[10px] text-[#00FF9F] font-mono">DeepSeek v3</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features Section (Restored Detailed Copy) -->
+    <section
+      id="features"
+      class="py-24 px-6 bg-slate-950/50 border-y border-white/5"
+    >
+      <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-12">
+        <div class="space-y-4">
+          <div
+            class="w-12 h-12 rounded-lg bg-[#D35400]/10 flex items-center justify-center text-[#D35400]"
+          >
+            <i class="fas fa-code"></i>
+          </div>
+          <h3 class="text-xl font-bold text-white">Drop-in Replacement</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">
+            Simply change your `baseURL` to TokenScavenger. Fully compatible
+            with OpenAI SDKs, LangChain, and Vercel AI SDK.
+          </p>
+        </div>
+        <div class="space-y-4">
+          <div
+            class="w-12 h-12 rounded-lg bg-[#00FF9F]/10 flex items-center justify-center text-[#00FF9F]"
+          >
+            <i class="fas fa-shield-halved"></i>
+          </div>
+          <h3 class="text-xl font-bold text-white">Smart Circuit Breakers</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">
+            If one provider hits a rate limit or goes down, we automatically
+            switch to the next fastest free provider in your chain.
+          </p>
+        </div>
+        <div class="space-y-4">
+          <div
+            class="w-12 h-12 rounded-lg bg-[#D35400]/10 flex items-center justify-center text-[#D35400]"
+          >
+            <i class="fas fa-microchip"></i>
+          </div>
+          <h3 class="text-xl font-bold text-white">Single-Binary Rust</h3>
+          <p class="text-slate-400 text-sm leading-relaxed">
+            No bloated Docker images or Python runtimes. A single static binary
+            handles thousands of concurrent requests.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-16 px-6 border-t border-white/5">
+      <div
+        class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8"
+      >
+        <div class="flex items-center gap-3">
+          <span class="text-xl font-bold text-white"
+            >Token<span class="text-[#D35400]">Scavenger</span></span
+          >
+        </div>
+        <div
+          class="flex gap-8 text-slate-500 text-sm uppercase tracking-widest font-medium"
+        >
+          <a href="#" class="hover:text-[#D35400] transition-colors"
+            >Documentation</a
+          >
+          <a href="#" class="hover:text-[#D35400] transition-colors">Discord</a>
+          <a href="#" class="hover:text-[#D35400] transition-colors">GitHub</a>
+        </div>
+        <p class="text-slate-600 text-xs font-mono">
+          &copy; 2024 TOKENSCAVENGER.SYS
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

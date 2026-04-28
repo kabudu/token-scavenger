@@ -1,0 +1,70 @@
+[package]
+name = "tokenscavenger"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Lightweight, self-hosted LLM proxy/router prioritizing free-tier providers"
+rust-version = "1.85"
+
+[dependencies]
+# HTTP server
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "validate-request"] }
+tokio = { version = "1.52", features = ["full"] }
+bytes = "1.11"
+
+# Database
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1.1"
+
+# CLI
+clap = { version = "4.6", features = ["derive"] }
+
+# HTTP client
+reqwest = { version = "0.13", features = ["json", "stream"] }
+
+# Async
+futures = "0.3"
+tokio-util = "0.7"
+async-trait = "0.1"
+pin-project = "1.1"
+
+# Concurrency
+dashmap = "6.1"
+arc-swap = "1.9"
+
+# Cache
+moka = { version = "0.12", features = ["future"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
+thiserror = "2.0"
+tokio-stream = { version = "0.1", features = ["sync"] }
+url = "2.5"
+rand = "0.10"
+regex-lite = "0.1"
+async-stream = "0.3"
+
+# Templating for UI
+askama = "0.15"
+
+[features]
+default = []
+web = []  # Feature gate for web UI assets
+
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
