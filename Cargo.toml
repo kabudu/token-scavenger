@@ -68,3 +68,13 @@ web = []  # Feature gate for web UI assets
 opt-level = 2
 lto = "fat"
 codegen-units = 1
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+reqwest = { version = "0.13", features = ["json"] }
+serde_json = "1.0"
+tokio = { version = "1.52", features = ["full"] }
+
+[[bench]]
+name = "benchmarks"
+harness = false

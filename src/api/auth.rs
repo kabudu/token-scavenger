@@ -1,3 +1,4 @@
+use crate::app::state::AppState;
 use axum::{
     body::Body,
     extract::State,
@@ -6,7 +7,6 @@ use axum::{
     response::Response,
 };
 use tracing::warn;
-use crate::app::state::AppState;
 
 /// Optional API key authentication middleware.
 /// If `server.master_api_key` is set, all requests must include
@@ -39,15 +39,14 @@ pub async fn auth_middleware(
 
     // Check query parameter
     if let Some(query_key) = req.uri().query().and_then(|q| {
-        q.split('&')
-            .find_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                if parts.next() == Some("api_key") {
-                    parts.next()
-                } else {
-                    None
-                }
-            })
+        q.split('&').find_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            if parts.next() == Some("api_key") {
+                parts.next()
+            } else {
+                None
+            }
+        })
     }) {
         if query_key == master_key {
             return Ok(next.run(req).await);

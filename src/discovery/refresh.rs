@@ -1,5 +1,5 @@
-use tracing::{info, warn};
 use crate::app::state::AppState;
+use tracing::{info, warn};
 
 /// Refresh model discovery for all configured providers.
 /// This is called on startup and on a scheduled interval.
@@ -22,6 +22,7 @@ pub async fn refresh_all(state: &AppState) {
             base_url: adapter.base_url(provider_cfg),
             api_key: provider_cfg.api_key.clone(),
             config: std::sync::Arc::new(provider_cfg.clone()),
+            client: state.http_client.clone(),
         };
 
         info!(provider = %provider_cfg.id, "Starting model discovery");

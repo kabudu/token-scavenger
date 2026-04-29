@@ -17,7 +17,10 @@ pub fn backoff_duration(attempt: u32, base_ms: u64, cap_ms: u64, jitter: bool) -
 
 /// Classify whether an error should be retried on the same provider.
 pub fn should_retry(fallback: &FallbackDecision) -> bool {
-    matches!(fallback, FallbackDecision::Retry { .. } | FallbackDecision::RetryWithDelay { .. })
+    matches!(
+        fallback,
+        FallbackDecision::Retry { .. } | FallbackDecision::RetryWithDelay { .. }
+    )
 }
 
 #[cfg(test)]

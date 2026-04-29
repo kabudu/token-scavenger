@@ -481,8 +481,9 @@ Mark each item as the API, UI, and persistence surfaces are implemented.
 - [x] Create SQL migrations for config, audit, providers, models, aliases, request logs, usage events, health events, and discovery runs.
 - [x] Implement file config loading plus database-persisted mutable operator state.
 - [x] Implement dashboard, providers, models, routing/aliases, usage, health, logs, configuration, and audit views.
-- [ ] Add UI actions for provider enablement, provider ordering, model enablement, alias editing, discovery refresh, config save, and rollback.
+- [x] Add UI actions for provider enablement, provider ordering, model enablement, alias editing, discovery refresh, config save, and rollback.
 - [x] Add auth, CORS, rate limiting hooks, secret masking, and audit logging for protected actions.
 - [x] Emit required Prometheus metrics and structured request-path log fields.
-- [ ] Implement retention configuration and cleanup jobs.
-- [ ] Cover API behavior, migrations, UI smoke flows, and security controls with tests.
+- [x] Implement retention configuration and cleanup jobs.
+- [x] Cover API behavior, migrations, UI smoke flows, and security controls with tests.
+- [x] Package reproducible binary artifacts for supported platforms.

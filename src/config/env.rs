@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::env;
 
 /// Expand `${VAR_NAME}` and `$VAR_NAME` environment variable references in a string.
@@ -47,7 +46,11 @@ pub fn expand_provider_config(
 pub fn expand_all(cfg: &crate::config::schema::Config) -> crate::config::schema::Config {
     let mut cfg = cfg.clone();
     cfg.server.master_api_key = expand_env_vars(&cfg.server.master_api_key);
-    cfg.providers = cfg.providers.into_iter().map(|p| expand_provider_config(&p)).collect();
+    cfg.providers = cfg
+        .providers
+        .into_iter()
+        .map(|p| expand_provider_config(&p))
+        .collect();
     cfg
 }
 

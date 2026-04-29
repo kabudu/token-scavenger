@@ -1,9 +1,9 @@
+use crate::app::state::AppState;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{SqlitePool, migrate::MigrateDatabase};
 use std::path::Path;
 use std::str::FromStr;
 use tracing::info;
-use crate::app::state::AppState;
 
 /// Open the SQLite database, run migrations, and return a connection pool.
 pub async fn init_db(db_path: &str) -> Result<SqlitePool, Box<dyn std::error::Error>> {
@@ -29,9 +29,7 @@ pub async fn init_db(db_path: &str) -> Result<SqlitePool, Box<dyn std::error::Er
         )
         .await?;
 
-    sqlx::migrate!("src/db/migrations")
-        .run(&pool)
-        .await?;
+    sqlx::migrate!("src/db/migrations").run(&pool).await?;
 
     info!("Database migrations applied successfully");
     Ok(pool)
@@ -47,15 +45,18 @@ pub async fn get_audit_entries(state: &AppState) -> serde_json::Value {
 
     match result {
         Ok(rows) => {
-            let entries: Vec<serde_json::Value> = rows.into_iter().map(|(id, created, actor, action, target)| {
-                serde_json::json!({
-                    "id": id,
-                    "created_at": created,
-                    "actor": actor,
-                    "action": action,
-                    "target_type": target,
+            let entries: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(id, created, actor, action, target)| {
+                    serde_json::json!({
+                        "id": id,
+                        "created_at": created,
+                        "actor": actor,
+                        "action": action,
+                        "target_type": target,
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::json!({"entries": entries})
         }
         Err(_) => serde_json::json!({"entries": []}),

@@ -1,15 +1,14 @@
+use crate::api::error::ApiError;
+use crate::api::openai::chat::NormalizedChatRequest;
+use crate::api::openai::chat::StreamDelta;
+use crate::app::state::AppState;
+use crate::providers::traits::{EndpointKind, ProviderContext};
+use crate::router::policy::RoutePolicy;
+use crate::router::selection::build_attempt_plan;
 use axum::response::sse::Event;
 use futures::stream::Stream;
 use std::convert::Infallible;
-use crate::api::openai::chat::StreamDelta;
-use crate::app::state::AppState;
-use crate::api::error::ApiError;
-use crate::api::openai::chat::NormalizedChatRequest;
-use crate::providers::traits::{ProviderContext, EndpointKind, ProviderError};
-use crate::router::policy::RoutePolicy;
-use crate::router::selection::build_attempt_plan;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 /// Streaming SSE event types for chat completions.
 #[derive(Debug, Clone)]
@@ -47,10 +46,16 @@ pub enum StreamEvent {
 
 use serde::Serialize;
 
-/// Format a stream event as an SSE data frame.
-pub fn format_sse_frame(event: &StreamEvent) -> String {
+/// Format a stream event as an OpenAI-compatible SSE data payload.
+pub fn format_sse_payload(event: &StreamEvent) -> String {
     match event {
-        StreamEvent::Chunk { id, created, model, delta, finish_reason } => {
+        StreamEvent::Chunk {
+            id,
+            created,
+            model,
+            delta,
+            finish_reason,
+        } => {
             #[derive(Serialize)]
             struct ChunkData<'a> {
                 id: &'a str,
@@ -76,24 +81,58 @@ pub fn format_sse_frame(event: &StreamEvent) -> String {
                     finish_reason: finish_reason.as_deref(),
                 }],
             };
-            format!("data: {}\n\n", serde_json::to_string(&data).unwrap_or_default())
+            serde_json::to_string(&data).unwrap_or_default()
         }
-        StreamEvent::ToolCallChunk { id, created, model, index, tool_call_id, function_name, function_arguments } => {
-            format!(
-                "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":{},\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"{}\",\"function\":{{\"name\":\"{}\",\"arguments\":\"{}\"}}}}]}},\"finish_reason\":null}}]}}\n\n",
-                id, created, model, index,
-                tool_call_id.as_deref().unwrap_or(""),
-                function_name.as_deref().unwrap_or(""),
-                function_arguments
-            )
-        }
-        StreamEvent::Usage { id, created, model, prompt_tokens, completion_tokens, total_tokens } => {
-            format!(
-                "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[],\"usage\":{{\"prompt_tokens\":{},\"completion_tokens\":{},\"total_tokens\":{}}}}}\n\n",
-                id, created, model, prompt_tokens, completion_tokens, total_tokens
-            )
-        }
-        StreamEvent::Done => "data: [DONE]\n\n".to_string(),
+        StreamEvent::ToolCallChunk {
+            id,
+            created,
+            model,
+            index,
+            tool_call_id,
+            function_name,
+            function_arguments,
+        } => serde_json::json!({
+            "id": id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": index,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": tool_call_id.as_deref().unwrap_or(""),
+                        "function": {
+                            "name": function_name.as_deref().unwrap_or(""),
+                            "arguments": function_arguments,
+                        }
+                    }]
+                },
+                "finish_reason": null
+            }]
+        })
+        .to_string(),
+        StreamEvent::Usage {
+            id,
+            created,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        } => serde_json::json!({
+            "id": id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            }
+        })
+        .to_string(),
+        StreamEvent::Done => "[DONE]".to_string(),
     }
 }
 
@@ -108,7 +147,8 @@ pub async fn create_chat_stream(
     let policy = RoutePolicy::from_config(&config);
 
     // Resolve model alias
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model).await
+    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model)
+        .await
         .unwrap_or_else(|| request.model.clone());
 
     // Build attempt plan
@@ -117,12 +157,14 @@ pub async fn create_chat_stream(
         registry,
         &resolved_model,
         EndpointKind::ChatCompletions,
-    ).await;
+    )
+    .await;
 
     if plan.is_empty() {
-        return Err(ApiError::RouteExhausted(
-            format!("No available providers for streaming model: {}", resolved_model)
-        ));
+        return Err(ApiError::RouteExhausted(format!(
+            "No available providers for streaming model: {}",
+            resolved_model
+        )));
     }
 
     info!(
@@ -138,14 +180,14 @@ pub async fn create_chat_stream(
     // Try providers in order
     let config_clone = config.clone();
     let registry_clone = state.provider_registry.clone();
-    let model = resolved_model.clone();
     let request_clone = request.clone();
 
     tokio::spawn(async move {
+        // Per spec: no mid-stream fallback. Only try the first healthy provider.
+        // If streaming fails, send Done and stop — don't try next provider.
         for attempt in &plan {
             let provider_id = &attempt.provider_id;
 
-            // Check circuit breaker
             if let Some(breaker) = state.breaker_states.get(provider_id) {
                 if breaker.is_open() {
                     warn!(provider = %provider_id, "Skipping streaming: circuit breaker open");
@@ -167,28 +209,33 @@ pub async fn create_chat_stream(
                 base_url: adapter.base_url(&provider_cfg),
                 api_key: provider_cfg.api_key.clone(),
                 config: std::sync::Arc::new(provider_cfg),
+                client: state.http_client.clone(),
             };
 
-            match adapter.stream_chat_completions(
-                &ctx,
-                NormalizedChatRequest {
-                    model: attempt.model_id.clone(),
-                    ..request_clone.clone()
-                },
-                tx.clone(),
-            ).await {
+            match adapter
+                .stream_chat_completions(
+                    &ctx,
+                    NormalizedChatRequest {
+                        model: attempt.model_id.clone(),
+                        ..request_clone.clone()
+                    },
+                    tx.clone(),
+                )
+                .await
+            {
                 Ok(()) => {
                     info!(provider = %provider_id, "Streaming completed");
                     return;
                 }
                 Err(e) => {
-                    warn!(provider = %provider_id, error = %e, "Stream attempt failed, trying next provider");
+                    warn!(provider = %provider_id, error = %e, "Stream failed, no fallback per spec");
                     crate::resilience::health::record_failure(&state, provider_id).await;
+                    // Don't try next provider — mid-stream fallback prohibited
                 }
             }
         }
 
-        // All providers failed
+        // All providers failed pre-stream or streaming failed
         let _ = tx.send(StreamEvent::Done).await;
     });
 
@@ -197,12 +244,11 @@ pub async fn create_chat_stream(
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Done => {
-                    yield Ok(Event::default().data("data: [DONE]\n\n"));
+                    yield Ok(Event::default().data("[DONE]"));
                     break;
                 }
                 _ => {
-                    let frame = format_sse_frame(&event);
-                    yield Ok(Event::default().data(frame));
+                    yield Ok(Event::default().data(format_sse_payload(&event)));
                 }
             }
         }

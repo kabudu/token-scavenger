@@ -5,7 +5,7 @@ use crate::app::state::AppState;
 pub async fn resolve_alias(state: &AppState, model: &str) -> Option<String> {
     // Check DB aliases
     let result = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM aliases WHERE alias = ? AND enabled = 1"
+        "SELECT target_json FROM aliases WHERE alias = ? AND enabled = 1",
     )
     .bind(model)
     .fetch_optional(&state.db)

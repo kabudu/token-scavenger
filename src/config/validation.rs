@@ -23,23 +23,28 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
 
     // Validate resilience
     if cfg.resilience.max_retries_per_provider > 10 {
-        v.warnings.push("resilience.max_retries_per_provider is high (>10)".to_string());
+        v.warnings
+            .push("resilience.max_retries_per_provider is high (>10)".to_string());
     }
     if cfg.resilience.breaker_failure_threshold == 0 {
-        v.errors.push("resilience.breaker_failure_threshold must be > 0".to_string());
+        v.errors
+            .push("resilience.breaker_failure_threshold must be > 0".to_string());
     }
     if cfg.resilience.breaker_cooldown_secs == 0 {
-        v.errors.push("resilience.breaker_cooldown_secs must be > 0".to_string());
+        v.errors
+            .push("resilience.breaker_cooldown_secs must be > 0".to_string());
     }
 
     // Validate providers
     let mut provider_ids = std::collections::HashSet::new();
     for provider in &cfg.providers {
         if provider.id.is_empty() {
-            v.errors.push("A provider entry has an empty id".to_string());
+            v.errors
+                .push("A provider entry has an empty id".to_string());
         }
         if !provider_ids.insert(&provider.id) {
-            v.errors.push(format!("Duplicate provider id: {}", provider.id));
+            v.errors
+                .push(format!("Duplicate provider id: {}", provider.id));
         }
     }
 
@@ -68,25 +73,27 @@ mod tests {
 
     #[test]
     fn test_validate_duplicate_provider() {
-        let mut cfg = Config::default();
-        cfg.providers = vec![
-            ProviderConfig {
-                id: "groq".into(),
-                enabled: true,
-                base_url: None,
-                api_key: None,
-                free_only: true,
-                discover_models: true,
-            },
-            ProviderConfig {
-                id: "groq".into(),
-                enabled: true,
-                base_url: None,
-                api_key: None,
-                free_only: true,
-                discover_models: true,
-            },
-        ];
+        let cfg = Config {
+            providers: vec![
+                ProviderConfig {
+                    id: "groq".into(),
+                    enabled: true,
+                    base_url: None,
+                    api_key: None,
+                    free_only: true,
+                    discover_models: true,
+                },
+                ProviderConfig {
+                    id: "groq".into(),
+                    enabled: true,
+                    base_url: None,
+                    api_key: None,
+                    free_only: true,
+                    discover_models: true,
+                },
+            ],
+            ..Default::default()
+        };
         let result = validate_config(&cfg);
         assert!(result.errors.iter().any(|e| e.contains("Duplicate")));
     }

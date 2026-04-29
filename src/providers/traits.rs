@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use url::Url;
-use reqwest::header::HeaderMap;
 use crate::api::openai::chat::{NormalizedChatRequest, ProviderChatResponse};
 use crate::api::openai::embeddings::{NormalizedEmbeddingsRequest, ProviderEmbeddingsResponse};
 use crate::providers::normalization::ProviderCapabilities;
+use async_trait::async_trait;
+use reqwest::header::HeaderMap;
+use url::Url;
 
 /// Kinds of endpoints a provider can support.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,6 +30,7 @@ pub struct ProviderContext {
     pub base_url: Url,
     pub api_key: Option<String>,
     pub config: std::sync::Arc<crate::config::schema::ProviderConfig>,
+    pub client: reqwest::Client,
 }
 
 /// Unified provider error type.
@@ -42,7 +43,10 @@ pub enum ProviderError {
     #[error("Rate limited: retry after {retry_after:?}")]
     RateLimited { retry_after: Option<u64> },
     #[error("Quota exhausted: {details}")]
-    QuotaExhausted { details: String, reset_at: Option<i64> },
+    QuotaExhausted {
+        details: String,
+        reset_at: Option<i64>,
+    },
     #[error("Authentication failed: {0}")]
     Auth(String),
     #[error("Unsupported feature: {0}")]
@@ -112,26 +116,30 @@ pub trait ProviderAdapter: Send + Sync {
         let id = uuid::Uuid::new_v4().to_string();
         let created = chrono::Utc::now().timestamp();
 
-        let _ = tx.send(crate::api::openai::stream::StreamEvent::Chunk {
-            id: id.clone(),
-            created,
-            model: response.model_id.clone(),
-            delta: crate::api::openai::chat::StreamDelta {
-                role: Some("assistant".into()),
-                content: response.content.clone(),
-            },
-            finish_reason: response.finish_reason.clone(),
-        }).await;
+        let _ = tx
+            .send(crate::api::openai::stream::StreamEvent::Chunk {
+                id: id.clone(),
+                created,
+                model: response.model_id.clone(),
+                delta: crate::api::openai::chat::StreamDelta {
+                    role: Some("assistant".into()),
+                    content: response.content.clone(),
+                },
+                finish_reason: response.finish_reason.clone(),
+            })
+            .await;
 
         if let Some(usage) = response.usage {
-            let _ = tx.send(crate::api::openai::stream::StreamEvent::Usage {
-                id,
-                created,
-                model: response.model_id,
-                prompt_tokens: usage.prompt_tokens,
-                completion_tokens: usage.completion_tokens,
-                total_tokens: usage.total_tokens,
-            }).await;
+            let _ = tx
+                .send(crate::api::openai::stream::StreamEvent::Usage {
+                    id,
+                    created,
+                    model: response.model_id,
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    total_tokens: usage.total_tokens,
+                })
+                .await;
         }
 
         let _ = tx.send(crate::api::openai::stream::StreamEvent::Done).await;

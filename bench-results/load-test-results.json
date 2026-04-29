@@ -1,0 +1,29 @@
+{
+  "scenarios": {
+    "200_concurrent": {
+      "error_rate": 0.311,
+      "latency_p50_ms": 7.0,
+      "latency_p95_ms": 17051.0,
+      "latency_p99_ms": 37065.0,
+      "throughput_rps": 18.828845791752965,
+      "total": 1000
+    },
+    "50_concurrent": {
+      "error_rate": 0.0,
+      "latency_p50_ms": 7.0,
+      "latency_p95_ms": 11.0,
+      "latency_p99_ms": 14.0,
+      "throughput_rps": 55555.55555555556,
+      "total": 500
+    },
+    "mixed_workload": {
+      "error_rate": 0.0,
+      "latency_p50_ms": 6.0,
+      "latency_p95_ms": 972.0,
+      "latency_p99_ms": 974.0,
+      "throughput_rps": 1024.5901639344263,
+      "total": 1000
+    }
+  },
+  "version": "0.1.0"
+}

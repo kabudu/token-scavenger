@@ -17,7 +17,7 @@ impl ProviderHttp {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| classify_http_error(e))?;
+            .map_err(classify_http_error)?;
         Ok(req)
     }
 
@@ -34,7 +34,7 @@ impl ProviderHttp {
             .json(body)
             .send()
             .await
-            .map_err(|e| classify_http_error(e))?;
+            .map_err(classify_http_error)?;
         Ok(req)
     }
 
@@ -51,7 +51,7 @@ impl ProviderHttp {
             .json(body)
             .send()
             .await
-            .map_err(|e| classify_http_error(e))?;
+            .map_err(classify_http_error)?;
         Ok(req)
     }
 }
@@ -63,7 +63,9 @@ fn classify_http_error(e: reqwest::Error) -> crate::providers::traits::ProviderE
         match status.as_u16() {
             429 => crate::providers::traits::ProviderError::RateLimited { retry_after: None },
             401 | 403 => crate::providers::traits::ProviderError::Auth(e.to_string()),
-            s if s >= 500 => crate::providers::traits::ProviderError::Other(format!("Upstream {}: {}", s, e)),
+            s if s >= 500 => {
+                crate::providers::traits::ProviderError::Other(format!("Upstream {}: {}", s, e))
+            }
             _ => crate::providers::traits::ProviderError::Http(e.to_string()),
         }
     } else {
@@ -80,10 +82,7 @@ pub fn bearer_auth(config: &crate::config::schema::ProviderConfig) -> HeaderMap 
     );
     if let Some(ref key) = config.api_key {
         let value = format!("Bearer {}", key);
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            value.parse().unwrap(),
-        );
+        headers.insert(reqwest::header::AUTHORIZATION, value.parse().unwrap());
     }
     headers
 }

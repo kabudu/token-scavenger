@@ -2,10 +2,7 @@ use crate::app::state::AppState;
 use crate::providers::traits::ProviderError;
 
 /// Fallback engine for handling retries and cross-provider fallback.
-pub async fn should_fallback(
-    _state: &AppState,
-    error: &ProviderError,
-) -> FallbackDecision {
+pub async fn should_fallback(_state: &AppState, error: &ProviderError) -> FallbackDecision {
     match error {
         // Retryable on same provider
         ProviderError::Timeout => FallbackDecision::Retry { max_attempts: 2 },

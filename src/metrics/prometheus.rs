@@ -1,22 +1,21 @@
-use metrics::{counter, histogram, gauge};
+use metrics::{counter, gauge, histogram};
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
-// Static metric descriptors
-static METRICS: LazyLock<Mutex<MetricsRegistry>> = LazyLock::new(|| {
-    Mutex::new(MetricsRegistry::new())
-});
+static METRICS: LazyLock<Mutex<MetricsRegistry>> =
+    LazyLock::new(|| Mutex::new(MetricsRegistry::default()));
 
+#[derive(Default)]
 struct MetricsRegistry {
-    provider_health: Vec<(String, String)>,
-}
-
-impl MetricsRegistry {
-    fn new() -> Self {
-        Self {
-            provider_health: Vec::new(),
-        }
-    }
+    requests: BTreeMap<(String, String, String, String), u64>,
+    tokens: BTreeMap<(String, String, String), u64>,
+    latencies: BTreeMap<(String, String), Vec<f64>>,
+    route_attempts: BTreeMap<(String, String, String), u64>,
+    provider_health: BTreeMap<(String, String), f64>,
+    breaker_states: BTreeMap<(String, String), f64>,
+    quota_remaining: BTreeMap<String, f64>,
+    discovery_runs: BTreeMap<(String, String), u64>,
 }
 
 /// Register a request metric.
@@ -27,7 +26,19 @@ pub fn record_request(provider: &str, model: &str, endpoint: &str, status: &str)
         "model" => model.to_string(),
         "endpoint" => endpoint.to_string(),
         "status" => status.to_string(),
-    ).increment(1);
+    )
+    .increment(1);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .requests
+            .entry((
+                provider.into(),
+                model.into(),
+                endpoint.into(),
+                status.into(),
+            ))
+            .or_default() += 1;
+    }
 }
 
 /// Register token usage.
@@ -37,7 +48,14 @@ pub fn record_tokens(provider: &str, model: &str, token_type: &str, count: u32) 
         "provider" => provider.to_string(),
         "model" => model.to_string(),
         "type" => token_type.to_string(),
-    ).increment(count as u64);
+    )
+    .increment(count as u64);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .tokens
+            .entry((provider.into(), model.into(), token_type.into()))
+            .or_default() += count as u64;
+    }
 }
 
 /// Record request latency.
@@ -46,7 +64,15 @@ pub fn record_latency(provider: &str, endpoint: &str, latency_ms: f64) {
         "tokenscavenger_request_latency_seconds",
         "provider" => provider.to_string(),
         "endpoint" => endpoint.to_string(),
-    ).record(latency_ms / 1000.0);
+    )
+    .record(latency_ms / 1000.0);
+    if let Ok(mut metrics) = METRICS.lock() {
+        metrics
+            .latencies
+            .entry((provider.into(), endpoint.into()))
+            .or_default()
+            .push(latency_ms / 1000.0);
+    }
 }
 
 /// Record a route attempt outcome.
@@ -56,7 +82,14 @@ pub fn record_route_attempt(provider: &str, model: &str, outcome: &str) {
         "provider" => provider.to_string(),
         "model" => model.to_string(),
         "outcome" => outcome.to_string(),
-    ).increment(1);
+    )
+    .increment(1);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .route_attempts
+            .entry((provider.into(), model.into(), outcome.into()))
+            .or_default() += 1;
+    }
 }
 
 /// Record provider health state.
@@ -65,8 +98,13 @@ pub fn record_provider_health(provider: &str, state: &str) {
         "tokenscavenger_provider_health_state",
         "provider" => provider.to_string(),
         "state" => state.to_string(),
-    ).set(1.0);
-    let _ = METRICS.lock().map(|mut m| m.provider_health.push((provider.to_string(), state.to_string())));
+    )
+    .set(1.0);
+    if let Ok(mut metrics) = METRICS.lock() {
+        metrics
+            .provider_health
+            .insert((provider.into(), state.into()), 1.0);
+    }
 }
 
 /// Record circuit breaker state.
@@ -75,44 +113,162 @@ pub fn record_breaker_state(provider: &str, state: &str) {
         "tokenscavenger_provider_breaker_state",
         "provider" => provider.to_string(),
         "state" => state.to_string(),
-    ).set(1.0);
+    )
+    .set(1.0);
+    if let Ok(mut metrics) = METRICS.lock() {
+        metrics
+            .breaker_states
+            .insert((provider.into(), state.into()), 1.0);
+    }
+}
+
+/// Record quota remaining for a provider.
+pub fn record_quota_remaining(provider: &str, remaining: f64) {
+    gauge!(
+        "tokenscavenger_quota_remaining",
+        "provider" => provider.to_string(),
+    )
+    .set(remaining);
+    if let Ok(mut metrics) = METRICS.lock() {
+        metrics.quota_remaining.insert(provider.into(), remaining);
+    }
+}
+
+/// Record a discovery run for a provider.
+pub fn record_discovery_run(provider: &str, status: &str) {
+    counter!(
+        "tokenscavenger_discovery_runs_total",
+        "provider" => provider.to_string(),
+        "status" => status.to_string(),
+    )
+    .increment(1);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .discovery_runs
+            .entry((provider.into(), status.into()))
+            .or_default() += 1;
+    }
 }
 
 /// Render all metrics as Prometheus text format.
 pub fn render_metrics() -> String {
     use std::fmt::Write;
     let mut output = String::new();
+    let metrics = METRICS.lock().ok();
 
-    writeln!(output, "# HELP tokenscavenger_requests_total Total number of proxy requests").ok();
+    writeln!(
+        output,
+        "# HELP tokenscavenger_requests_total Total number of proxy requests"
+    )
+    .ok();
     writeln!(output, "# TYPE tokenscavenger_requests_total counter").ok();
-    writeln!(output, "tokenscavenger_requests_total 0").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, model, endpoint, status), value) in &metrics.requests {
+            writeln!(output, "tokenscavenger_requests_total{{provider=\"{provider}\",model=\"{model}\",endpoint=\"{endpoint}\",status=\"{status}\"}} {value}").ok();
+        }
+    }
 
-    writeln!(output, "# HELP tokenscavenger_request_latency_seconds Request latency histogram").ok();
-    writeln!(output, "# TYPE tokenscavenger_request_latency_seconds histogram").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_bucket{{le=\"0.01\"}} 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_bucket{{le=\"0.05\"}} 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_bucket{{le=\"0.1\"}} 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_bucket{{le=\"0.5\"}} 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_bucket{{le=\"1.0\"}} 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_bucket{{le=\"+Inf\"}} 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_count 0").ok();
-    writeln!(output, "tokenscavenger_request_latency_seconds_sum 0.0").ok();
+    writeln!(
+        output,
+        "# HELP tokenscavenger_request_latency_seconds Request latency histogram"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_request_latency_seconds histogram"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, endpoint), values) in &metrics.latencies {
+            let sum: f64 = values.iter().sum();
+            writeln!(output, "tokenscavenger_request_latency_seconds_count{{provider=\"{provider}\",endpoint=\"{endpoint}\"}} {}", values.len()).ok();
+            writeln!(output, "tokenscavenger_request_latency_seconds_sum{{provider=\"{provider}\",endpoint=\"{endpoint}\"}} {sum}").ok();
+        }
+    }
 
-    writeln!(output, "# HELP tokenscavenger_tokens_total Total tokens processed").ok();
+    writeln!(
+        output,
+        "# HELP tokenscavenger_tokens_total Total tokens processed"
+    )
+    .ok();
     writeln!(output, "# TYPE tokenscavenger_tokens_total counter").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, model, token_type), value) in &metrics.tokens {
+            writeln!(output, "tokenscavenger_tokens_total{{provider=\"{provider}\",model=\"{model}\",type=\"{token_type}\"}} {value}").ok();
+        }
+    }
 
-    writeln!(output, "# HELP tokenscavenger_route_attempts_total Route attempt outcomes").ok();
+    writeln!(
+        output,
+        "# HELP tokenscavenger_route_attempts_total Route attempt outcomes"
+    )
+    .ok();
     writeln!(output, "# TYPE tokenscavenger_route_attempts_total counter").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, model, outcome), value) in &metrics.route_attempts {
+            writeln!(output, "tokenscavenger_route_attempts_total{{provider=\"{provider}\",model=\"{model}\",outcome=\"{outcome}\"}} {value}").ok();
+        }
+    }
 
-    writeln!(output, "# HELP tokenscavenger_provider_health_state Provider health state gauge").ok();
+    writeln!(
+        output,
+        "# HELP tokenscavenger_provider_health_state Provider health state gauge"
+    )
+    .ok();
     writeln!(output, "# TYPE tokenscavenger_provider_health_state gauge").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, state), value) in &metrics.provider_health {
+            writeln!(output, "tokenscavenger_provider_health_state{{provider=\"{provider}\",state=\"{state}\"}} {value}").ok();
+        }
+    }
 
-    writeln!(output, "# HELP tokenscavenger_provider_breaker_state Circuit breaker state gauge").ok();
+    writeln!(
+        output,
+        "# HELP tokenscavenger_provider_breaker_state Circuit breaker state gauge"
+    )
+    .ok();
     writeln!(output, "# TYPE tokenscavenger_provider_breaker_state gauge").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, state), value) in &metrics.breaker_states {
+            writeln!(output, "tokenscavenger_provider_breaker_state{{provider=\"{provider}\",state=\"{state}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_quota_remaining Quota remaining per provider"
+    )
+    .ok();
+    writeln!(output, "# TYPE tokenscavenger_quota_remaining gauge").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for (provider, value) in &metrics.quota_remaining {
+            writeln!(
+                output,
+                "tokenscavenger_quota_remaining{{provider=\"{provider}\"}} {value}"
+            )
+            .ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_discovery_runs_total Discovery runs per provider"
+    )
+    .ok();
+    writeln!(output, "# TYPE tokenscavenger_discovery_runs_total counter").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, status), value) in &metrics.discovery_runs {
+            writeln!(output, "tokenscavenger_discovery_runs_total{{provider=\"{provider}\",status=\"{status}\"}} {value}").ok();
+        }
+    }
 
     writeln!(output, "# HELP tokenscavenger_build_info Build information").ok();
     writeln!(output, "# TYPE tokenscavenger_build_info gauge").ok();
-    writeln!(output, "tokenscavenger_build_info{{version=\"0.1.0\",rust=\"1.94.0\"}} 1").ok();
+    writeln!(
+        output,
+        "tokenscavenger_build_info{{version=\"0.1.0\",rust=\"1.94.0\"}} 1"
+    )
+    .ok();
 
     output
 }

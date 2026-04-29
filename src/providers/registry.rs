@@ -1,7 +1,7 @@
+use crate::app::state::AppState;
+use crate::providers::traits::{EndpointKind, ProviderAdapter};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::app::state::AppState;
-use crate::providers::traits::{ProviderAdapter, ProviderContext, EndpointKind};
 
 /// Registry of all available provider adapters.
 pub struct ProviderRegistry {
@@ -19,8 +19,12 @@ impl ProviderRegistry {
     pub async fn init_from_config(&self, state: &AppState) {
         let config = state.config();
         let mut map = self.providers.write().await;
+        map.clear();
 
         for provider_cfg in &config.providers {
+            if !provider_cfg.enabled {
+                continue;
+            }
             if let Some(adapter) = create_adapter(&provider_cfg.id) {
                 map.insert(provider_cfg.id.clone(), adapter);
             }
@@ -52,21 +56,35 @@ impl ProviderRegistry {
     }
 }
 
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Create a provider adapter instance by ID.
 fn create_adapter(id: &str) -> Option<Arc<dyn ProviderAdapter>> {
     match id {
         "groq" => Some(Arc::new(crate::providers::groq::GroqAdapter)),
         "google" => Some(Arc::new(crate::providers::google::GoogleAdapter)),
-        "openrouter" | "openrouter-free" => Some(Arc::new(crate::providers::stub_adapters::OpenRouterAdapter)),
+        "openrouter" | "openrouter-free" => {
+            Some(Arc::new(crate::providers::stub_adapters::OpenRouterAdapter))
+        }
         "cloudflare" => Some(Arc::new(crate::providers::stub_adapters::CloudflareAdapter)),
         "cerebras" => Some(Arc::new(crate::providers::stub_adapters::CerebrasAdapter)),
         "nvidia" => Some(Arc::new(crate::providers::stub_adapters::NvidiaAdapter)),
         "cohere" => Some(Arc::new(crate::providers::stub_adapters::CohereAdapter)),
         "mistral" => Some(Arc::new(crate::providers::stub_adapters::MistralAdapter)),
-        "github-models" => Some(Arc::new(crate::providers::stub_adapters::GitHubModelsAdapter)),
-        "huggingface" => Some(Arc::new(crate::providers::stub_adapters::HuggingFaceAdapter)),
+        "github-models" => Some(Arc::new(
+            crate::providers::stub_adapters::GitHubModelsAdapter,
+        )),
+        "huggingface" => Some(Arc::new(
+            crate::providers::stub_adapters::HuggingFaceAdapter,
+        )),
         "zai" | "zhipu" => Some(Arc::new(crate::providers::stub_adapters::ZaiAdapter)),
-        "siliconflow" => Some(Arc::new(crate::providers::stub_adapters::SiliconFlowAdapter)),
+        "siliconflow" => Some(Arc::new(
+            crate::providers::stub_adapters::SiliconFlowAdapter,
+        )),
         _ => None,
     }
 }

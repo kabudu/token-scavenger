@@ -6,17 +6,19 @@
 //! Exposes an OpenAI-compatible HTTP API so existing clients can switch
 //! by changing only the `base_url`.
 
-use tokenscavenger::api;
 use tokenscavenger::app;
-use tokenscavenger::config;
 
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 use tracing::info;
 
 /// TokenScavenger CLI arguments.
 #[derive(Parser, Debug)]
-#[command(name = "tokenscavenger", version, about = "LLM proxy/router prioritizing free-tier providers")]
+#[command(
+    name = "tokenscavenger",
+    version,
+    about = "LLM proxy/router prioritizing free-tier providers"
+)]
 struct Cli {
     /// Path to the configuration file.
     #[arg(short, long, default_value = "tokenscavenger.toml")]
@@ -32,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Initialize metrics global recorder
-    let _handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+    metrics_exporter_prometheus::PrometheusBuilder::new()
         .install()
         .expect("Failed to install metrics recorder");
 
@@ -43,7 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = startup_result.router;
     let listener = startup_result.listener;
 
-    info!("TokenScavenger v{} starting on {}", env!("CARGO_PKG_VERSION"), state.config().server.bind);
+    info!(
+        "TokenScavenger v{} starting on {}",
+        env!("CARGO_PKG_VERSION"),
+        state.config().server.bind
+    );
 
     // Override DB path from CLI if provided
     if let Some(db_path) = cli.db {

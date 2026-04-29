@@ -157,5 +157,5 @@ Mark these items as work lands. Keep this checklist synchronized with the compan
 - [x] Implement streaming chat completions with OpenAI-style SSE.
 - [x] Build the embedded operator UI for core configuration and diagnostics.
 - [x] Add tests for routing, fallback, streaming, persistence, and token accounting.
-- [ ] Run benchmarks and record results.
+- [x] Run benchmarks and record results.
 - [x] Document startup, release artifacts, and operational handoff.

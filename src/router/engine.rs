@@ -1,24 +1,24 @@
-use std::sync::Arc;
 use crate::api::error::ApiError;
 use crate::api::openai::chat::*;
 use crate::api::openai::embeddings::*;
 use crate::app::state::AppState;
-use crate::providers::registry::ProviderRegistry;
 use crate::config::schema::Config;
-use crate::providers::traits::{ProviderAdapter, ProviderContext, EndpointKind, ProviderError};
+use crate::providers::registry::ProviderRegistry;
+use crate::providers::traits::{EndpointKind, ProviderContext};
+use crate::router::fallback::{FallbackDecision, should_fallback};
 use crate::router::policy::RoutePolicy;
-use crate::router::selection::build_attempt_plan;
-use tracing::{info, warn, error};
+use crate::router::selection::{build_attempt_plan, filter_by_health, filter_by_model_enabled};
+use std::sync::Arc;
+use tracing::{info, warn};
 
 /// The route planning and execution engine.
 pub struct RouteEngine {
-    provider_registry: Arc<ProviderRegistry>,
     config: Arc<Config>,
 }
 
 impl RouteEngine {
-    pub fn new(provider_registry: Arc<ProviderRegistry>, config: Arc<Config>) -> Self {
-        Self { provider_registry, config }
+    pub fn new(_provider_registry: Arc<ProviderRegistry>, config: Arc<Config>) -> Self {
+        Self { config }
     }
 
     /// Build the route policy from the current config.
@@ -36,13 +36,15 @@ impl RouteEngine {
 pub async fn route_chat_request(
     state: AppState,
     request: NormalizedChatRequest,
+    request_id: String,
 ) -> Result<ChatResponse, ApiError> {
     let config = state.config();
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
     // Resolve model alias
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model).await
+    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model)
+        .await
         .unwrap_or_else(|| request.model.clone());
 
     // Build attempt plan
@@ -51,12 +53,24 @@ pub async fn route_chat_request(
         registry,
         &resolved_model,
         EndpointKind::ChatCompletions,
-    ).await;
+    )
+    .await;
 
     if plan.is_empty() {
-        return Err(ApiError::RouteExhausted(
-            format!("No available providers for model: {}", resolved_model)
-        ));
+        return Err(ApiError::RouteExhausted(format!(
+            "No available providers for model: {}",
+            resolved_model
+        )));
+    }
+
+    // Filter by health and breaker state
+    let plan = filter_by_model_enabled(filter_by_health(plan, &state), &state).await;
+
+    if plan.is_empty() {
+        return Err(ApiError::RouteExhausted(format!(
+            "All providers for model '{}' are unhealthy or blocked",
+            resolved_model
+        )));
     }
 
     // Trace the plan
@@ -89,22 +103,43 @@ pub async fn route_chat_request(
             }
         };
 
+        let capabilities = adapter.capabilities();
+        if request.tools.is_some() && !capabilities.supports_tools {
+            info!(provider = %provider_id, "Skipping: tools not supported");
+            continue;
+        }
+        if request.response_format.is_some() && !capabilities.supports_json_mode {
+            info!(provider = %provider_id, "Skipping: response_format/json mode not supported");
+            continue;
+        }
+
         // Build provider context
-        let provider_cfg = config.providers.iter()
+        let provider_cfg = config
+            .providers
+            .iter()
             .find(|p| p.id == *provider_id)
-            .ok_or_else(|| ApiError::InternalError(format!("Provider config not found: {}", provider_id)))?;
+            .ok_or_else(|| {
+                ApiError::InternalError(format!("Provider config not found: {}", provider_id))
+            })?;
 
         let ctx = ProviderContext {
             base_url: adapter.base_url(provider_cfg),
             api_key: provider_cfg.api_key.clone(),
             config: Arc::new(provider_cfg.clone()),
+            client: state.http_client.clone(),
         };
 
         // Attempt the request
-        match adapter.chat_completions(&ctx, NormalizedChatRequest {
-            model: attempt.model_id.clone(),
-            ..request.clone()
-        }).await {
+        match adapter
+            .chat_completions(
+                &ctx,
+                NormalizedChatRequest {
+                    model: attempt.model_id.clone(),
+                    ..request.clone()
+                },
+            )
+            .await
+        {
             Ok(response) => {
                 info!(
                     provider = %provider_id,
@@ -113,17 +148,29 @@ pub async fn route_chat_request(
                 );
 
                 // Record usage and metrics
-                let usage_ref = response.usage.as_ref().map(|u| crate::api::openai::chat::UsageResponse {
-                    prompt_tokens: u.prompt_tokens,
-                    completion_tokens: u.completion_tokens,
-                    total_tokens: u.total_tokens,
-                });
+                let usage_ref =
+                    response
+                        .usage
+                        .as_ref()
+                        .map(|u| crate::api::openai::chat::UsageResponse {
+                            prompt_tokens: u.prompt_tokens,
+                            completion_tokens: u.completion_tokens,
+                            total_tokens: u.total_tokens,
+                        });
                 let _ = crate::usage::accounting::record_usage(
-                    &state, provider_id, &response.model_id,
-                    usage_ref.as_ref(),
-                    response.latency_ms,
-                    true, // free_tier
-                ).await;
+                    &state,
+                    crate::usage::accounting::UsageRecord {
+                        provider_id,
+                        model_id: &response.model_id,
+                        usage: usage_ref.as_ref(),
+                        latency_ms: response.latency_ms,
+                        free_tier: true,
+                        request_id: &request_id,
+                        endpoint_kind: "chat",
+                        streaming: false,
+                    },
+                )
+                .await;
 
                 return Ok(ChatResponse {
                     id: format!("ts-{}", uuid::Uuid::new_v4()),
@@ -140,19 +187,165 @@ pub async fn route_chat_request(
                         finish_reason: response.finish_reason,
                         logprobs: None,
                     }],
-                    usage: response.usage.map(|u| crate::api::openai::chat::UsageResponse {
-                        prompt_tokens: u.prompt_tokens,
-                        completion_tokens: u.completion_tokens,
-                        total_tokens: u.total_tokens,
-                    }),
+                    usage: response
+                        .usage
+                        .map(|u| crate::api::openai::chat::UsageResponse {
+                            prompt_tokens: u.prompt_tokens,
+                            completion_tokens: u.completion_tokens,
+                            total_tokens: u.total_tokens,
+                        }),
                 });
             }
             Err(e) => {
                 warn!(provider = %provider_id, error = %e, "Provider attempt failed");
-                last_error = Some(e);
 
                 // Record failure in health state
                 crate::resilience::health::record_failure(&state, provider_id).await;
+
+                // Use fallback engine to decide next action
+                let decision = should_fallback(&state, &e).await;
+                last_error = Some(e);
+
+                match decision {
+                    FallbackDecision::Retry { max_attempts } => {
+                        // Simple: retry same provider up to N times
+                        let mut retries = 0;
+                        while retries < max_attempts {
+                            warn!(provider = %provider_id, retry = retries + 1, "Retrying same provider");
+                            match adapter
+                                .chat_completions(
+                                    &ctx,
+                                    NormalizedChatRequest {
+                                        model: attempt.model_id.clone(),
+                                        ..request.clone()
+                                    },
+                                )
+                                .await
+                            {
+                                Ok(response) => {
+                                    info!(provider = %provider_id, "Retry succeeded");
+                                    let usage_ref = response.usage.as_ref().map(|u| {
+                                        crate::api::openai::chat::UsageResponse {
+                                            prompt_tokens: u.prompt_tokens,
+                                            completion_tokens: u.completion_tokens,
+                                            total_tokens: u.total_tokens,
+                                        }
+                                    });
+                                    let _ = crate::usage::accounting::record_usage(
+                                        &state,
+                                        crate::usage::accounting::UsageRecord {
+                                            provider_id,
+                                            model_id: &response.model_id,
+                                            usage: usage_ref.as_ref(),
+                                            latency_ms: response.latency_ms,
+                                            free_tier: true,
+                                            request_id: &request_id,
+                                            endpoint_kind: "chat",
+                                            streaming: false,
+                                        },
+                                    )
+                                    .await;
+                                    return Ok(ChatResponse {
+                                        id: format!("ts-{}", uuid::Uuid::new_v4()),
+                                        object: "chat.completion".into(),
+                                        created: chrono::Utc::now().timestamp(),
+                                        model: response.model_id,
+                                        choices: vec![ChatChoice {
+                                            index: 0,
+                                            message: ChatResponseMessage {
+                                                role: "assistant".into(),
+                                                content: response.content,
+                                                tool_calls: response.tool_calls,
+                                            },
+                                            finish_reason: response.finish_reason,
+                                            logprobs: None,
+                                        }],
+                                        usage: response.usage.map(|u| {
+                                            crate::api::openai::chat::UsageResponse {
+                                                prompt_tokens: u.prompt_tokens,
+                                                completion_tokens: u.completion_tokens,
+                                                total_tokens: u.total_tokens,
+                                            }
+                                        }),
+                                    });
+                                }
+                                Err(e2) => {
+                                    warn!(provider = %provider_id, error = %e2, "Retry failed");
+                                    retries += 1;
+                                }
+                            }
+                        }
+                    }
+                    FallbackDecision::RetryWithDelay { delay_ms } => {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        match adapter
+                            .chat_completions(
+                                &ctx,
+                                NormalizedChatRequest {
+                                    model: attempt.model_id.clone(),
+                                    ..request.clone()
+                                },
+                            )
+                            .await
+                        {
+                            Ok(response) => {
+                                info!(provider = %provider_id, "Retry after delay succeeded");
+                                let usage_ref = response.usage.as_ref().map(|u| {
+                                    crate::api::openai::chat::UsageResponse {
+                                        prompt_tokens: u.prompt_tokens,
+                                        completion_tokens: u.completion_tokens,
+                                        total_tokens: u.total_tokens,
+                                    }
+                                });
+                                let _ = crate::usage::accounting::record_usage(
+                                    &state,
+                                    crate::usage::accounting::UsageRecord {
+                                        provider_id,
+                                        model_id: &response.model_id,
+                                        usage: usage_ref.as_ref(),
+                                        latency_ms: response.latency_ms,
+                                        free_tier: true,
+                                        request_id: &request_id,
+                                        endpoint_kind: "chat",
+                                        streaming: false,
+                                    },
+                                )
+                                .await;
+                                return Ok(ChatResponse {
+                                    id: format!("ts-{}", uuid::Uuid::new_v4()),
+                                    object: "chat.completion".into(),
+                                    created: chrono::Utc::now().timestamp(),
+                                    model: response.model_id,
+                                    choices: vec![ChatChoice {
+                                        index: 0,
+                                        message: ChatResponseMessage {
+                                            role: "assistant".into(),
+                                            content: response.content,
+                                            tool_calls: response.tool_calls,
+                                        },
+                                        finish_reason: response.finish_reason,
+                                        logprobs: None,
+                                    }],
+                                    usage: response.usage.map(|u| {
+                                        crate::api::openai::chat::UsageResponse {
+                                            prompt_tokens: u.prompt_tokens,
+                                            completion_tokens: u.completion_tokens,
+                                            total_tokens: u.total_tokens,
+                                        }
+                                    }),
+                                });
+                            }
+                            Err(_e2) => { /* fall through to next provider */ }
+                        }
+                    }
+                    FallbackDecision::TryNextProvider => { /* continue to next provider */ }
+                    FallbackDecision::Fail => {
+                        return Err(ApiError::RouteExhausted(format!(
+                            "Provider {} failed",
+                            provider_id
+                        )));
+                    }
+                }
             }
         }
     }
@@ -170,27 +363,27 @@ pub async fn route_chat_request(
 pub async fn route_embeddings_request(
     state: AppState,
     request: NormalizedEmbeddingsRequest,
+    request_id: String,
 ) -> Result<EmbeddingsResponse, ApiError> {
     let config = state.config();
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model).await
+    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model)
+        .await
         .unwrap_or_else(|| request.model.clone());
 
-    let plan = build_attempt_plan(
-        &policy,
-        registry,
-        &resolved_model,
-        EndpointKind::Embeddings,
-    ).await;
+    let plan =
+        build_attempt_plan(&policy, registry, &resolved_model, EndpointKind::Embeddings).await;
 
     if plan.is_empty() {
-        return Err(ApiError::RouteExhausted(
-            format!("No available providers for embeddings model: {}", resolved_model)
-        ));
+        return Err(ApiError::RouteExhausted(format!(
+            "No available providers for embeddings model: {}",
+            resolved_model
+        )));
     }
 
+    let plan = filter_by_model_enabled(filter_by_health(plan, &state), &state).await;
     let mut last_error = None;
     for attempt in &plan {
         let provider_id = &attempt.provider_id;
@@ -210,30 +403,56 @@ pub async fn route_embeddings_request(
             continue;
         }
 
-        let provider_cfg = config.providers.iter()
+        let provider_cfg = config
+            .providers
+            .iter()
             .find(|p| p.id == *provider_id)
-            .ok_or_else(|| ApiError::InternalError(format!("Provider config not found: {}", provider_id)))?;
+            .ok_or_else(|| {
+                ApiError::InternalError(format!("Provider config not found: {}", provider_id))
+            })?;
 
         let ctx = ProviderContext {
             base_url: adapter.base_url(provider_cfg),
             api_key: provider_cfg.api_key.clone(),
             config: Arc::new(provider_cfg.clone()),
+            client: state.http_client.clone(),
         };
 
-        match adapter.embeddings(&ctx, NormalizedEmbeddingsRequest {
-            model: attempt.model_id.clone(),
-            ..request.clone()
-        }).await {
+        match adapter
+            .embeddings(
+                &ctx,
+                NormalizedEmbeddingsRequest {
+                    model: attempt.model_id.clone(),
+                    ..request.clone()
+                },
+            )
+            .await
+        {
             Ok(response) => {
+                let usage = crate::api::openai::chat::UsageResponse {
+                    prompt_tokens: response.usage.prompt_tokens,
+                    completion_tokens: response.usage.completion_tokens,
+                    total_tokens: response.usage.total_tokens,
+                };
+                let _ = crate::usage::accounting::record_usage(
+                    &state,
+                    crate::usage::accounting::UsageRecord {
+                        provider_id,
+                        model_id: &response.model_id,
+                        usage: Some(&usage),
+                        latency_ms: response.latency_ms,
+                        free_tier: true,
+                        request_id: &request_id,
+                        endpoint_kind: "embeddings",
+                        streaming: false,
+                    },
+                )
+                .await;
                 return Ok(EmbeddingsResponse {
                     object: "list".into(),
                     data: response.data,
                     model: response.model_id,
-                    usage: crate::api::openai::chat::UsageResponse {
-                        prompt_tokens: response.usage.prompt_tokens,
-                        completion_tokens: response.usage.completion_tokens,
-                        total_tokens: response.usage.total_tokens,
-                    },
+                    usage,
                 });
             }
             Err(e) => {
@@ -243,7 +462,8 @@ pub async fn route_embeddings_request(
         }
     }
 
-    Err(ApiError::RouteExhausted(
-        format!("No embeddings provider available. Last error: {:?}", last_error)
-    ))
+    Err(ApiError::RouteExhausted(format!(
+        "No embeddings provider available. Last error: {:?}",
+        last_error
+    )))
 }

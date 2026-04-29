@@ -14,9 +14,9 @@ pub enum HealthState {
 /// Serializable health state for the UI/API.
 #[derive(Debug, Clone)]
 pub struct ProviderHealthState {
-    state: HealthState,
-    last_success_at: Option<i64>,
-    last_error_at: Option<i64>,
+    pub state: HealthState,
+    pub last_success_at: Option<i64>,
+    pub last_error_at: Option<i64>,
     pub recent_successes: u32,
     pub recent_failures: u32,
 }
@@ -37,20 +37,28 @@ impl ProviderHealthState {
     }
 }
 
+impl Default for ProviderHealthState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Record a successful request for a provider.
 pub async fn record_success(state: &AppState, provider_id: &str) {
-    let mut entry = state.health_states.entry(provider_id.to_string()).or_insert_with(|| {
-        ProviderHealthState::new()
-    });
+    let mut entry = state
+        .health_states
+        .entry(provider_id.to_string())
+        .or_default();
     entry.recent_successes += 1;
     entry.last_success_at = Some(chrono::Utc::now().timestamp());
 }
 
 /// Record a failed request for a provider.
 pub async fn record_failure(state: &AppState, provider_id: &str) {
-    let mut entry = state.health_states.entry(provider_id.to_string()).or_insert_with(|| {
-        ProviderHealthState::new()
-    });
+    let mut entry = state
+        .health_states
+        .entry(provider_id.to_string())
+        .or_default();
     entry.recent_failures += 1;
     entry.last_error_at = Some(chrono::Utc::now().timestamp());
 
@@ -78,13 +86,16 @@ pub async fn get_recent_events(state: &AppState) -> serde_json::Value {
 
     match result {
         Ok(rows) => {
-            let events: Vec<serde_json::Value> = rows.into_iter().map(|(p, h, et, _ra)| {
-                serde_json::json!({
-                    "provider_id": p,
-                    "health_state": h,
-                    "event_type": et,
+            let events: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(p, h, et, _ra)| {
+                    serde_json::json!({
+                        "provider_id": p,
+                        "health_state": h,
+                        "event_type": et,
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::json!({"events": events})
         }
         Err(_) => serde_json::json!({"events": []}),

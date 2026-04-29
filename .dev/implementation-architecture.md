@@ -318,10 +318,10 @@ Mark each item as the corresponding implementation is completed and verified.
 - [x] Define `AppState` with validated config, database pool, provider registry, router, health state, caches, metrics, and UI channels.
 - [x] Implement deterministic startup with config loading, tracing, SQLite migrations, provider registry initialization, catalog cache loading, background tasks, discovery, and listener binding.
 - [x] Implement graceful shutdown with connection draining, cancellable tasks, buffer flushing, and database pool closure.
-- [ ] Add background jobs for discovery refresh, health probes, usage flushing, circuit breaker reset, and retention cleanup.
+- [x] Add background jobs for discovery refresh, health probes, usage flushing, circuit breaker reset, and retention cleanup.
 - [x] Use bounded channels and avoid coarse locks on hot request paths.
 - [x] Configure SQLite WAL mode, busy timeout, migrations, indexes, and batched async writes.
-- [ ] Embed UI assets into the release binary with cache headers.
+- [x] Embed UI assets into the release binary with cache headers.
 - [x] Expose readiness based on database, config, provider registry, and provider availability prerequisites.
-- [ ] Validate architecture performance targets with benchmarks.
+- [x] Validate architecture performance targets with benchmarks.
 - [ ] Package reproducible binary artifacts for supported platforms.

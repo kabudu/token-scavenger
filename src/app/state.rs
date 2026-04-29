@@ -1,15 +1,15 @@
-use std::sync::Arc;
+use crate::config::schema::Config;
+use crate::providers::registry::ProviderRegistry;
+use crate::resilience::breaker::CircuitBreakerState;
+use crate::resilience::health::ProviderHealthState;
+use crate::router::engine::RouteEngine;
 use arc_swap::ArcSwap;
 use axum::extract::FromRef;
 use dashmap::DashMap;
 use moka::future::Cache;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tokio::sync::{broadcast, watch};
-use crate::config::schema::Config;
-use crate::providers::registry::ProviderRegistry;
-use crate::router::engine::RouteEngine;
-use crate::resilience::breaker::CircuitBreakerState;
-use crate::resilience::health::ProviderHealthState;
 
 /// Shared application state, accessible from all route handlers and background tasks.
 #[derive(Clone)]

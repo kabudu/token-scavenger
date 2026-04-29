@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 
@@ -44,30 +44,54 @@ pub enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, error_type, message) = match &self {
-            ApiError::InvalidRequest(msg) => {
-                (StatusCode::BAD_REQUEST, "invalid_request".into(), "invalid_request_error".into(), msg.clone())
-            }
-            ApiError::AuthError => {
-                (StatusCode::UNAUTHORIZED, "auth_error".into(), "authentication_error".into(), "Authentication failed".into())
-            }
-            ApiError::ProviderUnavailable(msg) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "provider_unavailable".into(), "provider_error".into(), msg.clone())
-            }
-            ApiError::RouteExhausted(msg) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "route_exhausted".into(), "provider_unavailable".into(), msg.clone())
-            }
-            ApiError::RateLimited => {
-                (StatusCode::TOO_MANY_REQUESTS, "rate_limited".into(), "rate_limit_error".into(), "Rate limited".into())
-            }
-            ApiError::QuotaExhausted => {
-                (StatusCode::TOO_MANY_REQUESTS, "quota_exhausted".into(), "quota_error".into(), "Quota exhausted".into())
-            }
-            ApiError::UnsupportedFeature(msg) => {
-                (StatusCode::BAD_REQUEST, "unsupported_feature".into(), "invalid_request_error".into(), msg.clone())
-            }
-            ApiError::InternalError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error".into(), "internal_server_error".into(), msg.clone())
-            }
+            ApiError::InvalidRequest(msg) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_request".into(),
+                "invalid_request_error".into(),
+                msg.clone(),
+            ),
+            ApiError::AuthError => (
+                StatusCode::UNAUTHORIZED,
+                "auth_error".into(),
+                "authentication_error".into(),
+                "Authentication failed".into(),
+            ),
+            ApiError::ProviderUnavailable(msg) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "provider_unavailable".into(),
+                "provider_error".into(),
+                msg.clone(),
+            ),
+            ApiError::RouteExhausted(msg) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "route_exhausted".into(),
+                "provider_unavailable".into(),
+                msg.clone(),
+            ),
+            ApiError::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited".into(),
+                "rate_limit_error".into(),
+                "Rate limited".into(),
+            ),
+            ApiError::QuotaExhausted => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "quota_exhausted".into(),
+                "quota_error".into(),
+                "Quota exhausted".into(),
+            ),
+            ApiError::UnsupportedFeature(msg) => (
+                StatusCode::BAD_REQUEST,
+                "unsupported_feature".into(),
+                "invalid_request_error".into(),
+                msg.clone(),
+            ),
+            ApiError::InternalError(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error".into(),
+                "internal_server_error".into(),
+                msg.clone(),
+            ),
         };
 
         let body = ApiErrorBody {

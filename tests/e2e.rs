@@ -1,0 +1,335 @@
+//! End-to-end tests using an in-process mock provider adapter.
+
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+    routing::{get, post},
+};
+use sqlx::SqlitePool;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
+use tower::ServiceExt;
+
+/// Mini mock provider state.
+struct MiniMock {
+    failures: AtomicU32,
+    succeed_after: u32,
+}
+
+/// Build a TokenScavenger test app with one mock provider.
+async fn build_e2e_app(succeed_after: u32) -> (axum::Router, tokenscavenger::app::state::AppState) {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = tokenscavenger::config::schema::Config::default();
+    config.server.master_api_key = String::new();
+    config.routing.provider_order = vec!["mock".into()];
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "mock".into(),
+        enabled: true,
+        base_url: Some("http://mock.local".into()),
+        api_key: None,
+        free_only: true,
+        discover_models: true,
+    }];
+
+    let state = tokenscavenger::app::state::AppState::new(config, pool);
+    state.provider_registry.init_from_config(&state).await;
+    sqlx::query(
+        "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled, base_url, free_only)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("mock")
+    .bind("Mock")
+    .bind(true)
+    .bind("http://mock.local")
+    .bind(true)
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    // Register a simple mock adapter
+    use async_trait::async_trait;
+    use reqwest::header::HeaderMap;
+    use tokenscavenger::api::openai::chat::{NormalizedChatRequest, ProviderChatResponse};
+    use tokenscavenger::api::openai::embeddings::{
+        NormalizedEmbeddingsRequest, ProviderEmbeddingsResponse,
+    };
+    use tokenscavenger::config::schema::ProviderConfig;
+    use tokenscavenger::discovery::curated::DiscoveredModel;
+    use tokenscavenger::providers::normalization::ProviderCapabilities;
+    use tokenscavenger::providers::traits::{
+        AuthKind, EndpointKind, ProviderAdapter, ProviderContext, ProviderError,
+    };
+    use url::Url;
+
+    struct MockAdapter {
+        state: Arc<MiniMock>,
+    }
+
+    #[async_trait]
+    impl ProviderAdapter for MockAdapter {
+        fn provider_id(&self) -> &'static str {
+            "mock"
+        }
+        fn display_name(&self) -> &'static str {
+            "Mock"
+        }
+        fn supports_endpoint(&self, _: &EndpointKind) -> bool {
+            true
+        }
+        fn auth_kind(&self) -> AuthKind {
+            AuthKind::None
+        }
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::default()
+        }
+        fn base_url(&self, cfg: &ProviderConfig) -> Url {
+            cfg.base_url.as_ref().unwrap().parse().unwrap()
+        }
+        fn default_headers(&self, _: &ProviderConfig) -> HeaderMap {
+            HeaderMap::new()
+        }
+        async fn discover_models(
+            &self,
+            _: &ProviderContext,
+        ) -> Result<Vec<DiscoveredModel>, ProviderError> {
+            Ok(vec![DiscoveredModel {
+                provider_id: "mock".into(),
+                upstream_model_id: "test-model".into(),
+                display_name: Some("Test Model".into()),
+                endpoint_compatibility: vec!["chat".into()],
+                context_window: Some(8192),
+                free_tier: true,
+            }])
+        }
+        async fn chat_completions(
+            &self,
+            _: &ProviderContext,
+            req: NormalizedChatRequest,
+        ) -> Result<ProviderChatResponse, ProviderError> {
+            let count = self.state.failures.fetch_add(1, Ordering::SeqCst);
+            if count < self.state.succeed_after {
+                return Err(ProviderError::Other("mock unavailable".into()));
+            }
+
+            Ok(ProviderChatResponse {
+                provider_id: "mock".into(),
+                model_id: req.model,
+                content: Some("OK".into()),
+                tool_calls: None,
+                finish_reason: Some("stop".into()),
+                usage: Some(tokenscavenger::api::openai::chat::ProviderUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+                latency_ms: 1,
+            })
+        }
+        async fn embeddings(
+            &self,
+            _: &ProviderContext,
+            _: NormalizedEmbeddingsRequest,
+        ) -> Result<ProviderEmbeddingsResponse, ProviderError> {
+            Err(ProviderError::UnsupportedFeature("no embeddings".into()))
+        }
+    }
+    state
+        .provider_registry
+        .register(Arc::new(MockAdapter {
+            state: Arc::new(MiniMock {
+                failures: AtomicU32::new(0),
+                succeed_after,
+            }),
+        }))
+        .await;
+
+    let router = axum::Router::new()
+        .route(
+            "/v1/chat/completions",
+            post(tokenscavenger::api::routes::chat_completions),
+        )
+        .route("/v1/models", get(tokenscavenger::api::routes::models))
+        .route("/healthz", get(tokenscavenger::api::routes::healthz))
+        .with_state(state.clone());
+
+    (router, state)
+}
+
+#[tokio::test]
+async fn e2e_chat_success() {
+    let (app, state) = build_e2e_app(0).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-chat-success")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model", "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["choices"][0]["message"]["content"], "OK");
+    assert!(json["usage"]["prompt_tokens"].as_u64().unwrap() > 0);
+
+    let row: (String, String) =
+        sqlx::query_as("SELECT request_id, endpoint_kind FROM request_log WHERE request_id = ?")
+            .bind("req-e2e-chat-success")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "req-e2e-chat-success");
+    assert_eq!(row.1, "chat");
+}
+
+#[tokio::test]
+async fn e2e_retry_then_success() {
+    let (app, _state) = build_e2e_app(1).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model", "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["choices"][0]["message"]["content"], "OK");
+}
+
+#[tokio::test]
+async fn e2e_route_exhausted_no_providers() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let config = tokenscavenger::config::schema::Config::default();
+    let state = tokenscavenger::app::state::AppState::new(config, pool);
+
+    let app = axum::Router::new()
+        .route(
+            "/v1/chat/completions",
+            post(tokenscavenger::api::routes::chat_completions),
+        )
+        .with_state(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "nonexistent", "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn e2e_health_check() {
+    let (app, _state) = build_e2e_app(0).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn e2e_models_endpoint() {
+    let (app, _state) = build_e2e_app(0).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["object"], "list");
+    assert!(!json["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn e2e_disabled_model_is_not_routed() {
+    let (app, state) = build_e2e_app(0).await;
+    sqlx::query(
+        "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled)
+         VALUES (?, ?, ?, 0)",
+    )
+    .bind("mock")
+    .bind("test-model")
+    .bind("test-model")
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model", "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

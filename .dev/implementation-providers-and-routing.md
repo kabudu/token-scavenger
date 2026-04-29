@@ -359,11 +359,11 @@ Mark each item as the provider/routing work lands and its tests pass.
 - [x] Implement dynamic discovery, merge policy, persistence, and stale/error states.
 - [x] Implement provider registry initialization from config and catalog data.
 - [x] Add adapters or explicitly phased placeholders for the required provider set.
-- [ ] Add fixture coverage for discovery, chat, embeddings, streaming, rate limits, and quota exhaustion for each adapter.
+- [x] Add fixture coverage for discovery, chat, embeddings, streaming, rate limits, and quota exhaustion for each adapter.
 - [x] Implement normalized model records, public aliases, and deterministic alias resolution.
 - [x] Implement the route planner with endpoint capability filtering, operator priority, free-first ordering, health, breakers, and quota hints.
 - [x] Implement same-provider retries and cross-provider fallback classification.
 - [x] Enforce explicit opt-in before paid fallback is used.
 - [x] Normalize provider request/response differences, including streaming SSE.
 - [x] Ensure skipped/attempted providers are visible in logs, metrics, and UI explanations.
-- [ ] Cover route planning, fallback, quota state, and breaker recovery in tests.
+- [x] Cover route planning, fallback, quota state, and breaker recovery in tests.

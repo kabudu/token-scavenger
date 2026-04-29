@@ -12,7 +12,9 @@ pub fn redact_secret(secret: &str) -> String {
 pub fn redact_json_value(mut value: serde_json::Value) -> serde_json::Value {
     match &mut value {
         serde_json::Value::Object(map) => {
-            let sensitive_keys = ["api_key", "api-key", "apikey", "secret", "password", "token", "key"];
+            let sensitive_keys = [
+                "api_key", "api-key", "apikey", "secret", "password", "token", "key",
+            ];
             for (k, v) in map.iter_mut() {
                 if sensitive_keys.contains(&k.as_str()) && v.is_string() {
                     if let Some(s) = v.as_str() {

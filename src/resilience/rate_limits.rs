@@ -1,6 +1,5 @@
 /// Rate limit tracking for providers.
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// In-memory rate limit state per provider.
@@ -19,11 +18,16 @@ pub struct RateLimitTracker {
 
 impl RateLimitTracker {
     pub fn new() -> Self {
-        Self { limits: RwLock::new(HashMap::new()) }
+        Self {
+            limits: RwLock::new(HashMap::new()),
+        }
     }
 
     pub async fn update(&self, provider_id: &str, info: ProviderRateLimit) {
-        self.limits.write().await.insert(provider_id.to_string(), info);
+        self.limits
+            .write()
+            .await
+            .insert(provider_id.to_string(), info);
     }
 
     pub async fn get(&self, provider_id: &str) -> Option<ProviderRateLimit> {
@@ -37,5 +41,11 @@ impl RateLimitTracker {
             }
         }
         false
+    }
+}
+
+impl Default for RateLimitTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }

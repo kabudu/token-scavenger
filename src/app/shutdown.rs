@@ -1,7 +1,7 @@
+use crate::app::state::AppState;
 use std::time::Duration;
 use tokio::signal;
-use tracing::{info, warn};
-use crate::app::state::AppState;
+use tracing::info;
 
 /// Graceful shutdown handler. Waits for SIGINT/SIGTERM, then drains in-flight requests,
 /// cancels background tasks, flushes buffers, and closes the database.
@@ -15,7 +15,6 @@ pub async fn shutdown(state: AppState) {
 
     let terminate = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
-            .ok()
             .expect("Failed to install SIGTERM handler")
             .recv()
             .await;

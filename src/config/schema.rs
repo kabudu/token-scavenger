@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 /// Top-level application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Configuration version for schema migration compatibility.
+    #[serde(default = "default_config_version")]
+    pub version: String,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -160,16 +163,45 @@ pub struct ProviderConfig {
 }
 
 // Default values
-fn default_bind() -> String { "0.0.0.0:8000".to_string() }
-fn default_true() -> bool { true }
-fn default_ui_path() -> String { "/ui".to_string() }
-fn default_request_timeout_ms() -> u64 { 120_000 }
-fn default_db_path() -> String { "tokenscavenger.db".to_string() }
-fn default_log_format() -> String { "json".to_string() }
-fn default_log_level() -> String { "info".to_string() }
-fn default_metrics_path() -> String { "/metrics".to_string() }
-fn default_alias_strategy() -> String { "provider-priority".to_string() }
-fn default_max_retries() -> u32 { 2 }
-fn default_breaker_threshold() -> u32 { 3 }
-fn default_breaker_cooldown_secs() -> u64 { 60 }
-fn default_health_probe_interval() -> u64 { 30 }
+fn default_config_version() -> String {
+    "0.1.0".to_string()
+}
+fn default_bind() -> String {
+    "0.0.0.0:8000".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_ui_path() -> String {
+    "/ui".to_string()
+}
+fn default_request_timeout_ms() -> u64 {
+    120_000
+}
+fn default_db_path() -> String {
+    "tokenscavenger.db".to_string()
+}
+fn default_log_format() -> String {
+    "json".to_string()
+}
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
+}
+fn default_alias_strategy() -> String {
+    "provider-priority".to_string()
+}
+fn default_max_retries() -> u32 {
+    2
+}
+fn default_breaker_threshold() -> u32 {
+    3
+}
+fn default_breaker_cooldown_secs() -> u64 {
+    60
+}
+fn default_health_probe_interval() -> u64 {
+    30
+}

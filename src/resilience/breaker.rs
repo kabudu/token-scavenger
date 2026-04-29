@@ -1,5 +1,4 @@
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -33,7 +32,11 @@ pub struct CircuitBreakerState {
 
 impl CircuitBreakerState {
     pub fn new(state: BreakerState, failure_count: u32, failure_threshold: u32) -> Self {
-        Self { state, failure_count, failure_threshold }
+        Self {
+            state,
+            failure_count,
+            failure_threshold,
+        }
     }
 
     pub fn is_open(&self) -> bool {
@@ -42,6 +45,14 @@ impl CircuitBreakerState {
 
     pub fn state(&self) -> BreakerState {
         self.state.clone()
+    }
+
+    pub fn failure_count(&self) -> u32 {
+        self.failure_count
+    }
+
+    pub fn failure_threshold(&self) -> u32 {
+        self.failure_threshold
     }
 }
 
@@ -79,11 +90,7 @@ impl CircuitBreaker {
             }
             BreakerState::HalfOpen => {
                 let trials = self.half_open_trials.load(Ordering::SeqCst);
-                if trials < self.max_half_open_trials {
-                    true
-                } else {
-                    false
-                }
+                trials < self.max_half_open_trials
             }
         }
     }

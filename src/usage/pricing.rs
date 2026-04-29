@@ -1,12 +1,11 @@
 /// Estimate the cost of a request based on token counts and provider.
 /// Returns cost in USD. Returns 0.0 for free-tier providers.
 /// For paid providers, uses approximate per-token rates.
-pub fn estimate_cost(input_tokens: u32, output_tokens: u32, provider_id: &str) -> f64 {
+pub fn estimate_cost(_input_tokens: u32, _output_tokens: u32, provider_id: &str) -> f64 {
     match provider_id {
         // Free-tier providers
-        "groq" | "google" | "openrouter" | "cloudflare" | "cerebras"
-        | "nvidia" | "cohere" | "huggingface" | "zai" | "siliconflow"
-        | "github-models" => 0.0,
+        "groq" | "google" | "openrouter" | "cloudflare" | "cerebras" | "nvidia" | "cohere"
+        | "huggingface" | "zai" | "siliconflow" | "github-models" => 0.0,
 
         // Placeholder for paid providers
         _ => 0.0,

@@ -130,11 +130,11 @@ impl NormalizedChatRequest {
     pub fn from_request(req: ChatRequest) -> Self {
         let stop = match req.stop {
             Some(serde_json::Value::String(s)) => Some(vec![s]),
-            Some(serde_json::Value::Array(arr)) => {
-                Some(arr.iter()
+            Some(serde_json::Value::Array(arr)) => Some(
+                arr.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect())
-            }
+                    .collect(),
+            ),
             _ => None,
         };
 

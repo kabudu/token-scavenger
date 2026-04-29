@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Provider capabilities metadata for catalog rendering.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -53,5 +52,10 @@ pub fn parse_rate_limit_headers(headers: &reqwest::header::HeaderMap) -> RateLim
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok());
 
-    RateLimitInfo { remaining, limit, reset_at, retry_after }
+    RateLimitInfo {
+        remaining,
+        limit,
+        reset_at,
+        retry_after,
+    }
 }

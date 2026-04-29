@@ -1,5 +1,5 @@
+use crate::api::openai::chat::{ProviderUsage, UsageResponse};
 use serde::{Deserialize, Serialize};
-use crate::api::openai::chat::{UsageResponse, ProviderUsage};
 
 /// OpenAI-compatible embeddings request.
 #[derive(Debug, Deserialize)]
@@ -39,9 +39,10 @@ impl NormalizedEmbeddingsRequest {
     pub fn from_request(req: EmbeddingsRequest) -> Self {
         let input = match &req.input {
             serde_json::Value::String(s) => vec![s.clone()],
-            serde_json::Value::Array(arr) => {
-                arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
-            }
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
             _ => vec![],
         };
 

@@ -13,15 +13,18 @@ pub async fn get_usage_series(state: &AppState) -> serde_json::Value {
 
     match result {
         Ok(rows) => {
-            let series: Vec<serde_json::Value> = rows.into_iter().map(|(p, inp, out, cost, free)| {
-                serde_json::json!({
-                    "provider_id": p,
-                    "input_tokens": inp,
-                    "output_tokens": out,
-                    "estimated_cost_usd": cost,
-                    "free_tier": free,
+            let series: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(p, inp, out, cost, free)| {
+                    serde_json::json!({
+                        "provider_id": p,
+                        "input_tokens": inp,
+                        "output_tokens": out,
+                        "estimated_cost_usd": cost,
+                        "free_tier": free,
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::json!({"series": series, "period": "24h"})
         }
         Err(_) => serde_json::json!({"series": [], "period": "24h"}),

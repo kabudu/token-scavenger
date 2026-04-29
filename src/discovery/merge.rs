@@ -1,6 +1,5 @@
-use std::sync::Arc;
+use crate::api::openai::models::{ModelEntry, ModelListResponse};
 use crate::app::state::AppState;
-use crate::api::openai::models::{ModelListResponse, ModelEntry};
 
 /// Build the merged model list from curated catalog and discovered models.
 pub async fn build_model_list(state: &AppState) -> ModelListResponse {
@@ -32,10 +31,12 @@ pub async fn build_model_list(state: &AppState) -> ModelListResponse {
 
     // Override with discovered entries
     for m in &discovered {
-        let id = m.get("upstream_model_id")
+        let id = m
+            .get("upstream_model_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let provider = m.get("provider_id")
+        let provider = m
+            .get("provider_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         models_map.insert(
@@ -63,21 +64,25 @@ pub async fn build_model_list(state: &AppState) -> ModelListResponse {
 
 /// Get all models as JSON for the admin API.
 pub async fn get_all_models(state: &AppState) -> serde_json::Value {
-    let result = sqlx::query_as::<_, (String, String, bool)>(
-        "SELECT provider_id, upstream_model_id, enabled FROM models ORDER BY provider_id"
+    let result = sqlx::query_as::<_, (String, String, String, bool)>(
+        "SELECT provider_id, upstream_model_id, public_model_id, enabled FROM models ORDER BY provider_id",
     )
     .fetch_all(&state.db)
     .await;
 
     match result {
         Ok(rows) => {
-            let models: Vec<serde_json::Value> = rows.into_iter().map(|(p, m, e)| {
-                serde_json::json!({
-                    "provider_id": p,
-                    "upstream_model_id": m,
-                    "enabled": e,
+            let models: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(p, m, public_id, e)| {
+                    serde_json::json!({
+                        "provider_id": p,
+                        "upstream_model_id": m,
+                        "public_model_id": public_id,
+                        "enabled": e,
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::json!({"models": models})
         }
         Err(_) => serde_json::json!({"models": []}),
@@ -92,13 +97,16 @@ async fn get_discovered_from_db(state: &AppState) -> Vec<serde_json::Value> {
     .await;
 
     match result {
-        Ok(rows) => rows.into_iter().map(|(p, u, pub_id, _e)| {
-            serde_json::json!({
-                "provider_id": p,
-                "upstream_model_id": u,
-                "public_model_id": pub_id,
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(p, u, pub_id, _e)| {
+                serde_json::json!({
+                    "provider_id": p,
+                    "upstream_model_id": u,
+                    "public_model_id": pub_id,
+                })
             })
-        }).collect(),
+            .collect(),
         Err(_) => vec![],
     }
 }

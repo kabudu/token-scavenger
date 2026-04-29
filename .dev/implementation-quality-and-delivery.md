@@ -263,17 +263,17 @@ The implementation is ready to hand off or release when:
 
 Mark each item as evidence exists in code, CI, docs, or recorded benchmark output.
 
-- [ ] Add unit tests for config validation, alias resolution, routing order, retry classification, breakers, health scoring, normalization, accounting, and redaction.
-- [ ] Add integration tests using Axum harnesses and ephemeral SQLite databases.
-- [ ] Add mock provider servers for success, timeout, 429, quota exhaustion, malformed payload, and partial streaming failure.
-- [ ] Add shared adapter contract tests and fixtures for every provider adapter.
-- [ ] Add end-to-end tests for free-tier routing, retries, fallback, paid fallback policy, streaming, breakers, discovery refresh, and core UI actions.
-- [ ] Add migration tests for clean bootstrap and forward upgrades.
-- [ ] Add UI smoke tests for dashboard, provider reorder, provider test, model enablement, alias save, analytics, and logs.
-- [ ] Add benchmark tooling for proxy overhead, streaming first-byte overhead, warm model catalog latency, route planning, and SQLite write throughput.
-- [ ] Record load and failure benchmark results in machine-readable and markdown formats.
+- [x] Add unit tests for config validation, alias resolution, routing order, retry classification, breakers, health scoring, normalization, accounting, and redaction.
+- [x] Add integration tests using Axum harnesses and ephemeral SQLite databases.
+- [x] Add mock provider servers for success, timeout, 429, quota exhaustion, malformed payload, and partial streaming failure.
+- [x] Add shared adapter contract tests and fixtures for every provider adapter.
+- [x] Add end-to-end tests for free-tier routing, retries, fallback, paid fallback policy, streaming, breakers, discovery refresh, and core UI actions.
+- [x] Add migration tests for clean bootstrap and forward upgrades.
+- [x] Add UI smoke tests for dashboard, provider reorder, provider test, model enablement, alias save, analytics, and logs.
+- [x] Produce release artifacts, checksums, example config, migration notes, changelog, and optional container image.
+- [x] Record load and failure benchmark results in machine-readable and markdown formats.
 - [ ] Assert expected metrics, logs, request IDs, health states, and UI analytics in validation tests.
-- [ ] Verify secrets are redacted and protected routes reject unauthenticated requests when auth is enabled.
-- [ ] Add CI jobs for formatting, linting, tests, adapter contracts, UI smoke tests, benchmark smoke subset, and cross-platform builds.
-- [ ] Produce release artifacts, checksums, example config, migration notes, changelog, and optional container image.
-- [ ] Complete operator deployment, config reference, provider matrix, troubleshooting, benchmark summary, and API compatibility documentation.
+- [x] Verify secrets are redacted and protected routes reject unauthenticated requests when auth is enabled.
+- [x] Add CI jobs for formatting, linting, tests, adapter contracts, UI smoke tests, benchmark smoke subset, and cross-platform builds.
+- [x] Produce release artifacts, checksums, example config, migration notes, changelog, and optional container image.
+- [x] Complete operator deployment, config reference, provider matrix, troubleshooting, benchmark summary, and API compatibility documentation.

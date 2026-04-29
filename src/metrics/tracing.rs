@@ -1,8 +1,6 @@
-/// Structured tracing setup and utilities.
-/// The main tracing initialization is done in app::startup.
-/// This module provides helpers for consistent log field usage.
-
-use tracing::field;
+//! Structured tracing setup and utilities.
+//! The main tracing initialization is done in app::startup.
+//! This module provides helpers for consistent log field usage.
 
 /// Create a span for a request with all standard fields.
 #[macro_export]
