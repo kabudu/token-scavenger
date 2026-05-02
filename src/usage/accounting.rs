@@ -14,6 +14,19 @@ pub struct UsageRecord<'a> {
     pub streaming: bool,
 }
 
+/// Inputs needed to persist a failed request when no usage event exists.
+pub struct FailureRecord<'a> {
+    pub request_id: &'a str,
+    pub endpoint_kind: &'a str,
+    pub requested_model: &'a str,
+    pub selected_provider_id: Option<&'a str>,
+    pub selected_model_id: Option<&'a str>,
+    pub status: &'a str,
+    pub http_status: i64,
+    pub latency_ms: i64,
+    pub streaming: bool,
+}
+
 /// Record a usage event for a completed request.
 pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(), sqlx::Error> {
     let usage = record.usage.unwrap_or(&UsageResponse {
@@ -84,6 +97,46 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
         completion_tokens = usage.completion_tokens,
         latency_ms = record.latency_ms,
         "Usage recorded"
+    );
+
+    Ok(())
+}
+
+/// Record a failed request row so exhausted routes remain auditable.
+pub async fn record_failure(
+    state: &AppState,
+    record: FailureRecord<'_>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(record.request_id)
+    .bind(record.endpoint_kind)
+    .bind(record.requested_model)
+    .bind(record.selected_provider_id)
+    .bind(record.selected_model_id)
+    .bind(record.status)
+    .bind(record.http_status)
+    .bind(record.latency_ms)
+    .bind(record.streaming)
+    .execute(&state.db)
+    .await?;
+
+    crate::metrics::prometheus::record_request(
+        record.selected_provider_id.unwrap_or("none"),
+        record.selected_model_id.unwrap_or(record.requested_model),
+        record.endpoint_kind,
+        record.status,
+    );
+
+    info!(
+        request_id = %record.request_id,
+        provider = record.selected_provider_id.unwrap_or("none"),
+        model = record.requested_model,
+        status = record.status,
+        latency_ms = record.latency_ms,
+        "Failed request recorded"
     );
 
     Ok(())

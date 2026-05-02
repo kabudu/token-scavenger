@@ -29,6 +29,10 @@ pub struct ServerConfig {
     pub bind: String,
     #[serde(default)]
     pub master_api_key: String,
+    #[serde(default)]
+    pub allowed_cors_origins: Vec<String>,
+    #[serde(default)]
+    pub allow_query_api_keys: bool,
     #[serde(default = "default_true")]
     pub ui_enabled: bool,
     #[serde(default = "default_ui_path")]
@@ -42,6 +46,8 @@ impl Default for ServerConfig {
         Self {
             bind: default_bind(),
             master_api_key: String::new(),
+            allowed_cors_origins: Vec::new(),
+            allow_query_api_keys: false,
             ui_enabled: true,
             ui_path: default_ui_path(),
             request_timeout_ms: default_request_timeout_ms(),
@@ -54,12 +60,15 @@ impl Default for ServerConfig {
 pub struct DatabaseConfig {
     #[serde(default = "default_db_path")]
     pub path: String,
+    #[serde(default = "default_db_max_connections")]
+    pub max_connections: u32,
 }
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             path: default_db_path(),
+            max_connections: default_db_max_connections(),
         }
     }
 }
@@ -180,6 +189,9 @@ fn default_request_timeout_ms() -> u64 {
 }
 fn default_db_path() -> String {
     "tokenscavenger.db".to_string()
+}
+fn default_db_max_connections() -> u32 {
+    8
 }
 fn default_log_format() -> String {
     "json".to_string()

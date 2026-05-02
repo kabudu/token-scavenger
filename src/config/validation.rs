@@ -1,4 +1,5 @@
 use crate::config::schema::Config;
+use reqwest::header::HeaderValue;
 
 /// Result of config validation.
 #[derive(Debug, Default)]
@@ -15,10 +16,21 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
     if cfg.server.bind.is_empty() {
         v.errors.push("server.bind must not be empty".to_string());
     }
+    for origin in &cfg.server.allowed_cors_origins {
+        if origin.parse::<HeaderValue>().is_err() {
+            v.errors.push(format!(
+                "server.allowed_cors_origins contains an invalid header value: {origin}"
+            ));
+        }
+    }
 
     // Validate database
     if cfg.database.path.is_empty() {
         v.errors.push("database.path must not be empty".to_string());
+    }
+    if cfg.database.max_connections == 0 {
+        v.errors
+            .push("database.max_connections must be > 0".to_string());
     }
 
     // Validate resilience
@@ -46,6 +58,14 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
             v.errors
                 .push(format!("Duplicate provider id: {}", provider.id));
         }
+        if let Some(api_key) = &provider.api_key {
+            if api_key.parse::<HeaderValue>().is_err() {
+                v.errors.push(format!(
+                    "provider '{}' api_key cannot be represented as an HTTP header value",
+                    provider.id
+                ));
+            }
+        }
     }
 
     v
@@ -69,6 +89,19 @@ mod tests {
         let cfg = Config::default();
         let result = validate_config(&cfg);
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_database_pool_size() {
+        let mut cfg = Config::default();
+        cfg.database.max_connections = 0;
+        let result = validate_config(&cfg);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("database.max_connections"))
+        );
     }
 
     #[test]
@@ -96,5 +129,29 @@ mod tests {
         };
         let result = validate_config(&cfg);
         assert!(result.errors.iter().any(|e| e.contains("Duplicate")));
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_header_values() {
+        let cfg = Config {
+            server: ServerConfig {
+                allowed_cors_origins: vec!["https://example.com\nbad".into()],
+                ..Default::default()
+            },
+            providers: vec![ProviderConfig {
+                id: "groq".into(),
+                api_key: Some("bad\nkey".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let result = validate_config(&cfg);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("allowed_cors_origins"))
+        );
+        assert!(result.errors.iter().any(|e| e.contains("api_key")));
     }
 }

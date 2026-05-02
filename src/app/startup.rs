@@ -3,11 +3,12 @@ use crate::config::loader::load_config;
 use crate::config::schema::Config;
 use crate::db::models as db_models;
 use axum::Router;
+use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::middleware::from_fn_with_state;
 use sqlx::SqlitePool;
 use std::path::Path;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -35,7 +36,9 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
     info!("Tracing initialized");
 
     // 3. Open SQLite and run migrations
-    let db: SqlitePool = db_models::init_db(&config.database.path).await?;
+    let db: SqlitePool =
+        db_models::init_db_with_pool_size(&config.database.path, config.database.max_connections)
+            .await?;
     info!("Database initialized at {}", config.database.path);
 
     // 4. Build AppState
@@ -282,8 +285,31 @@ pub fn build_router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn(
             crate::api::middleware::request_id_middleware,
         ))
-        .layer(CorsLayer::new())
+        .layer(cors_layer(&state.config()))
         .with_state(state)
+}
+
+fn cors_layer(config: &Config) -> CorsLayer {
+    let mut layer = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::PUT])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-request-id"),
+        ]);
+
+    let origins: Vec<HeaderValue> = config
+        .server
+        .allowed_cors_origins
+        .iter()
+        .filter_map(|origin| origin.parse::<HeaderValue>().ok())
+        .collect();
+
+    if !origins.is_empty() {
+        layer = layer.allow_origin(AllowOrigin::list(origins));
+    }
+
+    layer
 }
 
 /// Initialize the tracing subscriber based on config.

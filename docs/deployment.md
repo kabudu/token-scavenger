@@ -136,6 +136,8 @@ sudo systemctl status tokenscavenger
 [server]
 bind = "127.0.0.1:8000"          # Bind to localhost behind a reverse proxy
 master_api_key = "${PROXY_KEY}"  # Require auth for all API requests
+allowed_cors_origins = ["https://proxy.example.com"]
+allow_query_api_keys = false     # Prefer Authorization: Bearer <key>
 ```
 
 ### Reverse Proxy (Nginx)

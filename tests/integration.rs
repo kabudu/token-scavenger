@@ -251,6 +251,95 @@ async fn test_startup_router_enforces_auth_on_protected_routes() {
 }
 
 #[tokio::test]
+async fn test_query_string_api_key_requires_explicit_opt_in() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let config = Config {
+        server: ServerConfig {
+            master_api_key: "secret".into(),
+            allow_query_api_keys: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(config, pool.clone()));
+
+    let rejected = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models?api_key=secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+    let config = Config {
+        server: ServerConfig {
+            master_api_key: "secret".into(),
+            allow_query_api_keys: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(config, pool));
+    let accepted = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models?api_key=secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_configured_cors_origin_is_allowed() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let config = Config {
+        server: ServerConfig {
+            allowed_cors_origins: vec!["https://ops.example".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(config, pool));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .method("OPTIONS")
+                .header("Origin", "https://ops.example")
+                .header("Access-Control-Request-Method", "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "https://ops.example"
+    );
+}
+
+#[tokio::test]
 async fn test_chat_completions_no_config_returns_error() {
     let (app, _state) = build_test_app().await;
 

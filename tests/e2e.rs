@@ -236,6 +236,7 @@ async fn e2e_route_exhausted_no_providers() {
         .unwrap();
     let config = tokenscavenger::config::schema::Config::default();
     let state = tokenscavenger::app::state::AppState::new(config, pool);
+    let db = state.db.clone();
 
     let app = axum::Router::new()
         .route(
@@ -250,6 +251,7 @@ async fn e2e_route_exhausted_no_providers() {
                 .uri("/v1/chat/completions")
                 .method("POST")
                 .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-route-exhausted")
                 .body(Body::from(
                     serde_json::to_string(&serde_json::json!({
                         "model": "nonexistent", "messages": [{"role":"user","content":"Hi"}]
@@ -262,6 +264,17 @@ async fn e2e_route_exhausted_no_providers() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let row: (String, String, i64) = sqlx::query_as(
+        "SELECT request_id, status, http_status FROM request_log WHERE request_id = ?",
+    )
+    .bind("req-route-exhausted")
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "req-route-exhausted");
+    assert_eq!(row.1, "route_exhausted");
+    assert_eq!(row.2, 503);
 }
 
 #[tokio::test]
@@ -298,6 +311,37 @@ async fn e2e_models_endpoint() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["object"], "list");
     assert!(!json["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn e2e_streaming_response_is_wire_level_sse() {
+    let (app, _state) = build_e2e_app(0).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model",
+                        "stream": true,
+                        "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 16384).await.unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("data: {"));
+    assert!(text.contains("data: [DONE]"));
+    assert!(!text.contains("data: data:"));
 }
 
 #[tokio::test]

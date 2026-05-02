@@ -1,4 +1,13 @@
-# TokenScavenger
+<p align="center">
+  <img src="resources/TokenScavengerLogo.png" alt="TokenScavenger Logo" width="200">
+</p>
+
+<h1 align="center">TokenScavenger</h1>
+
+<p align="center">
+  <a href="https://github.com/kabudu/token-scavenger/actions/workflows/ci.yml"><img src="https://github.com/kabudu/token-scavenger/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+</p>
 
 **A lightweight, self-hosted LLM proxy/router that prioritizes free-tier inference providers.**
 
@@ -59,9 +68,14 @@ Create `tokenscavenger.toml`:
 ```toml
 [server]
 bind = "0.0.0.0:8000"
+# Optional: require Authorization: Bearer <key>
+# master_api_key = "${TOKENSAVENGER_KEY}"
+# Optional browser origins allowed by CORS
+allowed_cors_origins = []
 
 [database]
 path = "tokenscavenger.db"
+max_connections = 8
 
 [logging]
 level = "info"

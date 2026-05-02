@@ -10,7 +10,8 @@ use tracing::warn;
 
 /// Optional API key authentication middleware.
 /// If `server.master_api_key` is set, all requests must include
-/// `Authorization: Bearer <key>` or pass the key as a query parameter.
+/// `Authorization: Bearer <key>`.
+/// Query-string API keys are accepted only when explicitly enabled.
 pub async fn auth_middleware(
     State(state): State<AppState>,
     req: Request<Body>,
@@ -37,19 +38,20 @@ pub async fn auth_middleware(
         }
     }
 
-    // Check query parameter
-    if let Some(query_key) = req.uri().query().and_then(|q| {
-        q.split('&').find_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            if parts.next() == Some("api_key") {
-                parts.next()
-            } else {
-                None
+    if config.server.allow_query_api_keys {
+        if let Some(query_key) = req.uri().query().and_then(|q| {
+            q.split('&').find_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                if parts.next() == Some("api_key") {
+                    parts.next()
+                } else {
+                    None
+                }
+            })
+        }) {
+            if query_key == master_key {
+                return Ok(next.run(req).await);
             }
-        })
-    }) {
-        if query_key == master_key {
-            return Ok(next.run(req).await);
         }
     }
 

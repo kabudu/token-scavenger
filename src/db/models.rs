@@ -7,6 +7,14 @@ use tracing::info;
 
 /// Open the SQLite database, run migrations, and return a connection pool.
 pub async fn init_db(db_path: &str) -> Result<SqlitePool, Box<dyn std::error::Error>> {
+    init_db_with_pool_size(db_path, 8).await
+}
+
+/// Open SQLite with an explicit max connection count.
+pub async fn init_db_with_pool_size(
+    db_path: &str,
+    max_connections: u32,
+) -> Result<SqlitePool, Box<dyn std::error::Error>> {
     if let Some(parent) = Path::new(db_path).parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
@@ -20,7 +28,7 @@ pub async fn init_db(db_path: &str) -> Result<SqlitePool, Box<dyn std::error::Er
     }
 
     let pool = SqlitePoolOptions::new()
-        .max_connections(8)
+        .max_connections(max_connections)
         .connect_with(
             SqliteConnectOptions::from_str(&db_url)?
                 .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)

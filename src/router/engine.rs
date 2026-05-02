@@ -38,6 +38,7 @@ pub async fn route_chat_request(
     request: NormalizedChatRequest,
     request_id: String,
 ) -> Result<ChatResponse, ApiError> {
+    let started_at = std::time::Instant::now();
     let config = state.config();
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
@@ -57,6 +58,19 @@ pub async fn route_chat_request(
     .await;
 
     if plan.is_empty() {
+        record_route_failure(
+            &state,
+            RouteFailure {
+                request_id: &request_id,
+                endpoint_kind: "chat",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: None,
+                started_at,
+                streaming: false,
+            },
+        )
+        .await;
         return Err(ApiError::RouteExhausted(format!(
             "No available providers for model: {}",
             resolved_model
@@ -67,6 +81,19 @@ pub async fn route_chat_request(
     let plan = filter_by_model_enabled(filter_by_health(plan, &state), &state).await;
 
     if plan.is_empty() {
+        record_route_failure(
+            &state,
+            RouteFailure {
+                request_id: &request_id,
+                endpoint_kind: "chat",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: Some(&resolved_model),
+                started_at,
+                streaming: false,
+            },
+        )
+        .await;
         return Err(ApiError::RouteExhausted(format!(
             "All providers for model '{}' are unhealthy or blocked",
             resolved_model
@@ -340,6 +367,19 @@ pub async fn route_chat_request(
                     }
                     FallbackDecision::TryNextProvider => { /* continue to next provider */ }
                     FallbackDecision::Fail => {
+                        record_route_failure(
+                            &state,
+                            RouteFailure {
+                                request_id: &request_id,
+                                endpoint_kind: "chat",
+                                requested_model: &request.model,
+                                selected_provider_id: Some(provider_id),
+                                selected_model_id: Some(&attempt.model_id),
+                                started_at,
+                                streaming: false,
+                            },
+                        )
+                        .await;
                         return Err(ApiError::RouteExhausted(format!(
                             "Provider {} failed",
                             provider_id
@@ -356,6 +396,20 @@ pub async fn route_chat_request(
         None => format!("No available providers for model: {}", resolved_model),
     };
 
+    record_route_failure(
+        &state,
+        RouteFailure {
+            request_id: &request_id,
+            endpoint_kind: "chat",
+            requested_model: &request.model,
+            selected_provider_id: plan.last().map(|p| p.provider_id.as_str()),
+            selected_model_id: plan.last().map(|p| p.model_id.as_str()),
+            started_at,
+            streaming: false,
+        },
+    )
+    .await;
+
     Err(ApiError::RouteExhausted(msg))
 }
 
@@ -365,6 +419,7 @@ pub async fn route_embeddings_request(
     request: NormalizedEmbeddingsRequest,
     request_id: String,
 ) -> Result<EmbeddingsResponse, ApiError> {
+    let started_at = std::time::Instant::now();
     let config = state.config();
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
@@ -377,6 +432,19 @@ pub async fn route_embeddings_request(
         build_attempt_plan(&policy, registry, &resolved_model, EndpointKind::Embeddings).await;
 
     if plan.is_empty() {
+        record_route_failure(
+            &state,
+            RouteFailure {
+                request_id: &request_id,
+                endpoint_kind: "embeddings",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: None,
+                started_at,
+                streaming: false,
+            },
+        )
+        .await;
         return Err(ApiError::RouteExhausted(format!(
             "No available providers for embeddings model: {}",
             resolved_model
@@ -384,6 +452,21 @@ pub async fn route_embeddings_request(
     }
 
     let plan = filter_by_model_enabled(filter_by_health(plan, &state), &state).await;
+    if plan.is_empty() {
+        record_route_failure(
+            &state,
+            RouteFailure {
+                request_id: &request_id,
+                endpoint_kind: "embeddings",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: Some(&resolved_model),
+                started_at,
+                streaming: false,
+            },
+        )
+        .await;
+    }
     let mut last_error = None;
     for attempt in &plan {
         let provider_id = &attempt.provider_id;
@@ -462,8 +545,50 @@ pub async fn route_embeddings_request(
         }
     }
 
+    record_route_failure(
+        &state,
+        RouteFailure {
+            request_id: &request_id,
+            endpoint_kind: "embeddings",
+            requested_model: &request.model,
+            selected_provider_id: plan.last().map(|p| p.provider_id.as_str()),
+            selected_model_id: plan.last().map(|p| p.model_id.as_str()),
+            started_at,
+            streaming: false,
+        },
+    )
+    .await;
+
     Err(ApiError::RouteExhausted(format!(
         "No embeddings provider available. Last error: {:?}",
         last_error
     )))
+}
+
+struct RouteFailure<'a> {
+    request_id: &'a str,
+    endpoint_kind: &'a str,
+    requested_model: &'a str,
+    selected_provider_id: Option<&'a str>,
+    selected_model_id: Option<&'a str>,
+    started_at: std::time::Instant,
+    streaming: bool,
+}
+
+async fn record_route_failure(state: &AppState, failure: RouteFailure<'_>) {
+    let _ = crate::usage::accounting::record_failure(
+        state,
+        crate::usage::accounting::FailureRecord {
+            request_id: failure.request_id,
+            endpoint_kind: failure.endpoint_kind,
+            requested_model: failure.requested_model,
+            selected_provider_id: failure.selected_provider_id,
+            selected_model_id: failure.selected_model_id,
+            status: "route_exhausted",
+            http_status: 503,
+            latency_ms: failure.started_at.elapsed().as_millis() as i64,
+            streaming: failure.streaming,
+        },
+    )
+    .await;
 }
