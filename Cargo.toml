@@ -26,7 +26,7 @@ toml = "1.1"
 clap = { version = "4.6", features = ["derive"] }
 
 # HTTP client
-reqwest = { version = "0.13", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
 
 # Async
 futures = "0.3"
@@ -46,6 +46,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
+
+# Interactive CLI
+dialoguer = { version = "0.11", features = ["password"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }

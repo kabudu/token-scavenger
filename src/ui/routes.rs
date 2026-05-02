@@ -1,25 +1,369 @@
 use crate::app::state::AppState;
 
-/// Base HTML shell with embedded Tailwind (offline-compatible via inline styles).
-const HTML_HEAD: &str = r#"<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>:root{--bg:#020617;--fg:#f5f5f5;--cyan:#00f5ff;--orange:#d35400;--emerald:#00ff9f;--card:#1e293b;--border:#334155;--gray:#9ca3af;--danger:#ef4444}*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;padding:1.5rem}a{color:var(--cyan);text-decoration:none;font-size:.875rem}h1{color:var(--orange);font-size:1.5rem;font-weight:bold;margin-bottom:1rem}h2{color:var(--emerald);font-size:1.125rem;margin-bottom:.5rem}nav{display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:2rem}table{width:100%;border-collapse:collapse}caption{text-align:left;color:var(--gray);margin-bottom:.5rem}th{color:var(--gray);font-size:.875rem;padding:.5rem;text-align:left}td{padding:.5rem;border-top:1px solid var(--border)}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem;margin-bottom:2rem}.card{background:var(--card);padding:1rem;border-radius:.5rem}.label{color:var(--gray);font-size:.75rem}.value{font-size:1.25rem;font-family:monospace}.mono{font-family:monospace;font-size:.875rem}.btn{background:#0891b2;padding:.5rem 1rem;border-radius:.25rem;border:none;color:#fff;cursor:pointer;font-size:.875rem}.btn.secondary{background:#334155}.btn.danger{background:var(--danger)}.btn:focus,a:focus{outline:2px solid var(--cyan);outline-offset:2px}.logs{background:#0f172a;padding:1rem;border-radius:.5rem;height:24rem;overflow-y:auto;font-family:monospace;font-size:.75rem}.mt-4{margin-top:1rem}.actions{display:flex;gap:.5rem;flex-wrap:wrap}</style>"#;
+pub fn render_shell(
+    title: &str,
+    active_nav: &str,
+    content: &str,
+    scripts: &str,
+    state: &AppState,
+) -> String {
+    let uptime = state.start_time.elapsed().as_secs();
+    let hrs = uptime / 3600;
+    let mins = (uptime % 3600) / 60;
+    let secs = uptime % 60;
+    let uptime_str = format!("{:02}:{:02}:{:02}", hrs, mins, secs);
 
-const NAV: &str = r#"<nav><a href="/ui">Dashboard</a><a href="/ui/providers">Providers</a><a href="/ui/models">Models</a><a href="/ui/routing">Routing</a><a href="/ui/usage">Usage</a><a href="/ui/health">Health</a><a href="/ui/logs">Logs</a><a href="/ui/config">Config</a><a href="/ui/audit">Audit</a></nav>"#;
+    let active_class =
+        "sidebar-link active flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg";
+    let inactive_class = "sidebar-link flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg text-slate-400";
+
+    let nav_item = |id: &str, url: &str, icon: &str, label: &str| -> String {
+        let class = if id == active_nav {
+            active_class
+        } else {
+            inactive_class
+        };
+        format!(
+            r#"<a href="{}" class="{}"><i class="{} w-5"></i> {}</a>"#,
+            url, class, icon, label
+        )
+    };
+
+    let nav = format!(
+        r#"<nav class="flex-1 px-3 space-y-1">
+        {}
+        {}
+        {}
+        {}
+        {}
+        {}
+        <div class="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-600 uppercase tracking-widest">System</div>
+        {}
+        {}
+        {}
+        {}
+        </nav>"#,
+        nav_item("dashboard", "/ui", "fas fa-th-large", "Dashboard"),
+        nav_item("providers", "/ui/providers", "fas fa-server", "Providers"),
+        nav_item("models", "/ui/models", "fas fa-brain", "Models"),
+        nav_item("routing", "/ui/routing", "fas fa-route", "Routing"),
+        nav_item("usage", "/ui/usage", "fas fa-chart-line", "Usage"),
+        nav_item("chat", "/ui/chat", "fas fa-comment-dots", "Chat Tester"),
+        nav_item("health", "/ui/health", "fas fa-heartbeat", "Health"),
+        nav_item("logs", "/ui/logs", "fas fa-terminal", "Logs"),
+        nav_item("config", "/ui/config", "fas fa-cog", "Config"),
+        nav_item("audit", "/ui/audit", "fas fa-history", "Audit")
+    );
+
+    let head = format!(
+        r##"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{} // TokenScavenger</title>
+<link rel="icon" type="image/png" href="/favicon.ico" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+<style>
+{}
+</style>
+</head>"##,
+        title,
+        include_str!("styles.css")
+    );
+
+    format!(
+        r##"{}
+<body class="flex h-screen overflow-hidden">
+<aside class="w-64 border-r border-white/5 flex flex-col shrink-0 bg-[#020617]">
+    <div class="p-6 flex items-center gap-3">
+    <img src="/ui/logo.png" alt="TokenScavenger Logo" class="w-8 h-8" />
+    <span class="text-lg font-bold tracking-tight">Token<span class="text-[#D35400]">Scavenger</span></span>
+    </div>
+    {}
+    <div class="p-4 border-t border-white/5 bg-black/20">
+    <div class="flex items-center justify-between mb-2">
+        <span class="text-[10px] font-bold text-slate-500 uppercase">Version</span>
+        <span class="text-[10px] font-mono text-emerald-500">v0.1.0-STABLE</span>
+    </div>
+    <div class="flex items-center justify-between">
+        <span class="text-[10px] font-bold text-slate-500 uppercase">Uptime</span>
+        <span id="uptime-val" class="text-[10px] font-mono text-white">{}</span>
+    </div>
+    </div>
+</aside>
+<main class="flex-1 overflow-y-auto relative">
+    <header class="sticky top-0 z-10 bg-[#020617]/80 backdrop-blur-md border-b border-white/5 px-8 py-4 flex items-center justify-between">
+    <div>
+        <h1 class="text-xl font-bold">{}</h1>
+    </div>
+    <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10" id="health-badge">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" id="health-badge-dot"></span>
+        <span class="text-[10px] font-bold text-emerald-500 uppercase tracking-wider" id="health-badge-text">Operational</span>
+        </div>
+    </div>
+    </header>
+    <div class="p-8 space-y-6">
+    {}
+    </div>
+</main>
+<div id="global-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+    <div class="glass-card max-w-md w-full p-6 transform scale-95 transition-transform duration-300" id="global-modal-content">
+        <h3 id="global-modal-title" class="text-lg font-bold mb-2"></h3>
+        <p id="global-modal-message" class="text-sm text-slate-300 mb-6"></p>
+        <div class="flex justify-end">
+            <button class="btn" style="background:#334155;" onclick="hideModal()">Close</button>
+        </div>
+    </div>
+</div>
+<script>
+function showModal(title, message, isError) {{
+    document.getElementById('global-modal-title').innerText = title;
+    document.getElementById('global-modal-title').className = `text-lg font-bold mb-2 ${{isError ? 'text-red-400' : 'text-emerald-400'}}`;
+    document.getElementById('global-modal-message').innerText = (typeof message === 'object') ? JSON.stringify(message, null, 2) : message;
+    if (typeof message === 'object') {{ document.getElementById('global-modal-message').classList.add('font-mono', 'whitespace-pre-wrap', 'text-[10px]'); }}
+    const modal = document.getElementById('global-modal');
+    modal.classList.remove('hidden');
+    void modal.offsetWidth;
+    modal.classList.remove('opacity-0');
+    document.getElementById('global-modal-content').classList.remove('scale-95');
+}}
+function hideModal() {{
+    const modal = document.getElementById('global-modal');
+    modal.classList.add('opacity-0');
+    document.getElementById('global-modal-content').classList.add('scale-95');
+    setTimeout(() => {{ modal.classList.add('hidden'); }}, 300);
+}}
+let startTime = Date.now() - {};
+setInterval(() => {{
+    const diff = Math.floor((Date.now() - startTime) / 1000);
+    const hrs = String(Math.floor(diff / 3600)).padStart(2, "0");
+    const mins = String(Math.floor((diff % 3600) / 60)).padStart(2, "0");
+    const secs = String(diff % 60).padStart(2, "0");
+    document.getElementById("uptime-val").innerText = `${{hrs}}:${{mins}}:${{secs}}`;
+}}, 1000);
+
+const healthStates = {};
+let worstState = "Healthy";
+for (const [pid, h] of Object.entries(healthStates)) {{
+    if (h.state === "Unhealthy") worstState = "Unhealthy";
+    else if (h.state === "Degraded" && worstState !== "Unhealthy") worstState = "Degraded";
+}}
+const bText = document.getElementById('health-badge-text');
+const bDot = document.getElementById('health-badge-dot');
+const bCont = document.getElementById('health-badge');
+if (worstState === "Healthy") {{
+    bText.innerText = "Operational"; bText.className = "text-[10px] font-bold text-emerald-500 uppercase tracking-wider";
+    bDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+    bCont.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20";
+}} else if (worstState === "Degraded") {{
+    bText.innerText = "Degraded"; bText.className = "text-[10px] font-bold text-yellow-500 uppercase tracking-wider";
+    bDot.className = "w-2 h-2 rounded-full bg-yellow-500 animate-pulse";
+    bCont.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-yellow-500/10 border border-yellow-500/20";
+}} else {{
+    bText.innerText = "Unhealthy"; bText.className = "text-[10px] font-bold text-red-500 uppercase tracking-wider";
+    bDot.className = "w-2 h-2 rounded-full bg-red-500 animate-pulse";
+    bCont.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/20";
+}}
+</script>
+{}
+</body>
+</html>"##,
+        head,
+        nav,
+        uptime_str,
+        title,
+        content,
+        uptime * 1000,
+        {
+            let health_map: std::collections::HashMap<_, _> = state
+                .health_states
+                .iter()
+                .map(|e| {
+                    (
+                        e.key().clone(),
+                        serde_json::json!({ "state": format!("{:?}", e.value().state) }),
+                    )
+                })
+                .collect();
+            serde_json::to_string(&health_map).unwrap_or("{}".into())
+        },
+        scripts
+    )
+}
 
 /// Render the dashboard view.
 pub async fn render_dashboard(state: &AppState) -> String {
     let config = state.config();
-    let uptime = state.start_time.elapsed().as_secs();
-    format!(
-        r#"{head}<title>TokenScavenger Dashboard</title></head><body>{nav}<h1>TokenScavenger Dashboard</h1><div class="grid"><div class="card"><div class="label">Uptime</div><div class="value">{uptime}s</div></div><div class="card"><div class="label">Providers</div><div class="value">{providers}</div></div><div class="card"><div class="label">Bind</div><div class="value mono">{bind}</div></div><div class="card"><div class="label">Free First</div><div class="value">{free_first}</div></div></div><div class="card"><h2>System Status</h2><p>TokenScavenger v0.1.0 — LLM Proxy Router</p><p class="label mt-4">Rust edition 2024 | Axum + Tokio + SQLite</p></div></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV,
-        uptime = uptime,
-        providers = config.providers.len(),
-        bind = config.server.bind,
-        free_first = config.routing.free_first
+    let usage = crate::usage::aggregation::get_usage_series(state).await;
+    let mut estimated_cost = 0.0_f64;
+    let mut total_tokens = 0_i64;
+    if let Some(series) = usage.get("series").and_then(|v| v.as_array()) {
+        for entry in series {
+            estimated_cost += entry
+                .get("estimated_cost_usd")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            total_tokens += entry.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            total_tokens += entry.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        }
+    }
+    let request_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM request_log")
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|row| row.0)
+        .unwrap_or(0);
+    let avg_latency: i64 = sqlx::query_as::<_, (i64,)>("SELECT COALESCE(CAST(AVG(latency_ms) AS INTEGER), 0) FROM request_log")
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|row| row.0)
+        .unwrap_or(0);
+
+    // Fetch per-provider average latency
+    let provider_latencies: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
+        "SELECT selected_provider_id, CAST(AVG(latency_ms) AS INTEGER) FROM request_log WHERE status = 'success' GROUP BY selected_provider_id"
     )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+
+    let hourly_traffic = crate::usage::aggregation::get_hourly_traffic(state).await;
+    let provider_dist = crate::usage::aggregation::get_provider_distribution(state).await;
+
+    let mut provider_rows = String::new();
+    for p in &config.providers {
+        if !p.enabled {
+            continue;
+        }
+        let health = state.health_states.get(&p.id);
+        let status = health
+            .as_ref()
+            .map(|h| format!("{:?}", h.value().state))
+            .unwrap_or("Unknown".into());
+        let status_html = match status.as_str() {
+            "Healthy" => {
+                r#"<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Optimal</span>"#
+            }
+            "Degraded" => {
+                r#"<span class="px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-500 text-[10px]">Degraded</span>"#
+            }
+            "Unhealthy" => {
+                r#"<span class="px-2 py-0.5 rounded bg-red-500/10 text-red-500 text-[10px]">Unhealthy</span>"#
+            }
+            _ => {
+                r#"<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Standby</span>"#
+            }
+        };
+        let lat = provider_latencies
+            .get(&p.id)
+            .map(|l| format!("{}ms", l))
+            .unwrap_or("--".to_string());
+        provider_rows.push_str(&format!(
+            r#"<tr><td class="px-6 py-4 font-bold">{}</td><td class="px-6 py-4">{}</td><td class="px-6 py-4 font-mono">{}</td></tr>"#,
+            p.id, status_html, lat
+        ));
+    }
+
+    let content = format!(
+        r##"
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div class="glass-card p-5 metric-glow-orange">
+            <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Active Providers</span><i class="fas fa-server text-[#D35400]"></i></div>
+            <div class="text-3xl font-bold">{}</div>
+          </div>
+          <div class="glass-card p-5">
+            <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Total Requests</span><i class="fas fa-exchange-alt text-slate-500"></i></div>
+            <div class="text-3xl font-bold">{}</div>
+          </div>
+          <div class="glass-card p-5 metric-glow-cyan">
+            <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Total Tokens</span><i class="fas fa-coins text-cyan-400"></i></div>
+            <div class="text-3xl font-bold">{}</div>
+          </div>
+          <div class="glass-card p-5">
+            <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Avg Latency</span><i class="fas fa-bolt text-yellow-400"></i></div>
+            <div class="text-3xl font-bold">{}<span class="text-sm font-normal text-slate-500 ml-1">ms</span></div>
+          </div>
+          <div class="glass-card p-5 metric-glow-emerald">
+            <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Estimated Spend</span><i class="fas fa-piggy-bank text-emerald-400"></i></div>
+            <div class="text-3xl font-bold">${:.4}</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 glass-card p-6">
+            <div class="flex items-center justify-between mb-6"><h3 class="font-bold text-slate-300">Token Scavenging Efficiency (24h)</h3></div>
+            <div class="h-64"><canvas id="trafficChart"></canvas></div>
+          </div>
+          <div class="lg:col-span-1 glass-card p-6">
+            <h3 class="font-bold text-slate-300 mb-6">Provider Distribution</h3>
+            <div class="h-64 flex flex-col justify-between"><canvas id="providerChart"></canvas></div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+              <h3 class="font-bold text-sm">Priority Routing Chains</h3>
+            </div>
+            <div class="p-0 overflow-x-auto">
+              <table class="w-full text-left text-xs"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th class="px-6 py-3">Provider</th><th class="px-6 py-3">Status</th><th class="px-6 py-3">Latency</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+            </div>
+          </div>
+          <div class="glass-card overflow-hidden flex flex-col h-full">
+            <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]"><h3 class="font-bold text-sm">System Stream</h3><div class="flex gap-2"><span class="w-2 h-2 rounded-full bg-emerald-500"></span><span class="w-2 h-2 rounded-full bg-slate-700"></span></div></div>
+            <div id="logs" class="p-4 bg-[#010409] font-mono text-[10px] leading-relaxed overflow-y-auto h-64 text-slate-400"></div>
+          </div>
+        </div>
+    "##,
+        config.providers.iter().filter(|p| p.enabled).count(),
+        request_count,
+        total_tokens,
+        avg_latency,
+        estimated_cost,
+        provider_rows
+    );
+
+    let scripts = format!(
+        r##"<script>
+      Chart.defaults.color = "#64748b"; Chart.defaults.font.family = "Inter";
+      const ctxTraffic = document.getElementById("trafficChart").getContext("2d");
+      const gradientFox = ctxTraffic.createLinearGradient(0, 0, 0, 400);
+      gradientFox.addColorStop(0, "rgba(211, 84, 0, 0.3)"); gradientFox.addColorStop(1, "rgba(211, 84, 0, 0)");
+      const trafficData = {};
+      new Chart(ctxTraffic, {{
+        type: "line",
+        data: {{
+          labels: trafficData.labels || [],
+          datasets: [
+            {{ label: "Scavenged Tokens (Free)", data: trafficData.free_tokens || [], borderColor: "#D35400", backgroundColor: gradientFox, fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3 }},
+            {{ label: "Paid Overflow", data: trafficData.paid_tokens || [], borderColor: "#00F5FF", borderDash: [5, 5], fill: false, tension: 0.4, borderWidth: 1.5, pointRadius: 3 }}
+          ]
+        }},
+        options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ display: true, position: "top", align: "end", labels: {{ boxWidth: 10, usePointStyle: true }} }} }}, scales: {{ y: {{ beginAtZero: true, grid: {{ color: "rgba(255, 255, 255, 0.03)" }} }}, x: {{ grid: {{ display: false }} }} }} }}
+      }});
+      const providerData = {};
+      new Chart(document.getElementById("providerChart").getContext("2d"), {{
+        type: "doughnut",
+        data: {{
+          labels: providerData.labels || [],
+          datasets: [{{ data: providerData.data || [], backgroundColor: ["#D35400", "#E67E22", "#00FF9F", "#00F5FF", "#1e293b"], borderWidth: 0, hoverOffset: 10 }}]
+        }},
+        options: {{ responsive: true, maintainAspectRatio: false, cutout: "70%", plugins: {{ legend: {{ position: "bottom", labels: {{ boxWidth: 8, padding: 20 }} }} }} }}
+      }});
+      const es=new EventSource('/admin/logs/stream');
+      es.onmessage=(e)=>{{ const el=document.getElementById('logs'); const line=document.createElement('div'); line.className="mb-1"; line.textContent=e.data; el.appendChild(line); el.scrollTop=el.scrollHeight; }};
+    </script>"##,
+        serde_json::to_string(&hourly_traffic).unwrap_or("{}".into()),
+        serde_json::to_string(&provider_dist).unwrap_or("{}".into())
+    );
+
+    render_shell("Management Console", "dashboard", &content, &scripts, state)
 }
 
 /// Render the providers view.
@@ -30,139 +374,225 @@ pub async fn render_providers(state: &AppState) -> String {
         let health = state.health_states.get(&p.id);
         let health_str = health
             .as_ref()
-            .map(|h| format!("{:?}", h.value()))
+            .map(|h| format!("{:?}", h.value().state))
             .unwrap_or("unknown".into());
         let next_enabled = if p.enabled { "false" } else { "true" };
         let button_label = if p.enabled { "Disable" } else { "Enable" };
-        let button_class = if p.enabled { "btn danger" } else { "btn" };
+        let button_class = if p.enabled { "btn-danger" } else { "btn" };
         rows.push_str(&format!(
-            r#"<tr><td class="mono">{id}</td><td>{health}</td><td>{enabled}</td><td><div class="actions"><button class="{button_class}" onclick="toggleProvider('{id}',{next_enabled})">{button_label}</button><button class="btn secondary" onclick="testProvider('{id}')">Test</button></div></td></tr>"#,
-            id = p.id,
-            health = health_str,
-            enabled = if p.enabled { "Enabled" } else { "Disabled" },
-            button_class = button_class,
-            button_label = button_label,
-            next_enabled = next_enabled
+            r#"<tr><td class="font-mono text-sm text-cyan-400">{}</td><td class="text-sm">{}</td><td><span class="px-2 py-0.5 rounded {} text-[10px]">{}</span></td><td><div class="flex gap-2"><button class="{}" onclick="toggleProvider('{}',{})">{}</button><button class="btn" style="background:#334155;" onclick="testProvider('{}')">Test</button></div></td></tr>"#,
+            p.id, health_str, if p.enabled { "bg-emerald-500/10 text-emerald-500" } else { "bg-white/5 text-slate-500" }, if p.enabled { "Enabled" } else { "Disabled" }, button_class, p.id, next_enabled, button_label, p.id
         ));
     }
-    format!(
-        r#"{head}<title>Providers | TokenScavenger</title></head><body>{nav}<h1>Providers</h1><div class="actions mt-4"><button class="btn" onclick="refreshDiscovery()">Refresh Discovery</button></div><table class="mt-4"><caption>Configured provider status and controls</caption><thead><tr><th>ID</th><th>Health</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table><script>
-async function toggleProvider(id, enabled) {{
-  const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{providers:[{{id, enabled}}]}})}});
-  if (r.ok) location.reload(); else alert('Provider update failed');
-}}
-async function testProvider(id) {{
-  const r = await fetch('/admin/providers/'+encodeURIComponent(id)+'/test', {{method:'POST'}});
-  alert(JSON.stringify(await r.json(), null, 2));
-}}
-async function refreshDiscovery() {{
-  const r = await fetch('/admin/providers/discovery/refresh', {{method:'POST'}});
-  if (r.ok) location.reload(); else alert('Discovery refresh failed');
-}}
-</script></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV,
-        rows = rows
-    )
+    let content = format!(
+        r#"
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+                <h3 class="font-bold">Configured Providers</h3>
+                <button class="btn" onclick="refreshDiscovery()">Refresh Discovery</button>
+            </div>
+            <div class="p-0 overflow-x-auto">
+                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>ID</th><th>Health</th><th>Status</th><th>Actions</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+            </div>
+        </div>"#,
+        rows
+    );
+    let scripts = r#"<script>
+    async function toggleProvider(id, enabled) { const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({providers:[{id, enabled}]})}); if (r.ok) location.reload(); else showModal('Error', 'Provider update failed', true); }
+    async function testProvider(id) { const r = await fetch('/admin/providers/'+encodeURIComponent(id)+'/test', {method:'POST'}); const data = await r.json(); showModal('Test Result', data, data.status === 'error'); }
+    async function refreshDiscovery() { const r = await fetch('/admin/providers/discovery/refresh', {method:'POST'}); if (r.ok) location.reload(); else showModal('Error', 'Discovery refresh failed', true); }
+    </script>"#;
+    render_shell("Providers", "providers", &content, scripts, state)
 }
 
 /// Render the models view.
 pub async fn render_models(state: &AppState) -> String {
     let models = crate::discovery::merge::get_all_models(state).await;
-    let models_html = match models.get("models").and_then(|m| m.as_array()) {
-        Some(arr) => arr
-            .iter()
-            .map(|m| {
-                let u = m
-                    .get("upstream_model_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                let p = m.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
-                let enabled = m.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-                let next_enabled = if enabled { "false" } else { "true" };
-                let button_label = if enabled { "Disable" } else { "Enable" };
-                let button_class = if enabled { "btn danger" } else { "btn" };
-                format!(
-                    r#"<tr><td class="mono">{}</td><td>{}</td><td>{}</td><td><button class="{}" onclick="toggleModel('{}','{}',{})">{}</button></td></tr>"#,
-                    u,
-                    p,
-                    if enabled { "Enabled" } else { "Disabled" },
-                    button_class,
-                    p.replace('\'', "\\'"),
-                    u.replace('\'', "\\'"),
-                    next_enabled,
-                    button_label
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        None => "<tr><td class=\"label\" colspan=\"4\">No models discovered</td></tr>".into(),
-    };
-    format!(
-        r#"{head}<title>Models | TokenScavenger</title></head><body>{nav}<h1>Models</h1><table><caption>Discovered and curated model catalog</caption><thead><tr><th>Model ID</th><th>Provider</th><th>Status</th><th>Actions</th></tr></thead><tbody>{models}</tbody></table><script>
-async function toggleModel(provider_id, model_id, enabled) {{
-  const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, enabled}}]}})}});
-  if (r.ok) location.reload(); else alert('Model update failed');
-}}
-</script></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV,
-        models = models_html
-    )
+    let models_json = serde_json::to_string(&models).unwrap_or("{}".into());
+    let content = r#"
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4">
+                <h3 class="font-bold">Model Catalog</h3>
+                <div class="flex gap-2 text-sm flex-1 max-w-md ml-auto">
+                    <input type="text" id="modelSearch" placeholder="Search models..." class="flex-1" onkeyup="renderTable()">
+                    <select id="providerFilter" onchange="renderTable()">
+                        <option value="">All Providers</option>
+                    </select>
+                </div>
+            </div>
+            <div class="p-0 overflow-x-auto min-h-[300px]">
+                <table class="w-full text-left">
+                    <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
+                        <tr><th>Model ID</th><th>Provider</th><th>Status</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody id="modelsTableBody" class="divide-y divide-white/5"></tbody>
+                </table>
+            </div>
+            <div class="px-6 py-3 border-t border-white/5 bg-white/[0.01] flex items-center justify-between">
+                <span id="pageInfo" class="text-xs text-slate-500"></span>
+                <div class="flex gap-2">
+                    <button class="btn" style="background:#334155;" onclick="prevPage()">Previous</button>
+                    <button class="btn" style="background:#334155;" onclick="nextPage()">Next</button>
+                </div>
+            </div>
+        </div>"#.to_string();
+    let scripts = format!(
+        r#"<script>
+    const modelsData = {};
+    const modelsArr = modelsData.models || [];
+    let currentPage = 1;
+    const pageSize = 10;
+    
+    const providers = [...new Set(modelsArr.map(m => m.provider_id))];
+    const select = document.getElementById('providerFilter');
+    providers.forEach(p => {{
+        if (p) select.innerHTML += `<option value="${{p}}">${{p}}</option>`;
+    }});
+
+    function renderTable() {{
+        const search = document.getElementById('modelSearch').value.toLowerCase();
+        const prov = document.getElementById('providerFilter').value;
+        const filtered = modelsArr.filter(m => {{
+            const matchS = (m.upstream_model_id || '').toLowerCase().includes(search);
+            const matchP = prov ? m.provider_id === prov : true;
+            return matchS && matchP;
+        }});
+        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        if (currentPage > totalPages) currentPage = totalPages;
+        const start = (currentPage - 1) * pageSize;
+        const slice = filtered.slice(start, start + pageSize);
+
+        let html = '';
+        if (slice.length === 0) {{
+            html = `<tr><td colspan="4" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>`;
+        }} else {{
+            slice.forEach(m => {{
+                const u = m.upstream_model_id || '?';
+                const p = m.provider_id || '?';
+                const enabled = m.enabled !== false;
+                const next_enabled = !enabled;
+                const button_label = enabled ? "Disable" : "Enable";
+                const button_class = enabled ? "btn-danger" : "btn";
+                const status_html = enabled 
+                    ? `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Enabled</span>`
+                    : `<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Disabled</span>`;
+                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}</td><td class="text-sm">${{p}}</td><td>${{status_html}}</td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
+            }});
+        }}
+        document.getElementById('modelsTableBody').innerHTML = html;
+        document.getElementById('pageInfo').innerText = `Page ${{currentPage}} of ${{totalPages}} (${{filtered.length}} total)`;
+    }}
+
+    function prevPage() {{ if (currentPage > 1) {{ currentPage--; renderTable(); }} }}
+    function nextPage() {{ const search = document.getElementById('modelSearch').value.toLowerCase(); const prov = document.getElementById('providerFilter').value; const totalPages = Math.ceil(modelsArr.filter(m => (m.upstream_model_id || '').toLowerCase().includes(search) && (prov ? m.provider_id === prov : true)).length / pageSize); if (currentPage < totalPages) {{ currentPage++; renderTable(); }} }}
+
+    async function toggleModel(provider_id, model_id, enabled) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, enabled}}]}})}}); if (r.ok) location.reload(); else showModal('Error', 'Model update failed', true); }}
+    
+    renderTable();
+    </script>"#,
+        models_json
+    );
+    render_shell("Models", "models", &content, &scripts, state)
 }
 
 /// Render the routing view.
 pub async fn render_routing(state: &AppState) -> String {
     let config = state.config();
     let order = config.routing.provider_order.join(" → ");
-    format!(
-        r#"{head}<title>Routing | TokenScavenger</title></head><body>{nav}<h1>Routing</h1><div class="card"><div class="label">Provider Fallback Order</div><div class="mono mt-4">{order}</div><div class="label mt-4">Free First: {free_first} | Paid Fallback: {paid_fallback}</div></div></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV,
-        order = order,
-        free_first = config.routing.free_first,
-        paid_fallback = config.routing.allow_paid_fallback
-    )
+    let default_model = config
+        .routing
+        .provider_order
+        .first()
+        .map(|_| "test-model")
+        .unwrap_or("default");
+    let content = format!(
+        r#"
+        <div class="grid gap-6">
+            <div class="glass-card p-6">
+                <h3 class="font-bold mb-4 text-emerald-400">Routing Configuration</h3>
+                <div class="text-sm text-slate-400 mb-1 uppercase tracking-wider font-bold">Provider Fallback Order</div>
+                <div class="font-mono bg-black/30 p-3 rounded text-cyan-400 mb-4">{}</div>
+                <div class="flex gap-4"><span class="bg-white/5 px-3 py-1 rounded text-sm">Free First: <span class="font-bold">{}</span></span><span class="bg-white/5 px-3 py-1 rounded text-sm">Paid Fallback: <span class="font-bold">{}</span></span></div>
+            </div>
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Route Plan Explorer</h3></div>
+                <div class="p-6">
+                    <div class="flex gap-4 mb-4">
+                        <input id="plan-model" value="{}" aria-label="Model" class="flex-1">
+                        <select id="plan-endpoint" aria-label="Endpoint"><option value="chat">chat</option><option value="embeddings">embeddings</option></select>
+                        <button class="btn" onclick="explainPlan()">Explain</button>
+                    </div>
+                    <div id="route-plan" class="bg-black/50 p-4 rounded text-sm text-slate-400 min-h-[100px] overflow-hidden">
+                        <div class="text-center text-slate-500 py-4">Click explain to view the routing plan.</div>
+                    </div>
+                </div>
+            </div>
+        </div>"#,
+        order, config.routing.free_first, config.routing.allow_paid_fallback, default_model
+    );
+    let scripts = r#"<script>
+    async function explainPlan() { 
+        const model = encodeURIComponent(document.getElementById('plan-model').value); 
+        const endpoint = encodeURIComponent(document.getElementById('plan-endpoint').value); 
+        const r = await fetch('/admin/route-plan?model='+model+'&endpoint='+endpoint); 
+        const data = await r.json();
+        
+        let html = `<div class="mb-4 flex items-center gap-2">
+            <span class="px-2 py-1 bg-white/5 rounded">Requested: <strong class="text-white">${data.requested_model}</strong></span>
+            <i class="fas fa-arrow-right text-slate-600"></i>
+            <span class="px-2 py-1 bg-white/5 rounded">Resolved: <strong class="text-emerald-400">${data.resolved_model}</strong></span>
+        </div>
+        <div class="space-y-2">`;
+        
+        if (data.attempts && data.attempts.length > 0) {
+            data.attempts.forEach((a, i) => {
+                const statusColor = a.eligible ? "text-emerald-500" : "text-slate-500";
+                html += `<div class="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/5 rounded">
+                    <div class="w-6 h-6 rounded-full bg-black/40 flex items-center justify-center font-bold text-[10px]">${i+1}</div>
+                    <div class="flex-1">
+                        <div class="font-bold text-white">${a.provider} <span class="text-cyan-400 font-mono text-xs ml-2">${a.upstream_model}</span></div>
+                        <div class="text-xs text-slate-500">Tier: ${a.tier}</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="font-bold text-[10px] uppercase tracking-wide ${statusColor}">${a.eligible ? 'Eligible' : 'Filtered'}</div>
+                        ${a.reason ? `<div class="text-xs text-red-400">${a.reason}</div>` : ''}
+                    </div>
+                </div>`;
+            });
+        } else {
+            html += `<div class="text-red-400 p-4 bg-red-400/10 rounded">No eligible routes found. Request would fail.</div>`;
+        }
+        html += `</div>`;
+        document.getElementById('route-plan').innerHTML = html;
+    }
+    </script>"#;
+    render_shell("Routing", "routing", &content, scripts, state)
 }
 
 /// Render the usage view.
 pub async fn render_usage(state: &AppState) -> String {
     let series = crate::usage::aggregation::get_usage_series(state).await;
     let rows = match series.get("series").and_then(|s| s.as_array()) {
-        Some(arr) => arr
-            .iter()
-            .map(|entry| {
-                let p = entry
-                    .get("provider_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                let inp = entry
-                    .get("input_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let out = entry
-                    .get("output_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let cost = entry
-                    .get("estimated_cost_usd")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                format!(
-                    r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>${:.4}</td></tr>"#,
-                    p, inp, out, cost
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        None => "<tr><td class=\"label\" colspan=\"4\">No usage data</td></tr>".into(),
+        Some(arr) => arr.iter().map(|entry| {
+            let p = entry.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let inp = entry.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            let out = entry.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            let cost = entry.get("estimated_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            format!(r#"<tr><td class="font-bold">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td class="font-mono text-emerald-400">${:.4}</td></tr>"#, p, inp, out, cost)
+        }).collect::<Vec<_>>().join("\n"),
+        None => "<tr><td colspan=\"4\" class=\"px-6 py-4 text-center text-slate-500\">No usage data</td></tr>".into(),
     };
-    format!(
-        r#"{head}<title>Usage | TokenScavenger</title></head><body>{nav}<h1>Usage (Last 24h)</h1><table><caption>Usage totals grouped by provider</caption><thead><tr><th>Provider</th><th>Input Tokens</th><th>Output Tokens</th><th>Est. Cost</th></tr></thead><tbody>{rows}</tbody></table></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV,
-        rows = rows
-    )
+    let content = format!(
+        r#"
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Usage Totals (Last 24h)</h3></div>
+            <div class="p-0 overflow-x-auto">
+                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>Input Tokens</th><th>Output Tokens</th><th>Est. Cost</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+            </div>
+        </div>"#,
+        rows
+    );
+    render_shell("Usage", "usage", &content, "", state)
 }
 
 /// Render the health view.
@@ -171,52 +601,378 @@ pub async fn render_health(state: &AppState) -> String {
     for entry in state.health_states.iter() {
         let pid = entry.key();
         let hs = entry.value();
-        rows.push_str(&format!(
-            r#"<tr><td>{}</td><td>{:?}</td><td>{}</td></tr>"#,
-            pid,
-            hs.value(),
-            hs.recent_successes + hs.recent_failures
-        ));
+        rows.push_str(&format!(r#"<tr><td class="font-bold">{}</td><td class="text-cyan-400 text-sm">{:?}</td><td class="font-mono">{}</td></tr>"#, pid, hs.state, hs.recent_successes + hs.recent_failures));
     }
-    format!(
-        r#"{head}<title>Health | TokenScavenger</title></head><body>{nav}<h1>Provider Health</h1><table><caption>Current in-memory provider health state</caption><thead><tr><th>Provider</th><th>State</th><th>Total Requests</th></tr></thead><tbody>{rows}</tbody></table></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV,
-        rows = rows
-    )
+    let content = format!(
+        r#"
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Provider Health States</h3></div>
+            <div class="p-0 overflow-x-auto">
+                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>State</th><th>Total Requests</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+            </div>
+        </div>"#,
+        rows
+    );
+    render_shell("Health", "health", &content, "", state)
 }
 
 /// Render the logs view.
-pub async fn render_logs(_state: &AppState) -> String {
-    format!(
-        r#"{head}<title>Logs | TokenScavenger</title></head><body>{nav}<h1>Log Stream</h1><div id="logs" class="logs" aria-live="polite"><p class="label">Connecting to log stream...</p></div><script>const es=new EventSource('/admin/logs/stream');es.onmessage=(e)=>{{const el=document.getElementById('logs');const line=document.createElement('div');line.textContent=e.data;el.appendChild(line);el.scrollTop=el.scrollHeight;}};</script></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV
-    )
+pub async fn render_logs(state: &AppState) -> String {
+    let content = r#"
+        <div class="glass-card overflow-hidden flex flex-col h-[calc(100vh-12rem)]">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">System Log Stream</h3></div>
+            <div id="logs" class="flex-1 p-4 bg-[#010409] font-mono text-[10px] leading-relaxed overflow-y-auto text-slate-400">
+            </div>
+        </div>"#;
+    let scripts = r#"<script>
+      const es=new EventSource('/admin/logs/stream');
+      es.onmessage=(e)=>{ const el=document.getElementById('logs'); const line=document.createElement('div'); line.className="mb-1"; line.textContent=e.data; el.appendChild(line); el.scrollTop=el.scrollHeight; };
+    </script>"#;
+    render_shell("Logs", "logs", content, scripts, state)
 }
 
 /// Render the configuration view.
-pub async fn render_config(_state: &AppState) -> String {
-    format!(
-        r#"{head}<title>Configuration | TokenScavenger</title></head><body>{nav}<h1>Configuration</h1><div class="card"><h2>Alias Editor</h2><div class="actions mt-4"><input id="alias" placeholder="alias" aria-label="Alias"><input id="target" placeholder="target model" aria-label="Target model"><button class="btn" onclick="saveAlias()">Save Alias</button><form action="/admin/config" method="GET"><button type="submit" class="btn secondary">View Redacted Config</button></form></div></div><script>
-async function saveAlias() {{
-  const alias=document.getElementById('alias').value.trim();
-  const target=document.getElementById('target').value.trim();
-  if (!alias || !target) return alert('Alias and target are required');
-  const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{aliases:[{{alias, target, enabled:true}}]}})}});
-  if (r.ok) alert('Alias saved'); else alert('Alias save failed');
-}}
-</script></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV
-    )
+pub async fn render_config(state: &AppState) -> String {
+    let snapshots = sqlx::query_as::<_, (i64, String, String)>("SELECT id, created_at, source FROM config_snapshots ORDER BY id DESC LIMIT 20")
+        .fetch_all(&state.db).await.unwrap_or_default().into_iter()
+        .map(|(id, created_at, source)| format!(r#"<tr><td class="font-mono text-cyan-400">{}</td><td class="text-sm">{}</td><td class="text-sm">{}</td><td><button class="btn" style="background:#334155;" onclick="rollback({})">Rollback</button></td></tr>"#, id, created_at, source, id))
+        .collect::<Vec<_>>().join("\n");
+    let content = format!(
+        r#"
+        <div class="grid gap-6">
+            <div class="glass-card overflow-hidden flex flex-col">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+                    <h3 class="font-bold">Raw JSON Configuration</h3>
+                    <button class="btn" onclick="saveConfig()">Deploy Configuration</button>
+                </div>
+                <div class="p-4 bg-black/50">
+                    <textarea id="raw-config" class="w-full h-[400px] font-mono text-[10px] p-4 bg-transparent border-0 text-cyan-400 focus:ring-0" spellcheck="false">Loading...</textarea>
+                </div>
+            </div>
+            <div class="glass-card p-6">
+                <h3 class="font-bold mb-4">Alias Editor</h3>
+                <div class="flex gap-4">
+                    <input id="alias" placeholder="alias" aria-label="Alias" class="w-1/3">
+                    <input id="target" placeholder="target model" aria-label="Target model" class="flex-1">
+                    <button class="btn" onclick="saveAlias()">Save Alias</button>
+                </div>
+            </div>
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Configuration Rollback</h3></div>
+                <div class="p-0 overflow-x-auto">
+                    <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>ID</th><th>Created</th><th>Source</th><th>Action</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+                </div>
+            </div>
+        </div>"#,
+        snapshots
+    );
+    let scripts = r#"<script>
+    async function saveAlias() { const alias=document.getElementById('alias').value.trim(); const target=document.getElementById('target').value.trim(); if (!alias || !target) return showModal('Error', 'Alias and target are required', true); const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({aliases:[{alias, target, enabled:true}]})}); if (r.ok) { showModal('Success', 'Alias saved successfully', false); setTimeout(()=>location.reload(), 1500); } else showModal('Error', 'Failed to save alias', true); }
+    async function rollback(snapshot_id) { const r = await fetch('/admin/config/rollback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({snapshot_id})}); if (r.ok) location.reload(); else showModal('Error', 'Rollback failed', true); }
+    async function saveConfig() { try { const cfg = JSON.parse(document.getElementById('raw-config').value); const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)}); if (r.ok) { showModal('Success', 'Configuration deployed successfully', false); setTimeout(()=>location.reload(), 1500); } else { const err = await r.json(); showModal('Validation Error', err, true); } } catch(e) { showModal('Parse Error', 'Invalid JSON', true); } }
+    
+    // Load config
+    fetch('/admin/config').then(r=>r.json()).then(d => {
+        document.getElementById('raw-config').value = JSON.stringify(d, null, 2);
+    }).catch(() => {
+        document.getElementById('raw-config').value = "Failed to load config.";
+    });
+    </script>"#;
+    render_config_html(&content, scripts, state)
 }
 
-/// Render the audit history view.
-pub async fn render_audit(_state: &AppState) -> String {
-    format!(
-        r#"{head}<title>Audit History | TokenScavenger</title></head><body>{nav}<h1>Audit History</h1><p class="label">Configuration change history is recorded as actions are performed.</p></body></html>"#,
-        head = HTML_HEAD,
-        nav = NAV
-    )
+fn render_config_html(content: &str, scripts: &str, state: &AppState) -> String {
+    render_shell("Config", "config", content, scripts, state)
+}
+
+pub async fn render_audit(state: &AppState) -> String {
+    let content = r#"<div class="glass-card p-6"><h3 class="font-bold text-emerald-400 mb-2">Audit History</h3><p class="text-sm text-slate-400">Configuration change history is recorded as actions are performed. View the raw DB for details.</p></div>"#;
+    render_shell("Audit", "audit", content, "", state)
+}
+
+/// Render the interactive Chat Tester page.
+pub async fn render_chat(state: &AppState) -> String {
+    let models = crate::discovery::merge::get_all_models(state).await;
+    let models_json = serde_json::to_string(&models).unwrap_or("{}" .into());
+
+    let content = r#"
+    <div class="flex gap-6 h-[calc(100vh-10rem)]">
+
+      <!-- Sidebar: settings -->
+      <div class="w-72 shrink-0 flex flex-col gap-4">
+        <div class="glass-card p-5 flex flex-col gap-4">
+          <h3 class="font-bold text-sm text-slate-300 uppercase tracking-wider">Model</h3>
+          <div>
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Provider</label>
+            <select id="chatProvider" class="w-full" onchange="onProviderChange()"><option value="">Auto (Router decides)</option></select>
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Model</label>
+            <select id="chatModel" class="w-full"><option value="">Default</option></select>
+          </div>
+        </div>
+
+        <div class="glass-card p-5 flex flex-col gap-4">
+          <h3 class="font-bold text-sm text-slate-300 uppercase tracking-wider">Parameters</h3>
+          <div>
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Temperature <span id="tempVal" class="text-white">0.7</span></label>
+            <input type="range" id="temperature" min="0" max="2" step="0.05" value="0.7" class="w-full accent-[#D35400]" oninput="document.getElementById('tempVal').innerText=this.value">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Max Tokens</label>
+            <input type="number" id="maxTokens" value="1024" min="1" max="32768" class="w-full">
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Stream</label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" id="useStream" checked class="accent-[#D35400]">
+              <span class="text-sm text-slate-400">Enable streaming</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="glass-card p-5 flex flex-col gap-3">
+          <h3 class="font-bold text-sm text-slate-300 uppercase tracking-wider">System Prompt</h3>
+          <textarea id="systemPrompt" class="w-full h-28 text-xs resize-none" placeholder="You are a helpful assistant..."></textarea>
+        </div>
+
+        <div class="glass-card p-4">
+          <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Last Response</div>
+          <div id="tokenInfo" class="text-xs text-slate-400 space-y-1">
+            <div class="flex justify-between"><span>Input tokens</span><span id="ti" class="text-white font-mono">—</span></div>
+            <div class="flex justify-between"><span>Output tokens</span><span id="to" class="text-white font-mono">—</span></div>
+            <div class="flex justify-between"><span>Provider used</span><span id="tp" class="text-cyan-400 font-mono text-[10px]">—</span></div>
+            <div class="flex justify-between"><span>Model used</span><span id="tm" class="text-cyan-400 font-mono text-[10px]">—</span></div>
+            <div class="flex justify-between"><span>Latency</span><span id="tl" class="text-white font-mono">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main: conversation -->
+      <div class="flex-1 flex flex-col glass-card overflow-hidden">
+        <!-- Header toolbar -->
+        <div class="px-6 py-3 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
+          <span class="text-sm font-bold text-slate-300">Conversation</span>
+          <div class="flex gap-2">
+            <button class="btn" style="background:#334155;" onclick="clearChat()"><i class="fas fa-trash-alt mr-1"></i>Clear</button>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="chatMessages" class="flex-1 overflow-y-auto p-6 space-y-4">
+          <div class="flex items-start gap-3" id="welcomeMsg">
+            <div class="w-7 h-7 rounded-full bg-[#D35400]/20 flex items-center justify-center shrink-0 mt-0.5">
+              <i class="fas fa-robot text-[#D35400] text-[10px]"></i>
+            </div>
+            <div class="glass-card p-4 max-w-prose">
+              <p class="text-sm text-slate-300">Hello! Select a model and start chatting to test the TokenScavenger routing engine. Messages are sent directly through <code class="text-cyan-400">/v1/chat/completions</code>.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input bar -->
+        <div class="px-6 py-4 border-t border-white/5 bg-white/[0.02] shrink-0">
+          <div class="flex gap-3 items-end">
+            <textarea id="chatInput" rows="2" class="flex-1 resize-none text-sm" placeholder="Type a message… (Ctrl+Enter to send)" onkeydown="handleKey(event)"></textarea>
+            <button id="sendBtn" class="btn h-12 px-6" onclick="sendMessage()">
+              <i class="fas fa-paper-plane mr-1"></i>Send
+            </button>
+          </div>
+          <div id="statusBar" class="mt-2 text-[10px] text-slate-500 min-h-[1rem]"></div>
+        </div>
+      </div>
+    </div>"#.to_string();
+
+    let scripts = format!(r#"<script>
+    const modelsPayload = {};
+    const allModels = modelsPayload.models || [];
+
+    // Populate provider dropdown
+    const providerSel = document.getElementById('chatProvider');
+    const modelSel = document.getElementById('chatModel');
+    const providers = [...new Set(allModels.map(m => m.provider_id).filter(Boolean))];
+    providers.forEach(p => {{
+        const opt = document.createElement('option');
+        opt.value = p; opt.text = p;
+        providerSel.appendChild(opt);
+    }});
+
+    function onProviderChange() {{
+        const prov = providerSel.value;
+        modelSel.innerHTML = '<option value="">Default</option>';
+        const filtered = prov ? allModels.filter(m => m.provider_id === prov && m.enabled !== false) : allModels.filter(m => m.enabled !== false);
+        filtered.forEach(m => {{
+            const opt = document.createElement('option');
+            opt.value = m.upstream_model_id || '';
+            opt.text = m.upstream_model_id || '';
+            modelSel.appendChild(opt);
+        }});
+    }}
+    onProviderChange();
+
+    let messages = []; // {{role, content}}
+    let generating = false;
+
+    function handleKey(e) {{
+        if (e.ctrlKey && e.key === 'Enter') {{ e.preventDefault(); sendMessage(); }}
+    }}
+
+    function clearChat() {{
+        messages = [];
+        const el = document.getElementById('chatMessages');
+        el.innerHTML = '';
+        document.getElementById('welcomeMsg') && null;
+        setStatus('');
+    }}
+
+    function setStatus(msg) {{
+        document.getElementById('statusBar').innerText = msg;
+    }}
+
+    function appendBubble(role, content, id) {{
+        const isUser = role === 'user';
+        const container = document.getElementById('chatMessages');
+        const wrap = document.createElement('div');
+        wrap.className = `flex items-start gap-3 ${{isUser ? 'flex-row-reverse' : ''}}`;
+        const avatar = document.createElement('div');
+        avatar.className = `w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${{isUser ? 'bg-slate-700' : 'bg-[#D35400]/20'}}`;
+        avatar.innerHTML = isUser ? '<i class="fas fa-user text-slate-300 text-[10px]"></i>' : '<i class="fas fa-robot text-[#D35400] text-[10px]"></i>';
+        const bubble = document.createElement('div');
+        bubble.className = `glass-card p-4 max-w-prose text-sm ${{isUser ? 'bg-slate-800/60 text-white' : 'text-slate-200'}}`;
+        if (id) bubble.id = id;
+        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.innerText = content;
+        wrap.appendChild(avatar);
+        wrap.appendChild(bubble);
+        container.appendChild(wrap);
+        container.scrollTop = container.scrollHeight;
+        return bubble;
+    }}
+
+    async function sendMessage() {{
+        if (generating) return;
+        const input = document.getElementById('chatInput');
+        const userText = input.value.trim();
+        if (!userText) return;
+
+        const model = modelSel.value || undefined;
+        const systemPrompt = document.getElementById('systemPrompt').value.trim();
+        const temperature = parseFloat(document.getElementById('temperature').value);
+        const maxTokens = parseInt(document.getElementById('maxTokens').value, 10);
+        const useStream = document.getElementById('useStream').checked;
+
+        // Add to history and display
+        messages.push({{ role: 'user', content: userText }});
+        appendBubble('user', userText);
+        input.value = '';
+
+        const reqMessages = [
+            ...(systemPrompt ? [{{ role: 'system', content: systemPrompt }}] : []),
+            ...messages
+        ];
+
+        generating = true;
+        document.getElementById('sendBtn').disabled = true;
+        document.getElementById('sendBtn').innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Sending';
+        setStatus('Sending request...');
+
+        const t0 = Date.now();
+        try {{
+            const body = {{
+                model: model || 'default',
+                messages: reqMessages,
+                temperature,
+                max_tokens: maxTokens,
+                stream: useStream
+            }};
+
+            if (useStream) {{
+                const asstBubble = appendBubble('assistant', '', 'streaming-bubble');
+                let fullText = '';
+                let usageData = null;
+
+                const resp = await fetch('/v1/chat/completions', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(body)
+                }});
+
+                if (!resp.ok) {{
+                    const err = await resp.json().catch(() => ({{ message: resp.statusText }}));
+                    asstBubble.innerText = `Error ${{resp.status}}: ${{err.error?.message || err.message || 'Unknown error'}}`;
+                    asstBubble.style.color = '#ef4444';
+                    messages.push({{ role: 'assistant', content: asstBubble.innerText }});
+                    return;
+                }}
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                setStatus('Streaming...');
+
+                while (true) {{
+                    const {{ done, value }} = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, {{ stream: true }});
+                    for (const line of chunk.split('\n')) {{
+                        const trimmed = line.trim();
+                        if (!trimmed.startsWith('data:')) continue;
+                        const data = trimmed.slice(5).trim();
+                        if (data === '[DONE]') break;
+                        try {{
+                            const parsed = JSON.parse(data);
+                            const delta = parsed.choices?.[0]?.delta?.content || '';
+                            fullText += delta;
+                            asstBubble.innerText = fullText;
+                            document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+                            if (parsed.usage) usageData = parsed.usage;
+                            if (parsed.model) document.getElementById('tm').innerText = parsed.model;
+                            if (parsed.x_provider) document.getElementById('tp').innerText = parsed.x_provider;
+                        }} catch {{}}
+                    }}
+                }}
+
+                asstBubble.removeAttribute('id');
+                messages.push({{ role: 'assistant', content: fullText }});
+                if (usageData) {{
+                    document.getElementById('ti').innerText = usageData.prompt_tokens ?? '—';
+                    document.getElementById('to').innerText = usageData.completion_tokens ?? '—';
+                }}
+
+            }} else {{
+                const resp = await fetch('/v1/chat/completions', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(body)
+                }});
+                const data = await resp.json();
+                if (!resp.ok) {{
+                    appendBubble('assistant', `Error ${{resp.status}}: ${{data.error?.message || 'Unknown error'}}`);
+                    return;
+                }}
+                const text = data.choices?.[0]?.message?.content || '';
+                appendBubble('assistant', text);
+                messages.push({{ role: 'assistant', content: text }});
+                if (data.usage) {{
+                    document.getElementById('ti').innerText = data.usage.prompt_tokens ?? '—';
+                    document.getElementById('to').innerText = data.usage.completion_tokens ?? '—';
+                }}
+                if (data.model) document.getElementById('tm').innerText = data.model;
+            }}
+
+            const latency = ((Date.now() - t0) / 1000).toFixed(2);
+            document.getElementById('tl').innerText = latency + 's';
+            setStatus(`Done in ${{latency}}s`);
+
+        }} catch(err) {{
+            appendBubble('assistant', 'Network error: ' + err.message);
+            setStatus('Error: ' + err.message);
+        }} finally {{
+            generating = false;
+            document.getElementById('sendBtn').disabled = false;
+            document.getElementById('sendBtn').innerHTML = '<i class="fas fa-paper-plane mr-1"></i>Send';
+        }}
+    }}
+    </script>"#, models_json);
+
+    render_shell("Chat Tester", "chat", &content, &scripts, state)
 }

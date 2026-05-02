@@ -33,6 +33,8 @@ pub struct ServerConfig {
     pub allowed_cors_origins: Vec<String>,
     #[serde(default)]
     pub allow_query_api_keys: bool,
+    #[serde(default)]
+    pub ui_session_auth: bool,
     #[serde(default = "default_true")]
     pub ui_enabled: bool,
     #[serde(default = "default_ui_path")]
@@ -48,6 +50,7 @@ impl Default for ServerConfig {
             master_api_key: String::new(),
             allowed_cors_origins: Vec::new(),
             allow_query_api_keys: false,
+            ui_session_auth: false,
             ui_enabled: true,
             ui_path: default_ui_path(),
             request_timeout_ms: default_request_timeout_ms(),

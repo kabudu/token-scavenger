@@ -36,6 +36,60 @@ fn google_api_key_auth(config: &ProviderConfig) -> HeaderMap {
     headers
 }
 
+fn google_generate_content_body(request: &NormalizedChatRequest) -> serde_json::Value {
+    let contents: Vec<serde_json::Value> = request
+        .messages
+        .iter()
+        .filter(|m| m.role != "system")
+        .map(|m| {
+            let text = m
+                .content
+                .as_ref()
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            serde_json::json!({
+                "role": if m.role == "assistant" { "model" } else { m.role.as_str() },
+                "parts": [{"text": text}]
+            })
+        })
+        .collect();
+
+    let mut generation_config = serde_json::json!({
+        "temperature": request.temperature,
+        "topP": request.top_p,
+        "maxOutputTokens": request.max_tokens,
+        "stopSequences": request.stop,
+    });
+
+    if request.response_format.is_some() {
+        generation_config["responseMimeType"] = serde_json::json!("application/json");
+    }
+
+    let mut body = serde_json::json!({
+        "contents": contents,
+        "generationConfig": generation_config
+    });
+
+    if let Some(system_msg) = request.messages.iter().find(|m| m.role == "system") {
+        if let Some(text) = system_msg.content.as_ref().and_then(|c| c.as_str()) {
+            body["systemInstruction"] = serde_json::json!({
+                "parts": [{"text": text}]
+            });
+        }
+    }
+
+    if let Some(tools) = &request.tools {
+        body["tools"] = serde_json::to_value(tools).unwrap_or_else(|_| serde_json::json!([]));
+    }
+
+    if let Some(tool_choice) = &request.tool_choice {
+        body["toolConfig"] = serde_json::json!({"functionCallingConfig": tool_choice});
+    }
+
+    body
+}
+
 #[async_trait]
 impl ProviderAdapter for GoogleAdapter {
     fn provider_id(&self) -> &'static str {
@@ -71,15 +125,11 @@ impl ProviderAdapter for GoogleAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| {
-                "https://generativelanguage.googleapis.com/v1beta"
-                    .parse()
-                    .unwrap()
-            })
+        shared::provider_base_url(
+            "google",
+            config,
+            "https://generativelanguage.googleapis.com/v1beta",
+        )
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         google_api_key_auth(config)
@@ -89,9 +139,8 @@ impl ProviderAdapter for GoogleAdapter {
         &self,
         ctx: &ProviderContext,
     ) -> Result<Vec<DiscoveredModel>, ProviderError> {
-        let url = ctx
-            .base_url
-            .join("/models")
+        let url = crate::providers::shared::with_trailing_slash(&ctx.base_url)
+            .join("models")
             .map_err(|e| ProviderError::Other(e.to_string()))?;
 
         let config = ProviderConfig {
@@ -167,43 +216,7 @@ impl ProviderAdapter for GoogleAdapter {
             ..Default::default()
         };
 
-        // Convert OpenAI messages to Gemini contents format
-        let contents: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .filter(|m| m.role != "system")
-            .map(|m| {
-                let text = m
-                    .content
-                    .as_ref()
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                serde_json::json!({
-                    "role": if m.role == "assistant" { "model" } else { m.role.as_str() },
-                    "parts": [{"text": text}]
-                })
-            })
-            .collect();
-
-        let mut body = serde_json::json!({
-            "contents": contents,
-            "generationConfig": {
-                "temperature": request.temperature,
-                "topP": request.top_p,
-                "maxOutputTokens": request.max_tokens,
-                "stopSequences": request.stop,
-            }
-        });
-
-        // Add system instruction separately
-        if let Some(system_msg) = request.messages.iter().find(|m| m.role == "system") {
-            if let Some(text) = system_msg.content.as_ref().and_then(|c| c.as_str()) {
-                body["systemInstruction"] = serde_json::json!({
-                    "parts": [{"text": text}]
-                });
-            }
-        }
+        let body = google_generate_content_body(&request);
 
         let start = std::time::Instant::now();
         let resp =
@@ -372,38 +385,7 @@ impl ProviderAdapter for GoogleAdapter {
             ..Default::default()
         };
 
-        let contents: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .filter(|m| m.role != "system")
-            .map(|m| {
-                let text = m
-                    .content
-                    .as_ref()
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                serde_json::json!({
-                    "role": if m.role == "assistant" { "model" } else { m.role.as_str() },
-                    "parts": [{"text": text}]
-                })
-            })
-            .collect();
-
-        let mut body = serde_json::json!({
-            "contents": contents,
-            "generationConfig": {
-                "temperature": request.temperature,
-                "topP": request.top_p,
-                "maxOutputTokens": request.max_tokens,
-            }
-        });
-
-        if let Some(system_msg) = request.messages.iter().find(|m| m.role == "system") {
-            if let Some(text) = system_msg.content.as_ref().and_then(|c| c.as_str()) {
-                body["systemInstruction"] = serde_json::json!({"parts": [{"text": text}]});
-            }
-        }
+        let body = google_generate_content_body(&request);
 
         let resp = ctx
             .client
@@ -528,5 +510,65 @@ impl ProviderAdapter for GoogleAdapter {
 
         let _ = tx.send(crate::api::openai::stream::StreamEvent::Done).await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::openai::chat::{ChatMessage, NormalizedChatRequest};
+
+    #[test]
+    fn google_translation_preserves_optional_openai_fields() {
+        let req = NormalizedChatRequest {
+            model: "gemini-test".into(),
+            messages: vec![
+                ChatMessage {
+                    role: "system".into(),
+                    content: Some(serde_json::json!("Be terse")),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "user".into(),
+                    content: Some(serde_json::json!("Hi")),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            stream: false,
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            max_tokens: Some(64),
+            stop: Some(vec!["END".into()]),
+            tools: Some(vec![crate::api::openai::chat::ToolDefinition {
+                tool_type: "function".into(),
+                function: crate::api::openai::chat::ToolFunction {
+                    name: "lookup".into(),
+                    description: Some("Lookup".into()),
+                    parameters: None,
+                },
+            }]),
+            tool_choice: Some(serde_json::json!({"mode": "AUTO"})),
+            response_format: Some(crate::api::openai::chat::ResponseFormat {
+                format_type: "json_object".into(),
+                json_schema: None,
+            }),
+            frequency_penalty: Some(0.1),
+            presence_penalty: Some(0.1),
+            user: Some("caller".into()),
+        };
+
+        let body = google_generate_content_body(&req);
+        assert_eq!(body["systemInstruction"]["parts"][0]["text"], "Be terse");
+        assert_eq!(body["contents"][0]["role"], "user");
+        assert_eq!(
+            body["generationConfig"]["responseMimeType"],
+            "application/json"
+        );
+        assert!(body.get("tools").is_some());
+        assert!(body.get("toolConfig").is_some());
     }
 }

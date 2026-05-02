@@ -38,6 +38,22 @@ pub async fn auth_middleware(
         }
     }
 
+    if config.server.ui_session_auth {
+        if let Some(cookie) = req.headers().get("Cookie").and_then(|v| v.to_str().ok()) {
+            let session = cookie.split(';').find_map(|part| {
+                let mut pieces = part.trim().splitn(2, '=');
+                (pieces.next() == Some("tokenscavenger_session"))
+                    .then(|| pieces.next())
+                    .flatten()
+            });
+            if let Some(token) = session {
+                if state.ui_sessions.contains_key(token) {
+                    return Ok(next.run(req).await);
+                }
+            }
+        }
+    }
+
     if config.server.allow_query_api_keys {
         if let Some(query_key) = req.uri().query().and_then(|q| {
             q.split('&').find_map(|pair| {

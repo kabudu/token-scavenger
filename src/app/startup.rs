@@ -1,5 +1,6 @@
 use crate::app::state::AppState;
 use crate::config::loader::load_config;
+use crate::config::overrides;
 use crate::config::schema::Config;
 use crate::db::models as db_models;
 use axum::Router;
@@ -23,7 +24,27 @@ pub struct StartupResult {
 /// and bind the HTTP listener. Returns a fully prepared `StartupResult`.
 pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::error::Error>> {
     // 1. Load and validate config
-    let config: Config = load_config(config_path)?;
+    let mut config: Config = load_config(config_path)?;
+
+    // 1b. Merge any runtime overrides saved from a previous session
+    if let Some(overrides) = overrides::load_runtime_overrides(config_path) {
+        info!("Merging runtime overrides from previous session");
+        // Merge providers from overrides (file config is the base, overrides add/update)
+        for ov_provider in &overrides.providers {
+            if let Some(existing) = config.providers.iter_mut().find(|p| p.id == ov_provider.id) {
+                *existing = ov_provider.clone();
+            } else {
+                config.providers.push(ov_provider.clone());
+            }
+        }
+        config.server = overrides.server;
+        config.database = overrides.database;
+        config.metrics = overrides.metrics;
+        config.routing = overrides.routing;
+        config.resilience = overrides.resilience;
+        info!("Runtime overrides merged successfully");
+    }
+
     info!(
         "Config loaded from {}: server.bind={}, providers={}",
         config_path.display(),
@@ -31,18 +52,21 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
         config.providers.len()
     );
 
-    // 2. Initialize tracing
-    init_tracing(&config);
+    // 2. Create log broadcast channel (must come before tracing init so the layer can hold the sender)
+    let (log_tx, _log_rx) = tokio::sync::broadcast::channel::<String>(1024);
+
+    // 3. Initialize tracing (installs BroadcastLayer so UI stream receives log events)
+    init_tracing(&config, log_tx.clone());
     info!("Tracing initialized");
 
-    // 3. Open SQLite and run migrations
+    // 4. Open SQLite and run migrations
     let db: SqlitePool =
         db_models::init_db_with_pool_size(&config.database.path, config.database.max_connections)
             .await?;
     info!("Database initialized at {}", config.database.path);
 
-    // 4. Build AppState
-    let state = AppState::new(config, db);
+    // 5. Build AppState (hand over the pre-created log_tx)
+    let state = AppState::new(config, db, config_path.to_path_buf(), log_tx);
     info!("AppState created");
 
     // 5. Load DB-persisted config overrides before building runtime registries.
@@ -146,7 +170,7 @@ fn spawn_background_tasks(base_state: AppState) {
             tokio::select! {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(interval)) => {
                     for provider_id in s.config().providers.iter().filter(|p| p.enabled).map(|p| p.id.clone()) {
-                        crate::resilience::health::record_success(&s, &provider_id).await;
+                        crate::resilience::health::probe_provider(&s, &provider_id).await;
                     }
                 }
                 _ = shutdown_rx.changed() => {
@@ -165,9 +189,7 @@ fn spawn_background_tasks(base_state: AppState) {
             let mut shutdown_rx = s.shutdown_rx.clone();
             tokio::select! {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(cooldown)) => {
-                    for entry in s.breaker_states.iter() {
-                        if entry.value().is_open() {}
-                    }
+                    crate::resilience::health::recover_open_breakers(&s).await;
                 }
                 _ = shutdown_rx.changed() => { if *shutdown_rx.borrow() { break; } }
             }
@@ -215,7 +237,19 @@ fn spawn_background_tasks(base_state: AppState) {
 pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/healthz", axum::routing::get(crate::api::routes::healthz))
-        .route("/readyz", axum::routing::get(crate::api::routes::readyz));
+        .route("/readyz", axum::routing::get(crate::api::routes::readyz))
+        .route(
+            "/ui/logo.png",
+            axum::routing::get(crate::api::routes::ui_logo),
+        )
+        .route(
+            "/favicon.ico",
+            axum::routing::get(crate::api::routes::favicon),
+        )
+        .route(
+            "/admin/session",
+            axum::routing::post(crate::api::routes::admin_session),
+        );
 
     let protected = Router::new()
         .route("/metrics", axum::routing::get(crate::api::routes::metrics))
@@ -258,6 +292,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(crate::api::routes::admin_health_events),
         )
         .route(
+            "/admin/route-plan",
+            axum::routing::get(crate::api::routes::admin_route_plan),
+        )
+        .route(
             "/admin/audit",
             axum::routing::get(crate::api::routes::admin_audit),
         )
@@ -273,6 +311,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/admin/config",
             axum::routing::put(crate::api::routes::admin_config_save),
+        )
+        .route(
+            "/admin/config/rollback",
+            axum::routing::post(crate::api::routes::admin_config_rollback),
         )
         .layer(from_fn_with_state(
             state.clone(),
@@ -313,7 +355,10 @@ fn cors_layer(config: &Config) -> CorsLayer {
 }
 
 /// Initialize the tracing subscriber based on config.
-fn init_tracing(config: &Config) {
+/// Installs a `BroadcastLayer` that forwards every log event into `log_tx`
+/// so the browser UI SSE stream receives live log output.
+fn init_tracing(config: &Config, log_tx: tokio::sync::broadcast::Sender<String>) {
+    use crate::util::broadcast_layer::BroadcastLayer;
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{EnvFilter, fmt};
 
@@ -322,8 +367,11 @@ fn init_tracing(config: &Config) {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
 
+    let broadcast = BroadcastLayer::new(log_tx);
+
     tracing_subscriber::registry()
         .with(filter)
         .with(fmt_layer)
+        .with(broadcast)
         .init();
 }

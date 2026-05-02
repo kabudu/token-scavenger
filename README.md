@@ -103,8 +103,20 @@ Environment variables are expanded automatically (`${VAR_NAME}` syntax).
 
 ### 3. Run
 
+On first run, `tokenscavenger` detects the absence of a config file and offers to
+run the interactive setup wizard:
+
 ```bash
-cargo run --release -- -c tokenscavenger.toml
+./tokenscavenger
+```
+
+Follow the prompts to configure your server, providers, and API keys. The wizard
+writes a configuration to `~/.config/tokenscavenger/tokenscavenger.toml`.
+
+To use an existing config file:
+
+```bash
+./tokenscavenger -c tokenscavenger.toml
 ```
 
 Or build a static binary:
@@ -151,6 +163,33 @@ src/
   util/         Secret redaction, time utilities
 ```
 
+## CLI Commands
+
+The `tokenscavenger` binary provides three modes of operation:
+
+| Command | Description |
+|---------|-------------|
+| `tokenscavenger` (no args) | Starts the server. On first run, prompts to run the setup wizard if no config is found. |
+| `tokenscavenger setup` | Run the interactive first-time setup wizard. |
+| `tokenscavenger config` | Edit an existing configuration file interactively. |
+
+### `tokenscavenger setup`
+
+Walks you through creating a configuration file from scratch — server bind address,
+master API key, routing preferences, and provider credentials. The wizard stores
+the resulting config at `~/.config/tokenscavenger/tokenscavenger.toml`.
+
+### `tokenscavenger config`
+
+Loads an existing configuration file and presents an interactive menu where you
+can edit each section: server settings, database, routing, resilience, and
+providers. Changes are saved back to the file.
+
+Config search order:
+1. `./tokenscavenger.toml` (current directory)
+2. `~/.config/tokenscavenger/tokenscavenger.toml`
+3. `~/.tokenscavenger.toml`
+
 ## Configuration Reference
 
 See [docs/configuration.md](docs/configuration.md) for the full configuration schema.
@@ -174,8 +213,33 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 - Usage — token counts and estimated costs
 - Health — per-provider health states
 - Logs — real-time log stream via SSE
-- Config — view current effective configuration
+- Config — view and edit current effective configuration
 - Audit — configuration change history
+
+Config changes made through the web UI take effect immediately without restarting
+the application. Server bind address, routing policy, resilience settings, and
+provider credentials can all be modified at runtime. Changes are persisted to a
+sidecar overrides file so they survive restarts.
+
+## Releases
+
+New releases are created from the GitHub Actions workflow dispatch menu:
+
+1. Navigate to **Actions → Release** in the GitHub repository
+2. Click **Run workflow**
+3. Choose the version bump type: `patch` (1.0.0 → 1.0.1), `minor` (1.0.0 → 1.1.0),
+   or `major` (1.0.0 → 2.0.0)
+4. Click **Run workflow**
+
+The workflow:
+
+- Bumps the version in `Cargo.toml` and creates a git tag (`vX.Y.Z`)
+- Cross-compiles binaries for Linux (x86\_64), macOS (ARM64), and Windows (x86\_64)
+- Creates a GitHub release with all binaries and checksums attached
+- Generates release notes from commit history
+
+Each release binary is self-contained — download the one for your platform and run
+it. On first execution the built-in setup wizard guides you through configuration.
 
 ## Development
 

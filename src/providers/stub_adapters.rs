@@ -63,11 +63,7 @@ impl ProviderAdapter for OpenRouterAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://openrouter.ai/api/v1".parse().unwrap())
+        shared::provider_base_url("openrouter", config, "https://openrouter.ai/api/v1")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         let mut headers = bearer_auth(config);
@@ -152,11 +148,7 @@ impl ProviderAdapter for CerebrasAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://api.cerebras.ai/v1".parse().unwrap())
+        shared::provider_base_url("cerebras", config, "https://api.cerebras.ai/v1")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -230,11 +222,7 @@ impl ProviderAdapter for NvidiaAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".parse().unwrap())
+        shared::provider_base_url("nvidia", config, "https://integrate.api.nvidia.com/v1")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -308,11 +296,7 @@ impl ProviderAdapter for MistralAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://api.mistral.ai/v1".parse().unwrap())
+        shared::provider_base_url("mistral", config, "https://api.mistral.ai/v1")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -394,11 +378,7 @@ impl ProviderAdapter for ZaiAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://open.bigmodel.cn/api/paas/v4".parse().unwrap())
+        shared::provider_base_url("zai", config, "https://open.bigmodel.cn/api/paas/v4")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -588,15 +568,11 @@ impl ProviderAdapter for CloudflareAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| {
-                "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1"
-                    .parse()
-                    .unwrap()
-            })
+        shared::provider_base_url(
+            "cloudflare",
+            config,
+            "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1",
+        )
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -678,11 +654,11 @@ impl ProviderAdapter for GitHubModelsAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://models.inference.ai.azure.com".parse().unwrap())
+        shared::provider_base_url(
+            "github-models",
+            config,
+            "https://models.inference.ai.azure.com",
+        )
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -760,11 +736,11 @@ impl ProviderAdapter for HuggingFaceAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://api-inference.huggingface.co/v1".parse().unwrap())
+        shared::provider_base_url(
+            "huggingface",
+            config,
+            "https://api-inference.huggingface.co/v1",
+        )
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -848,11 +824,7 @@ impl ProviderAdapter for CohereAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://api.cohere.com".parse().unwrap())
+        shared::provider_base_url("cohere", config, "https://api.cohere.com")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)
@@ -886,9 +858,8 @@ impl ProviderAdapter for CohereAdapter {
         request: NormalizedChatRequest,
     ) -> Result<ProviderChatResponse, ProviderError> {
         // Cohere uses /v2/chat with a different format
-        let url = ctx
-            .base_url
-            .join("/v2/chat")
+        let url = crate::providers::shared::with_trailing_slash(&ctx.base_url)
+            .join("v2/chat")
             .map_err(|e| ProviderError::Other(e.to_string()))?;
 
         let config = ProviderConfig {

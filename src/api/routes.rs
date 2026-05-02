@@ -2,8 +2,8 @@ use crate::api::error::ApiError;
 use crate::app::state::AppState;
 use axum::response::sse::Event;
 use axum::{
-    extract::State,
-    http::HeaderMap,
+    extract::{Query, State},
+    http::{HeaderMap, HeaderValue, header},
     response::{Html, IntoResponse, Json, Sse},
 };
 use futures::stream::Stream;
@@ -105,6 +105,7 @@ pub async fn ui_static(
         "usage" => crate::ui::routes::render_usage(&state).await,
         "health" => crate::ui::routes::render_health(&state).await,
         "logs" => crate::ui::routes::render_logs(&state).await,
+        "chat" => crate::ui::routes::render_chat(&state).await,
         "config" => crate::ui::routes::render_config(&state).await,
         "audit" => crate::ui::routes::render_audit(&state).await,
         _ => {
@@ -118,12 +119,60 @@ pub async fn ui_static(
     Ok(Html(content).into_response())
 }
 
+/// GET /ui/logo.png — serves the project logo.
+pub async fn ui_logo() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/png")],
+        include_bytes!("../../resources/TokenScavengerLogo.png"),
+    )
+}
+
+/// GET /favicon.ico — serves the project logo as favicon.
+pub async fn favicon() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/png")],
+        include_bytes!("../../resources/TokenScavengerLogo.png"),
+    )
+}
+
 // Admin endpoints.
 pub async fn admin_providers(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let providers = crate::providers::registry::get_providers_state(&state).await;
     Ok(Json(providers))
+}
+
+pub async fn admin_session(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let config = state.config();
+    if config.server.master_api_key.is_empty() || !config.server.ui_session_auth {
+        return Err(ApiError::InvalidRequest(
+            "UI session auth is not enabled".into(),
+        ));
+    }
+    let key = body
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .ok_or(ApiError::AuthError)?;
+    if key != config.server.master_api_key {
+        return Err(ApiError::AuthError);
+    }
+
+    let token = uuid::Uuid::new_v4().to_string();
+    state
+        .ui_sessions
+        .insert(token.clone(), chrono::Utc::now().timestamp());
+    let cookie = format!("tokenscavenger_session={token}; HttpOnly; SameSite=Lax; Path=/");
+    let mut response = Json(serde_json::json!({"status": "ok"})).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie)
+            .map_err(|e| ApiError::InternalError(format!("invalid session cookie: {e}")))?,
+    );
+    Ok(response)
 }
 
 pub async fn admin_config(
@@ -151,12 +200,28 @@ pub async fn admin_usage_series(
 pub async fn admin_logs_stream(
     State(state): State<AppState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    // Subscribe BEFORE emitting any trace so events aren't missed.
     let rx = state.log_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+
+    // Notify via tracing (will reach all subscribers including this new one).
+    tracing::info!("SSE client connected to system stream");
+
+    let log_stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(msg) => Some(Ok(Event::default().data(msg))),
         Err(_) => None,
     });
-    Ok(Sse::new(stream))
+
+    // Periodic keepalive: send an SSE comment every 15 s to prevent browser timeout.
+    let keepalive = tokio_stream::wrappers::IntervalStream::new(
+        tokio::time::interval(std::time::Duration::from_secs(15)),
+    )
+    .map(|_| Ok(Event::default().comment("keepalive")));
+
+    let initial = futures::stream::iter(std::iter::once(Ok(
+        Event::default().data("Connected to system stream"),
+    )));
+
+    Ok(Sse::new(initial.chain(log_stream.merge(keepalive))))
 }
 
 pub async fn admin_health_events(
@@ -171,6 +236,81 @@ pub async fn admin_audit(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let entries = crate::db::models::get_audit_entries(&state).await;
     Ok(Json(entries))
+}
+
+pub async fn admin_route_plan(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let model = params
+        .get("model")
+        .cloned()
+        .unwrap_or_else(|| "default".to_string());
+    let endpoint = params.get("endpoint").map(String::as_str).unwrap_or("chat");
+    let endpoint_kind = if endpoint == "embeddings" {
+        crate::providers::traits::EndpointKind::Embeddings
+    } else {
+        crate::providers::traits::EndpointKind::ChatCompletions
+    };
+
+    let config = state.config();
+    let resolved_model = crate::router::aliases::resolve_alias(&state, &model)
+        .await
+        .unwrap_or_else(|| model.clone());
+    let policy = crate::router::policy::RoutePolicy::from_config(&config);
+    let raw_plan = crate::router::selection::build_attempt_plan(
+        &policy,
+        &state.provider_registry,
+        &resolved_model,
+        endpoint_kind,
+    )
+    .await;
+
+    let mut attempts = Vec::new();
+    for attempt in raw_plan {
+        let health = state
+            .health_states
+            .get(&attempt.provider_id)
+            .map(|h| format!("{:?}", h.value().state))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let breaker = state
+            .breaker_states
+            .get(&attempt.provider_id)
+            .map(|b| format!("{:?}", b.state()))
+            .unwrap_or_else(|| "Closed".to_string());
+        let model_enabled = sqlx::query_as::<_, (bool,)>(
+            "SELECT enabled FROM models WHERE provider_id = ? AND upstream_model_id = ?",
+        )
+        .bind(&attempt.provider_id)
+        .bind(&attempt.model_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|row| row.0)
+        .unwrap_or(true);
+        let included =
+            model_enabled && health != "Unhealthy" && breaker != "Open" && breaker != "HalfOpen";
+        attempts.push(serde_json::json!({
+            "provider_id": attempt.provider_id,
+            "model_id": attempt.model_id,
+            "priority": attempt.priority,
+            "health": health,
+            "breaker_state": breaker,
+            "model_enabled": model_enabled,
+            "included": included,
+            "reason": if included { "eligible" } else { "filtered by health, breaker, or model enablement" }
+        }));
+    }
+
+    Ok(Json(serde_json::json!({
+        "requested_model": model,
+        "resolved_model": resolved_model,
+        "endpoint": endpoint,
+        "free_first": config.routing.free_first,
+        "allow_paid_fallback": config.routing.allow_paid_fallback,
+        "attempts": attempts
+    })))
 }
 
 /// POST /admin/providers/discovery/refresh — trigger manual model discovery
@@ -228,40 +368,165 @@ pub async fn admin_provider_test(
     }
 }
 
-/// PUT /admin/config — save operator config changes
+/// PUT /admin/config — save operator config changes (hot-reloads without restart)
 pub async fn admin_config_save(
     State(state): State<AppState>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Validate and apply config changes
-    // Currently supports toggling provider enabled/disabled
-    if let Some(providers) = body.get("providers").and_then(|p| p.as_array()) {
-        let mut config = (*state.runtime_config.load_full()).clone();
-        for provider_update in providers {
-            if let (Some(id), Some(enabled)) = (
-                provider_update.get("id").and_then(|v| v.as_str()),
-                provider_update.get("enabled").and_then(|v| v.as_bool()),
-            ) {
-                if let Some(provider) = config.providers.iter_mut().find(|p| p.id == id) {
-                    provider.enabled = enabled;
-                }
-                // Persist to DB
-                let _ = sqlx::query(
-                    "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled) VALUES (?, ?, ?)"
-                )
-                .bind(id)
-                .bind(id)
-                .bind(enabled)
-                .execute(&state.db)
-                .await;
-            }
+    let mut config = (*state.runtime_config.load_full()).clone();
+    let before_config = config.clone();
+    let mut changed = false;
+    let config_path = &state.boot_config_file;
+
+    // --- Server settings ---
+    if let Some(server) = body.get("server") {
+        if let Some(bind) = server.get("bind").and_then(|v| v.as_str()) {
+            config.server.bind = bind.to_string();
+            changed = true;
         }
-        let config = std::sync::Arc::new(config);
-        state.runtime_config.store(config.clone());
-        let _ = state.config_watch_tx.send(config);
-        state.provider_registry.init_from_config(&state).await;
+        if let Some(key) = server.get("master_api_key").and_then(|v| v.as_str()) {
+            config.server.master_api_key = key.to_string();
+            changed = true;
+        }
+        if let Some(cors) = server
+            .get("allowed_cors_origins")
+            .and_then(|v| v.as_array())
+        {
+            config.server.allowed_cors_origins = cors
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            changed = true;
+        }
+        if let Some(ui) = server.get("ui_enabled").and_then(|v| v.as_bool()) {
+            config.server.ui_enabled = ui;
+            changed = true;
+        }
     }
 
+    // --- Routing settings ---
+    if let Some(routing) = body.get("routing") {
+        if let Some(free) = routing.get("free_first").and_then(|v| v.as_bool()) {
+            config.routing.free_first = free;
+            changed = true;
+        }
+        if let Some(paid) = routing.get("allow_paid_fallback").and_then(|v| v.as_bool()) {
+            config.routing.allow_paid_fallback = paid;
+            changed = true;
+        }
+        if let Some(order) = routing.get("provider_order").and_then(|v| v.as_array()) {
+            config.routing.provider_order = order
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            changed = true;
+        }
+    }
+
+    // --- Resilience settings ---
+    if let Some(resilience) = body.get("resilience") {
+        if let Some(v) = resilience
+            .get("max_retries_per_provider")
+            .and_then(|v| v.as_u64())
+        {
+            config.resilience.max_retries_per_provider = v as u32;
+            changed = true;
+        }
+        if let Some(v) = resilience
+            .get("breaker_failure_threshold")
+            .and_then(|v| v.as_u64())
+        {
+            config.resilience.breaker_failure_threshold = v as u32;
+            changed = true;
+        }
+        if let Some(v) = resilience
+            .get("breaker_cooldown_secs")
+            .and_then(|v| v.as_u64())
+        {
+            config.resilience.breaker_cooldown_secs = v;
+            changed = true;
+        }
+        if let Some(v) = resilience
+            .get("health_probe_interval_secs")
+            .and_then(|v| v.as_u64())
+        {
+            config.resilience.health_probe_interval_secs = v;
+            changed = true;
+        }
+    }
+
+    // --- Providers (toggle, add, update) ---
+    if let Some(providers) = body.get("providers").and_then(|p| p.as_array()) {
+        for provider_update in providers {
+            if let Some(id) = provider_update.get("id").and_then(|v| v.as_str()) {
+                let enabled = provider_update.get("enabled");
+                let api_key = provider_update.get("api_key").and_then(|v| v.as_str());
+                let base_url = provider_update.get("base_url").and_then(|v| v.as_str());
+                let free_only = provider_update.get("free_only").and_then(|v| v.as_bool());
+                let is_removal = provider_update
+                    .get("remove")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if is_removal {
+                    // Remove provider entirely
+                    config.providers.retain(|p| p.id != id);
+                    let _ = sqlx::query("DELETE FROM providers WHERE provider_id = ?")
+                        .bind(id)
+                        .execute(&state.db)
+                        .await;
+                    changed = true;
+                } else if let Some(provider) = config.providers.iter_mut().find(|p| p.id == id) {
+                    // Update existing
+                    if let Some(e) = enabled.and_then(|v| v.as_bool()) {
+                        provider.enabled = e;
+                    }
+                    if let Some(k) = api_key {
+                        provider.api_key = Some(k.to_string());
+                    }
+                    if let Some(u) = base_url {
+                        provider.base_url = Some(u.to_string());
+                    }
+                    if let Some(f) = free_only {
+                        provider.free_only = f;
+                    }
+                    // Persist provider state to DB
+                    let display_name = &provider.id;
+                    let _ = sqlx::query(
+                        "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled) VALUES (?, ?, ?)"
+                    )
+                    .bind(id)
+                    .bind(display_name)
+                    .bind(provider.enabled)
+                    .execute(&state.db)
+                    .await;
+                    changed = true;
+                } else if let Some(e) = enabled.and_then(|v| v.as_bool()).or(Some(true)) {
+                    // New provider (add)
+                    let new_provider = crate::config::schema::ProviderConfig {
+                        id: id.to_string(),
+                        enabled: e,
+                        base_url: base_url.map(String::from),
+                        api_key: api_key.map(String::from),
+                        free_only: free_only.unwrap_or(true),
+                        discover_models: true,
+                    };
+                    config.providers.push(new_provider);
+                    let _ = sqlx::query(
+                        "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled) VALUES (?, ?, ?)"
+                    )
+                    .bind(id)
+                    .bind(id)
+                    .bind(e)
+                    .execute(&state.db)
+                    .await;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // --- Models (existing logic, unchanged) ---
     if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
         for model_update in models {
             if let (Some(provider_id), Some(model_id), Some(enabled)) = (
@@ -281,10 +546,12 @@ pub async fn admin_config_save(
                 .bind(enabled)
                 .execute(&state.db)
                 .await;
+                changed = true;
             }
         }
     }
 
+    // --- Aliases (existing logic, unchanged) ---
     if let Some(aliases) = body.get("aliases").and_then(|a| a.as_array()) {
         for alias_update in aliases {
             if let (Some(alias), Some(target)) = (
@@ -306,20 +573,119 @@ pub async fn admin_config_save(
                 .bind(enabled)
                 .execute(&state.db)
                 .await;
+                changed = true;
             }
         }
     }
 
-    // Record audit entry
-    let _ =
-        sqlx::query("INSERT INTO config_audit_log (actor, action, target_type) VALUES (?, ?, ?)")
+    if changed {
+        let validation = crate::config::validation::validate_config(&config);
+        if !validation.errors.is_empty() {
+            let _ = sqlx::query(
+                "INSERT INTO config_audit_log (actor, action, target_type, before_json, after_json) VALUES (?, ?, ?, ?, ?)",
+            )
             .bind("operator")
-            .bind("config_update")
+            .bind("config_update_rejected")
             .bind("config")
+            .bind(serde_json::to_string(&before_config).unwrap_or_default())
+            .bind(serde_json::json!({"errors": validation.errors}).to_string())
             .execute(&state.db)
             .await;
+            return Err(ApiError::InvalidRequest(
+                "Config validation failed; changes were not applied".into(),
+            ));
+        }
+
+        let snapshot_json = serde_json::to_string(&before_config).unwrap_or_default();
+        let _ = sqlx::query(
+            "INSERT INTO config_snapshots (version, created_by, source, config_json) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&before_config.version)
+        .bind("operator")
+        .bind("admin_config_save")
+        .bind(snapshot_json)
+        .execute(&state.db)
+        .await;
+
+        // Apply the new config to runtime
+        let config = std::sync::Arc::new(config);
+        state.runtime_config.store(config.clone());
+        let _ = state.config_watch_tx.send(config.clone());
+
+        // Re-initialize the provider registry with the effective config
+        state.provider_registry.init_from_config(&state).await;
+
+        // Update the route engine
+        if let Ok(mut engine) = state.route_engine.write() {
+            engine.update_config(config.clone());
+        }
+
+        // Persist runtime overrides to disk
+        let _ = crate::config::overrides::save_runtime_overrides(config_path, &config);
+
+        // Record audit entry
+        let _ = sqlx::query(
+            "INSERT INTO config_audit_log (actor, action, target_type) VALUES (?, ?, ?)",
+        )
+        .bind("operator")
+        .bind("config_update")
+        .bind("config")
+        .execute(&state.db)
+        .await;
+    }
 
     Ok(Json(
-        serde_json::json!({"status": "ok", "message": "Config saved"}),
+        serde_json::json!({"status": "ok", "message": "Config saved and applied without restart"}),
     ))
+}
+
+pub async fn admin_config_rollback(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let snapshot_id = body
+        .get("snapshot_id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| ApiError::InvalidRequest("snapshot_id is required".into()))?;
+
+    let row =
+        sqlx::query_as::<_, (String,)>("SELECT config_json FROM config_snapshots WHERE id = ?")
+            .bind(snapshot_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?
+            .ok_or_else(|| ApiError::InvalidRequest(format!("snapshot {snapshot_id} not found")))?;
+
+    let config: crate::config::schema::Config = serde_json::from_str(&row.0)
+        .map_err(|e| ApiError::InvalidRequest(format!("snapshot is invalid: {e}")))?;
+    let validation = crate::config::validation::validate_config(&config);
+    if !validation.errors.is_empty() {
+        return Err(ApiError::InvalidRequest(
+            "Snapshot config failed validation".into(),
+        ));
+    }
+
+    let config = std::sync::Arc::new(config);
+    state.runtime_config.store(config.clone());
+    let _ = state.config_watch_tx.send(config.clone());
+    state.provider_registry.init_from_config(&state).await;
+    if let Ok(mut engine) = state.route_engine.write() {
+        engine.update_config(config.clone());
+    }
+    let _ = crate::config::overrides::save_runtime_overrides(&state.boot_config_file, &config);
+    let _ = sqlx::query(
+        "INSERT INTO config_audit_log (actor, action, target_type, target_id) VALUES (?, ?, ?, ?)",
+    )
+    .bind("operator")
+    .bind("config_rollback")
+    .bind("config_snapshot")
+    .bind(snapshot_id.to_string())
+    .execute(&state.db)
+    .await;
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": "Config rolled back and applied without restart",
+        "snapshot_id": snapshot_id
+    })))
 }

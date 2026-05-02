@@ -38,7 +38,7 @@ async fn build_e2e_app(succeed_after: u32) -> (axum::Router, tokenscavenger::app
         discover_models: true,
     }];
 
-    let state = tokenscavenger::app::state::AppState::new(config, pool);
+    let state = tokenscavenger::app::state::AppState::new(config, pool, Default::default());
     state.provider_registry.init_from_config(&state).await;
     sqlx::query(
         "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled, base_url, free_only)
@@ -235,7 +235,7 @@ async fn e2e_route_exhausted_no_providers() {
         .await
         .unwrap();
     let config = tokenscavenger::config::schema::Config::default();
-    let state = tokenscavenger::app::state::AppState::new(config, pool);
+    let state = tokenscavenger::app::state::AppState::new(config, pool, Default::default());
     let db = state.db.clone();
 
     let app = axum::Router::new()

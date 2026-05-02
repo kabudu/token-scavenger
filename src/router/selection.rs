@@ -67,11 +67,9 @@ pub fn filter_by_health(plan: Vec<RouteAttempt>, state: &AppState) -> Vec<RouteA
                     tracing::info!(provider = %pid, "Filtered out: health state = {:?}", hs.state);
                     return false;
                 }
-                crate::resilience::health::HealthState::QuotaExhausted => {
-                    if policy_is_free_first(state) {
-                        tracing::info!(provider = %pid, "Filtered out: quota exhausted (free-first mode)");
-                        return false;
-                    }
+                crate::resilience::health::HealthState::QuotaExhausted if policy_is_free_first(state) => {
+                    tracing::info!(provider = %pid, "Filtered out: quota exhausted (free-first mode)");
+                    return false;
                 }
                 crate::resilience::health::HealthState::RateLimited => {
                     tracing::info!(provider = %pid, "Filtered out: rate limited");

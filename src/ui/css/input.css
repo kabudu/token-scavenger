@@ -1,0 +1,29 @@
+@import "tailwindcss";
+@source "../../**/*.rs";
+
+:root {
+  --color-fox: #d35400;
+  --color-emerald: #00ff9f;
+  --color-cyan: #00f5ff;
+  --color-bg: #020617;
+  --color-card: #0a1428;
+  --color-border: rgba(255, 255, 255, 0.08);
+}
+body { background-color: var(--color-bg); color: #f5f5f5; font-family: "Inter", system-ui, sans-serif; }
+.sidebar-link { transition: all 0.2s ease; border-left: 3px solid transparent; }
+.sidebar-link.active { background: rgba(211, 84, 0, 0.1); color: var(--color-fox); border-left-color: var(--color-fox); }
+.sidebar-link:hover:not(.active) { background: rgba(255, 255, 255, 0.03); color: white; }
+.glass-card { background: var(--color-card); border: 1px solid var(--color-border); border-radius: 12px; }
+.metric-glow-orange { box-shadow: 0 0 20px rgba(211, 84, 0, 0.1); }
+.metric-glow-emerald { box-shadow: 0 0 20px rgba(0, 255, 159, 0.1); }
+.metric-glow-cyan { box-shadow: 0 0 20px rgba(0, 245, 255, 0.1); }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+table th { padding: 12px 24px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75rem; color: #64748b; border-bottom: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.01); text-align: left; }
+table td { padding: 16px 24px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+input, select, textarea { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; color: white; outline: none; }
+button.btn { background: var(--color-fox); color: white; padding: 6px 16px; border-radius: 6px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; transition: all 0.2s; }
+button.btn:hover { filter: brightness(1.2); }
+button.btn-danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 6px 16px; border-radius: 6px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; transition: all 0.2s; border: 1px solid rgba(239, 68, 68, 0.3); }
+button.btn-danger:hover { background: rgba(239, 68, 68, 0.3); }

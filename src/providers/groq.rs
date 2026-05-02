@@ -43,11 +43,7 @@ impl ProviderAdapter for GroqAdapter {
         }
     }
     fn base_url(&self, config: &ProviderConfig) -> Url {
-        config
-            .base_url
-            .as_ref()
-            .map(|u| u.parse().unwrap())
-            .unwrap_or_else(|| "https://api.groq.com/openai/v1".parse().unwrap())
+        shared::provider_base_url("groq", config, "https://api.groq.com/openai/v1")
     }
     fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
         bearer_auth(config)

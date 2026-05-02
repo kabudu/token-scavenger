@@ -8,7 +8,8 @@ use axum::extract::FromRef;
 use dashmap::DashMap;
 use moka::future::Cache;
 use sqlx::SqlitePool;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, watch};
 
 /// Shared application state, accessible from all route handlers and background tasks.
@@ -20,6 +21,9 @@ pub struct AppState {
     /// Hot-reloadable effective runtime config.
     pub runtime_config: Arc<ArcSwap<Config>>,
 
+    /// Path to the boot configuration file (for saving overrides).
+    pub boot_config_file: PathBuf,
+
     /// SQLite connection pool.
     pub db: SqlitePool,
 
@@ -29,8 +33,8 @@ pub struct AppState {
     /// Provider adapter registry.
     pub provider_registry: Arc<ProviderRegistry>,
 
-    /// Route planning engine.
-    pub route_engine: Arc<RouteEngine>,
+    /// Route planning engine (wrapped in RwLock for hot-reload).
+    pub route_engine: Arc<RwLock<RouteEngine>>,
 
     /// Per-provider model catalog cache (provider_id -> cached models JSON).
     pub model_cache: Arc<Cache<String, String>>,
@@ -40,6 +44,9 @@ pub struct AppState {
 
     /// Per-provider circuit breaker state.
     pub breaker_states: Arc<DashMap<String, CircuitBreakerState>>,
+
+    /// In-memory UI browser sessions for optional cookie auth.
+    pub ui_sessions: Arc<DashMap<String, i64>>,
 
     /// Broadcast channel for live log events (UI streaming).
     pub log_tx: broadcast::Sender<String>,
@@ -61,11 +68,12 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new AppState with the given configuration and database pool.
-    pub fn new(config: Config, db: SqlitePool) -> Self {
+    /// `log_tx` should be created before tracing is initialized so the broadcast
+    /// layer can forward events into the same channel.
+    pub fn new(config: Config, db: SqlitePool, config_path: PathBuf, log_tx: broadcast::Sender<String>) -> Self {
         let config = Arc::new(config);
         let (config_watch_tx, config_watch_rx) = watch::channel(Arc::clone(&config));
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let (log_tx, _log_rx) = broadcast::channel(1024);
         let (health_event_tx, _health_event_rx) = broadcast::channel(256);
 
         let http_client = reqwest::Client::builder()
@@ -76,14 +84,15 @@ impl AppState {
             .expect("Failed to build HTTP client");
 
         let provider_registry = Arc::new(ProviderRegistry::new());
-        let route_engine = Arc::new(RouteEngine::new(
+        let route_engine = Arc::new(RwLock::new(RouteEngine::new(
             Arc::clone(&provider_registry),
             Arc::clone(&config),
-        ));
+        )));
 
         Self {
             boot_config: Arc::clone(&config),
             runtime_config: Arc::new(ArcSwap::new(Arc::clone(&config))),
+            boot_config_file: config_path,
             db,
             http_client,
             provider_registry,
@@ -91,6 +100,7 @@ impl AppState {
             model_cache: Arc::new(Cache::new(10_000)),
             health_states: Arc::new(DashMap::new()),
             breaker_states: Arc::new(DashMap::new()),
+            ui_sessions: Arc::new(DashMap::new()),
             log_tx,
             health_event_tx,
             config_watch_tx,

@@ -6,6 +6,46 @@ use crate::discovery::curated::DiscoveredModel;
 use crate::providers::http::{ProviderHttp, bearer_auth};
 use crate::providers::normalization::parse_rate_limit_headers;
 use crate::providers::traits::*;
+use url::Url;
+
+/// Ensure a URL has a trailing slash so that `Url::join` appends relative paths
+/// as sub-paths rather than replacing the last path segment.
+/// E.g. `https://api.groq.com/openai/v1` → `https://api.groq.com/openai/v1/`
+pub fn with_trailing_slash(url: &Url) -> Url {
+    let s = url.as_str();
+    if s.ends_with('/') {
+        url.clone()
+    } else {
+        Url::parse(&format!("{}/", s)).expect("Appending / to valid URL should be valid")
+    }
+}
+
+pub fn provider_base_url(
+    provider_id: &str,
+    config: &ProviderConfig,
+    default_base_url: &str,
+) -> Url {
+    if let Some(u) = config.base_url.as_deref() {
+        match Url::parse(u) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                tracing::warn!(
+                    provider = %provider_id,
+                    base_url = %u,
+                    error = %err,
+                    "Invalid provider base_url; falling back to default"
+                );
+                default_base_url
+                    .parse()
+                    .expect("default provider base_url must be valid")
+            }
+        }
+    } else {
+        default_base_url
+            .parse()
+            .expect("default provider base_url must be valid")
+    }
+}
 
 /// Helper to execute an OpenAI-compatible chat completions request.
 /// Used by providers like Groq, Cerebras, Mistral, OpenRouter, NVIDIA, etc.
@@ -14,9 +54,8 @@ pub async fn openai_chat_completions(
     request: NormalizedChatRequest,
     provider_id: &str,
 ) -> Result<ProviderChatResponse, ProviderError> {
-    let url = ctx
-        .base_url
-        .join("/chat/completions")
+    let url = with_trailing_slash(&ctx.base_url)
+        .join("chat/completions")
         .map_err(|e| ProviderError::Other(e.to_string()))?;
 
     let config = ProviderConfig {
@@ -166,9 +205,10 @@ pub async fn openai_discover_models(
     ctx: &ProviderContext,
     provider_id: &str,
 ) -> Result<Vec<DiscoveredModel>, ProviderError> {
-    let url = ctx
-        .base_url
-        .join("/models")
+    // Ensure the base URL has a trailing slash so joining "models" appends it
+    // as a sub-path rather than replacing the last segment.
+    let url = with_trailing_slash(&ctx.base_url)
+        .join("models")
         .map_err(|e| ProviderError::Other(e.to_string()))?;
 
     let config = ProviderConfig {
@@ -238,9 +278,8 @@ pub async fn openai_stream_completions(
     provider_id: &str,
     tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
 ) -> Result<(), ProviderError> {
-    let url = ctx
-        .base_url
-        .join("/chat/completions")
+    let url = with_trailing_slash(&ctx.base_url)
+        .join("chat/completions")
         .map_err(|e| ProviderError::Other(e.to_string()))?;
 
     let config = ProviderConfig {
@@ -462,11 +501,7 @@ macro_rules! openai_compat_adapter {
                 }
             }
             fn base_url(&self, config: &ProviderConfig) -> Url {
-                config
-                    .base_url
-                    .as_ref()
-                    .map(|u| u.parse().unwrap())
-                    .unwrap_or_else(|| $base_url.parse().unwrap())
+                $crate::providers::shared::provider_base_url($id, config, $base_url)
             }
             fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
                 bearer_auth(config)

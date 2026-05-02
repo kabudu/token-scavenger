@@ -13,6 +13,7 @@ use tokenscavenger::app::state::AppState;
 use tokenscavenger::config::schema::Config;
 use tokenscavenger::config::schema::ServerConfig;
 use tokenscavenger::resilience::breaker::CircuitBreaker;
+use tokenscavenger::resilience::health::{HealthState, ProviderHealthState};
 use tokenscavenger::resilience::retry::backoff_duration;
 use tokenscavenger::usage::pricing::estimate_cost;
 use tokenscavenger::util::redact;
@@ -38,7 +39,7 @@ async fn build_test_app() -> (axum::Router, AppState) {
         ..Default::default()
     };
 
-    let state = AppState::new(config, pool);
+    let state = AppState::new(config, pool, Default::default());
 
     let router = axum::Router::new()
         .route("/healthz", axum::routing::get(routes::healthz))
@@ -172,7 +173,7 @@ async fn test_admin_config_redacts_provider_secrets() {
         }],
         ..Default::default()
     };
-    let state = AppState::new(config, pool);
+    let state = AppState::new(config, pool, Default::default());
     let app = axum::Router::new()
         .route("/admin/config", axum::routing::get(routes::admin_config))
         .with_state(state);
@@ -210,7 +211,7 @@ async fn test_startup_router_enforces_auth_on_protected_routes() {
         },
         ..Default::default()
     };
-    let state = AppState::new(config, pool);
+    let state = AppState::new(config, pool, Default::default());
     let router = tokenscavenger::app::startup::build_router(state);
 
     let health = router
@@ -266,7 +267,11 @@ async fn test_query_string_api_key_requires_explicit_opt_in() {
         },
         ..Default::default()
     };
-    let router = tokenscavenger::app::startup::build_router(AppState::new(config, pool.clone()));
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool.clone(),
+        Default::default(),
+    ));
 
     let rejected = router
         .oneshot(
@@ -287,7 +292,8 @@ async fn test_query_string_api_key_requires_explicit_opt_in() {
         },
         ..Default::default()
     };
-    let router = tokenscavenger::app::startup::build_router(AppState::new(config, pool));
+    let router =
+        tokenscavenger::app::startup::build_router(AppState::new(config, pool, Default::default()));
     let accepted = router
         .oneshot(
             Request::builder()
@@ -298,6 +304,61 @@ async fn test_query_string_api_key_requires_explicit_opt_in() {
         .await
         .unwrap();
     assert_eq!(accepted.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_optional_ui_session_cookie_authenticates_browser_requests() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let config = Config {
+        server: ServerConfig {
+            master_api_key: "secret".into(),
+            ui_session_auth: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router =
+        tokenscavenger::app::startup::build_router(AppState::new(config, pool, Default::default()));
+
+    let login = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/session")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"api_key": "secret"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let cookie = login
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(cookie.contains("HttpOnly"));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/ui")
+                .header("Cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -314,7 +375,8 @@ async fn test_configured_cors_origin_is_allowed() {
         },
         ..Default::default()
     };
-    let router = tokenscavenger::app::startup::build_router(AppState::new(config, pool));
+    let router =
+        tokenscavenger::app::startup::build_router(AppState::new(config, pool, Default::default()));
 
     let response = router
         .oneshot(
@@ -361,6 +423,263 @@ async fn test_chat_completions_no_config_returns_error() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn test_route_plan_endpoint_explains_attempts() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut config = Config::default();
+    config.routing.provider_order = vec!["groq".into()];
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "groq".into(),
+        enabled: true,
+        base_url: None,
+        api_key: None,
+        free_only: true,
+        discover_models: false,
+    }];
+    let state = AppState::new(config, pool, Default::default());
+    state.provider_registry.init_from_config(&state).await;
+    let router = tokenscavenger::app::startup::build_router(state);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/route-plan?model=llama3-8b-8192&endpoint=chat")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["requested_model"], "llama3-8b-8192");
+    assert!(json["attempts"].as_array().unwrap().iter().any(|attempt| {
+        attempt["provider_id"] == "groq" && attempt["reason"].as_str().is_some()
+    }));
+}
+
+#[tokio::test]
+async fn test_config_save_creates_snapshot_and_rollback_restores_it() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut config = Config::default();
+    config.routing.free_first = true;
+    let path =
+        std::env::temp_dir().join(format!("tokenscavenger-test-{}.toml", uuid::Uuid::new_v4()));
+    let state = AppState::new(config, pool, path.clone());
+    let router = tokenscavenger::app::startup::build_router(state);
+
+    let save = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config")
+                .method("PUT")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"routing": {"free_first": false}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(save.status(), StatusCode::OK);
+
+    let rollback = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config/rollback")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"snapshot_id": 1}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rollback.status(), StatusCode::OK);
+
+    let current = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(current.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["routing"]["free_first"], true);
+    let _ = std::fs::remove_file(path.with_extension("overrides.toml"));
+}
+
+#[test]
+fn test_runtime_overrides_restore_all_hot_reload_sections() {
+    let path = std::env::temp_dir().join(format!(
+        "tokenscavenger-override-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    let mut config = Config::default();
+    config.server.master_api_key = "new-secret".into();
+    config.server.allowed_cors_origins = vec!["https://ops.example".into()];
+    config.server.ui_enabled = false;
+    config.server.ui_session_auth = true;
+    config.database.max_connections = 3;
+    config.metrics.enabled = false;
+
+    tokenscavenger::config::overrides::save_runtime_overrides(&path, &config).unwrap();
+    let loaded = tokenscavenger::config::overrides::load_runtime_overrides(&path).unwrap();
+
+    assert_eq!(loaded.server.master_api_key, "new-secret");
+    assert_eq!(
+        loaded.server.allowed_cors_origins,
+        vec!["https://ops.example"]
+    );
+    assert!(!loaded.server.ui_enabled);
+    assert!(loaded.server.ui_session_auth);
+    assert_eq!(loaded.database.max_connections, 3);
+    assert!(!loaded.metrics.enabled);
+
+    let _ = std::fs::remove_file(path.with_extension("overrides.toml"));
+}
+
+#[tokio::test]
+async fn test_rate_limited_health_state_is_enforced_by_route_filter() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let mut config = Config::default();
+    config.routing.provider_order = vec!["groq".into()];
+    let state = AppState::new(config, pool, Default::default());
+    state.health_states.insert(
+        "groq".into(),
+        ProviderHealthState {
+            state: HealthState::RateLimited,
+            ..ProviderHealthState::new()
+        },
+    );
+
+    let plan = vec![tokenscavenger::router::selection::RouteAttempt {
+        provider_id: "groq".into(),
+        model_id: "llama".into(),
+        priority: 0,
+    }];
+    assert!(tokenscavenger::router::selection::filter_by_health(plan, &state).is_empty());
+}
+
+#[tokio::test]
+async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let app = tokenscavenger::app::startup::build_router(AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+    ));
+    for path in ["/ui", "/ui/routing", "/ui/config", "/ui/logs"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "path {path}");
+        let body = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("<nav>"));
+        if path == "/ui/routing" {
+            assert!(html.contains("Route Plan"));
+        }
+        if path == "/ui/config" {
+            assert!(html.contains("Rollback"));
+            assert!(html.contains("<caption>"));
+        }
+        if path == "/ui/logs" {
+            assert!(html.contains("aria-live"));
+        }
+        if path == "/ui" {
+            assert!(html.contains("Requests"));
+            assert!(html.contains("Avg Latency"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_provider_contract_matrix_and_failure_classification() {
+    let provider_ids = [
+        "groq",
+        "google",
+        "openrouter",
+        "cloudflare",
+        "cerebras",
+        "nvidia",
+        "cohere",
+        "mistral",
+        "github-models",
+        "huggingface",
+        "zai",
+        "siliconflow",
+    ];
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let mut config = Config::default();
+    config.providers = provider_ids
+        .iter()
+        .map(|id| tokenscavenger::config::schema::ProviderConfig {
+            id: (*id).into(),
+            enabled: true,
+            base_url: None,
+            api_key: None,
+            free_only: true,
+            discover_models: false,
+        })
+        .collect();
+    let state = AppState::new(config, pool, Default::default());
+    state.provider_registry.init_from_config(&state).await;
+    let adapters = state.provider_registry.list_all().await;
+    assert_eq!(adapters.len(), provider_ids.len());
+    for adapter in adapters {
+        assert!(!adapter.provider_id().is_empty());
+        assert!(!adapter.display_name().is_empty());
+        assert!(
+            adapter.supports_endpoint(
+                &tokenscavenger::providers::traits::EndpointKind::ChatCompletions
+            )
+        );
+        assert!(adapter.capabilities().docs_url.is_some() || adapter.capabilities().has_quirks);
+    }
+
+    use tokenscavenger::providers::traits::ProviderError;
+    assert!(matches!(
+        tokenscavenger::providers::shared::classify_error(429, "slow down"),
+        ProviderError::RateLimited { .. }
+    ));
+    assert!(matches!(
+        tokenscavenger::providers::shared::classify_error(401, "bad key"),
+        ProviderError::Auth(_)
+    ));
+    assert!(matches!(
+        tokenscavenger::providers::shared::classify_error(500, "boom"),
+        ProviderError::Other(_)
+    ));
 }
 
 #[tokio::test]
@@ -499,7 +818,7 @@ async fn test_disabled_provider_is_not_registered() {
         }],
         ..Default::default()
     };
-    let state = AppState::new(config, pool);
+    let state = AppState::new(config, pool, Default::default());
     state.provider_registry.init_from_config(&state).await;
     assert!(state.provider_registry.list_ids().await.is_empty());
 }

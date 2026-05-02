@@ -1,5 +1,6 @@
 use crate::config::schema::Config;
 use reqwest::header::HeaderValue;
+use url::Url;
 
 /// Result of config validation.
 #[derive(Debug, Default)]
@@ -63,6 +64,14 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
                 v.errors.push(format!(
                     "provider '{}' api_key cannot be represented as an HTTP header value",
                     provider.id
+                ));
+            }
+        }
+        if let Some(base_url) = &provider.base_url {
+            if Url::parse(base_url).is_err() {
+                v.errors.push(format!(
+                    "provider '{}' base_url is invalid: {}",
+                    provider.id, base_url
                 ));
             }
         }

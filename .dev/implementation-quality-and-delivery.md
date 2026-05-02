@@ -272,7 +272,7 @@ Mark each item as evidence exists in code, CI, docs, or recorded benchmark outpu
 - [x] Add UI smoke tests for dashboard, provider reorder, provider test, model enablement, alias save, analytics, and logs.
 - [x] Produce release artifacts, checksums, example config, migration notes, changelog, and optional container image.
 - [x] Record load and failure benchmark results in machine-readable and markdown formats.
-- [ ] Assert expected metrics, logs, request IDs, health states, and UI analytics in validation tests.
+- [x] Assert expected metrics, logs, request IDs, health states, and UI analytics in validation tests.
 - [x] Verify secrets are redacted and protected routes reject unauthenticated requests when auth is enabled.
 - [x] Add CI jobs for formatting, linting, tests, adapter contracts, UI smoke tests, benchmark smoke subset, and cross-platform builds.
 - [x] Produce release artifacts, checksums, example config, migration notes, changelog, and optional container image.

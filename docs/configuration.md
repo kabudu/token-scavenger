@@ -10,6 +10,7 @@ bind = "0.0.0.0:8000"              # Host:port to bind HTTP listener
 master_api_key = ""                 # Optional API key for proxy auth
 allowed_cors_origins = []           # Explicit browser origins allowed by CORS
 allow_query_api_keys = false        # Accept ?api_key=... auth only when true
+ui_session_auth = false             # Enable browser cookie session login endpoint
 ui_enabled = true                   # Enable/disable operator dashboard
 ui_path = "/ui"                     # URL prefix for UI
 request_timeout_ms = 120000         # Upstream request timeout
@@ -66,6 +67,7 @@ target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 | `master_api_key` | `""` | When set, all API requests must include `Authorization: Bearer <key>`. Empty = no auth. |
 | `allowed_cors_origins` | `[]` | Browser origins allowed by CORS, for example `["https://ops.example"]`. Empty uses the non-permissive default. |
 | `allow_query_api_keys` | `false` | When `true`, `?api_key=<key>` is accepted as an explicit compatibility path. Prefer bearer auth. |
+| `ui_session_auth` | `false` | Enables `POST /admin/session` to exchange the master key for an HttpOnly browser cookie session. |
 | `ui_enabled` | `true` | Whether to serve the operator web UI |
 | `ui_path` | `"/ui"` | URL path prefix for the UI |
 | `request_timeout_ms` | `120000` | Maximum time to wait for an upstream provider response |

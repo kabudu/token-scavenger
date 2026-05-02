@@ -9,6 +9,10 @@
 //! - Secret redaction throughput
 //! - Config loading/validation latency
 //! - SQLite write throughput for usage events
+//! - Direct-provider baseline versus proxy route overhead
+//! - Streaming first-byte formatting
+//! - Warm model catalog rendering
+//! - Large-catalog route planning
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::sync::Arc;
@@ -18,6 +22,72 @@ use tokio::runtime::Runtime;
 
 mod route_plan {
     use super::*;
+    use async_trait::async_trait;
+    use reqwest::header::HeaderMap;
+    use tokenscavenger::providers::traits::{
+        AuthKind, EndpointKind, ProviderAdapter, ProviderContext, ProviderError,
+    };
+    use url::Url;
+
+    struct BenchAdapter(&'static str);
+
+    #[async_trait]
+    impl ProviderAdapter for BenchAdapter {
+        fn provider_id(&self) -> &'static str {
+            self.0
+        }
+        fn display_name(&self) -> &'static str {
+            self.0
+        }
+        fn supports_endpoint(&self, _: &EndpointKind) -> bool {
+            true
+        }
+        fn auth_kind(&self) -> AuthKind {
+            AuthKind::None
+        }
+        fn capabilities(&self) -> tokenscavenger::providers::normalization::ProviderCapabilities {
+            tokenscavenger::providers::normalization::ProviderCapabilities::default()
+        }
+        fn base_url(&self, _: &tokenscavenger::config::schema::ProviderConfig) -> Url {
+            "http://bench.local".parse().unwrap()
+        }
+        fn default_headers(&self, _: &tokenscavenger::config::schema::ProviderConfig) -> HeaderMap {
+            HeaderMap::new()
+        }
+        async fn discover_models(
+            &self,
+            _: &ProviderContext,
+        ) -> Result<Vec<tokenscavenger::discovery::curated::DiscoveredModel>, ProviderError>
+        {
+            Ok(Vec::new())
+        }
+        async fn chat_completions(
+            &self,
+            _: &ProviderContext,
+            req: tokenscavenger::api::openai::chat::NormalizedChatRequest,
+        ) -> Result<tokenscavenger::api::openai::chat::ProviderChatResponse, ProviderError>
+        {
+            Ok(tokenscavenger::api::openai::chat::ProviderChatResponse {
+                provider_id: self.0.into(),
+                model_id: req.model,
+                content: Some("ok".into()),
+                tool_calls: None,
+                finish_reason: Some("stop".into()),
+                usage: None,
+                latency_ms: 0,
+            })
+        }
+        async fn embeddings(
+            &self,
+            _: &ProviderContext,
+            _: tokenscavenger::api::openai::embeddings::NormalizedEmbeddingsRequest,
+        ) -> Result<
+            tokenscavenger::api::openai::embeddings::ProviderEmbeddingsResponse,
+            ProviderError,
+        > {
+            Err(ProviderError::UnsupportedFeature("bench".into()))
+        }
+    }
 
     pub fn bench(c: &mut Criterion) {
         let rt = Runtime::new().unwrap();
@@ -37,6 +107,84 @@ mod route_plan {
                 )
                 .await;
                 black_box(plan);
+            });
+        });
+
+        c.bench_function("route_plan_large_catalog_1000", |b| {
+            b.to_async(&rt).iter(|| async {
+                let registry = tokenscavenger::providers::registry::ProviderRegistry::new();
+                let mut config = tokenscavenger::config::schema::Config::default();
+                for i in 0..1_000 {
+                    let id = format!("bench-{i}");
+                    config.routing.provider_order.push(id.clone());
+                    registry
+                        .register(Arc::new(BenchAdapter(Box::leak(id.into_boxed_str()))))
+                        .await;
+                }
+                let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&config);
+                let plan = tokenscavenger::router::selection::build_attempt_plan(
+                    &policy,
+                    &registry,
+                    "bench-model",
+                    tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+                )
+                .await;
+                black_box(plan);
+            });
+        });
+    }
+}
+
+mod proxy_overhead {
+    use super::*;
+
+    pub fn bench(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        c.bench_function("direct_provider_baseline_json", |b| {
+            b.iter(|| {
+                black_box(serde_json::json!({
+                    "id": "direct",
+                    "choices": [{"message": {"content": "ok"}}]
+                }))
+            });
+        });
+        c.bench_function("warm_models_catalog_render", |b| {
+            b.to_async(&rt).iter(|| async {
+                let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+                sqlx::migrate!("src/db/migrations")
+                    .run(&pool)
+                    .await
+                    .unwrap();
+                let state = tokenscavenger::app::state::AppState::new(
+                    tokenscavenger::config::schema::Config::default(),
+                    pool,
+                    Default::default(),
+                );
+                black_box(tokenscavenger::discovery::merge::build_model_list(&state).await);
+            });
+        });
+    }
+}
+
+mod streaming {
+    use super::*;
+
+    pub fn bench(c: &mut Criterion) {
+        c.bench_function("streaming_first_byte_payload", |b| {
+            b.iter(|| {
+                let event = tokenscavenger::api::openai::stream::StreamEvent::Chunk {
+                    id: "bench".into(),
+                    created: 1,
+                    model: "bench-model".into(),
+                    delta: tokenscavenger::api::openai::chat::StreamDelta {
+                        role: Some("assistant".into()),
+                        content: Some("o".into()),
+                    },
+                    finish_reason: None,
+                };
+                black_box(tokenscavenger::api::openai::stream::format_sse_payload(
+                    &event,
+                ));
             });
         });
     }
@@ -176,7 +324,7 @@ mod aliases {
         });
 
         let config = tokenscavenger::config::schema::Config::default();
-        let state = tokenscavenger::app::state::AppState::new(config, pool);
+        let state = tokenscavenger::app::state::AppState::new(config, pool, Default::default());
 
         c.bench_function("alias_resolve_hit", |b| {
             b.to_async(&rt).iter(|| async {
@@ -262,7 +410,7 @@ mod health {
             b.to_async(&rt).iter(|| async {
                 let config = Config::default();
                 let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-                let state = AppState::new(config, pool);
+                let state = AppState::new(config, pool, Default::default());
                 for _ in 0..100 {
                     tokenscavenger::resilience::health::record_failure(
                         black_box(&state),
@@ -278,6 +426,8 @@ mod health {
 criterion_group!(
     benches,
     route_plan::bench,
+    proxy_overhead::bench,
+    streaming::bench,
     breaker::bench,
     redaction::bench,
     config_load::bench,
