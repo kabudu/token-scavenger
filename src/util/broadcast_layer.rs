@@ -3,8 +3,8 @@
 /// stream can surface them to the browser in real-time.
 use tokio::sync::broadcast;
 use tracing::Event;
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 pub struct BroadcastLayer {
     tx: broadcast::Sender<String>,

@@ -159,6 +159,7 @@ mod proxy_overhead {
                     tokenscavenger::config::schema::Config::default(),
                     pool,
                     Default::default(),
+                    tokio::sync::broadcast::channel(1).0,
                 );
                 black_box(tokenscavenger::discovery::merge::build_model_list(&state).await);
             });
@@ -324,7 +325,12 @@ mod aliases {
         });
 
         let config = tokenscavenger::config::schema::Config::default();
-        let state = tokenscavenger::app::state::AppState::new(config, pool, Default::default());
+        let state = tokenscavenger::app::state::AppState::new(
+            config,
+            pool,
+            Default::default(),
+            tokio::sync::broadcast::channel(1).0,
+        );
 
         c.bench_function("alias_resolve_hit", |b| {
             b.to_async(&rt).iter(|| async {
@@ -410,7 +416,12 @@ mod health {
             b.to_async(&rt).iter(|| async {
                 let config = Config::default();
                 let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-                let state = AppState::new(config, pool, Default::default());
+                let state = AppState::new(
+                    config,
+                    pool,
+                    Default::default(),
+                    tokio::sync::broadcast::channel(1).0,
+                );
                 for _ in 0..100 {
                     tokenscavenger::resilience::health::record_failure(
                         black_box(&state),

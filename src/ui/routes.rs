@@ -206,8 +206,14 @@ pub async fn render_dashboard(state: &AppState) -> String {
                 .get("estimated_cost_usd")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            total_tokens += entry.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-            total_tokens += entry.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+            total_tokens += entry
+                .get("input_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            total_tokens += entry
+                .get("output_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
         }
     }
     let request_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM request_log")
@@ -217,13 +223,15 @@ pub async fn render_dashboard(state: &AppState) -> String {
         .flatten()
         .map(|row| row.0)
         .unwrap_or(0);
-    let avg_latency: i64 = sqlx::query_as::<_, (i64,)>("SELECT COALESCE(CAST(AVG(latency_ms) AS INTEGER), 0) FROM request_log")
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .map(|row| row.0)
-        .unwrap_or(0);
+    let avg_latency: i64 = sqlx::query_as::<_, (i64,)>(
+        "SELECT COALESCE(CAST(AVG(latency_ms) AS INTEGER), 0) FROM request_log",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .map(|row| row.0)
+    .unwrap_or(0);
 
     // Fetch per-provider average latency
     let provider_latencies: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
@@ -621,7 +629,7 @@ pub async fn render_logs(state: &AppState) -> String {
     let content = r#"
         <div class="glass-card overflow-hidden flex flex-col h-[calc(100vh-12rem)]">
             <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">System Log Stream</h3></div>
-            <div id="logs" class="flex-1 p-4 bg-[#010409] font-mono text-[10px] leading-relaxed overflow-y-auto text-slate-400">
+            <div id="logs" aria-live="polite" class="flex-1 p-4 bg-[#010409] font-mono text-[10px] leading-relaxed overflow-y-auto text-slate-400">
             </div>
         </div>"#;
     let scripts = r#"<script>
@@ -693,7 +701,7 @@ pub async fn render_audit(state: &AppState) -> String {
 /// Render the interactive Chat Tester page.
 pub async fn render_chat(state: &AppState) -> String {
     let models = crate::discovery::merge::get_all_models(state).await;
-    let models_json = serde_json::to_string(&models).unwrap_or("{}" .into());
+    let models_json = serde_json::to_string(&models).unwrap_or("{}".into());
 
     let content = r#"
     <div class="flex gap-6 h-[calc(100vh-10rem)]">
@@ -783,7 +791,8 @@ pub async fn render_chat(state: &AppState) -> String {
       </div>
     </div>"#.to_string();
 
-    let scripts = format!(r#"<script>
+    let scripts = format!(
+        r#"<script>
     const modelsPayload = {};
     const allModels = modelsPayload.models || [];
 
@@ -972,7 +981,9 @@ pub async fn render_chat(state: &AppState) -> String {
             document.getElementById('sendBtn').innerHTML = '<i class="fas fa-paper-plane mr-1"></i>Send';
         }}
     }}
-    </script>"#, models_json);
+    </script>"#,
+        models_json
+    );
 
     render_shell("Chat Tester", "chat", &content, &scripts, state)
 }

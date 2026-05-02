@@ -70,7 +70,12 @@ impl AppState {
     /// Create a new AppState with the given configuration and database pool.
     /// `log_tx` should be created before tracing is initialized so the broadcast
     /// layer can forward events into the same channel.
-    pub fn new(config: Config, db: SqlitePool, config_path: PathBuf, log_tx: broadcast::Sender<String>) -> Self {
+    pub fn new(
+        config: Config,
+        db: SqlitePool,
+        config_path: PathBuf,
+        log_tx: broadcast::Sender<String>,
+    ) -> Self {
         let config = Arc::new(config);
         let (config_watch_tx, config_watch_rx) = watch::channel(Arc::clone(&config));
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

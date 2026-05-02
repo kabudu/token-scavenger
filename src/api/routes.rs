@@ -212,13 +212,13 @@ pub async fn admin_logs_stream(
     });
 
     // Periodic keepalive: send an SSE comment every 15 s to prevent browser timeout.
-    let keepalive = tokio_stream::wrappers::IntervalStream::new(
-        tokio::time::interval(std::time::Duration::from_secs(15)),
-    )
+    let keepalive = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(
+        std::time::Duration::from_secs(15),
+    ))
     .map(|_| Ok(Event::default().comment("keepalive")));
 
     let initial = futures::stream::iter(std::iter::once(Ok(
-        Event::default().data("Connected to system stream"),
+        Event::default().data("Connected to system stream")
     )));
 
     Ok(Sse::new(initial.chain(log_stream.merge(keepalive))))

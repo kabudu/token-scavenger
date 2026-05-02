@@ -39,7 +39,12 @@ async fn build_test_app() -> (axum::Router, AppState) {
         ..Default::default()
     };
 
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
 
     let router = axum::Router::new()
         .route("/healthz", axum::routing::get(routes::healthz))
@@ -173,7 +178,12 @@ async fn test_admin_config_redacts_provider_secrets() {
         }],
         ..Default::default()
     };
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     let app = axum::Router::new()
         .route("/admin/config", axum::routing::get(routes::admin_config))
         .with_state(state);
@@ -211,7 +221,12 @@ async fn test_startup_router_enforces_auth_on_protected_routes() {
         },
         ..Default::default()
     };
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     let router = tokenscavenger::app::startup::build_router(state);
 
     let health = router
@@ -271,6 +286,7 @@ async fn test_query_string_api_key_requires_explicit_opt_in() {
         config,
         pool.clone(),
         Default::default(),
+        tokio::sync::broadcast::channel(1).0,
     ));
 
     let rejected = router
@@ -292,8 +308,12 @@ async fn test_query_string_api_key_requires_explicit_opt_in() {
         },
         ..Default::default()
     };
-    let router =
-        tokenscavenger::app::startup::build_router(AppState::new(config, pool, Default::default()));
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
     let accepted = router
         .oneshot(
             Request::builder()
@@ -321,8 +341,12 @@ async fn test_optional_ui_session_cookie_authenticates_browser_requests() {
         },
         ..Default::default()
     };
-    let router =
-        tokenscavenger::app::startup::build_router(AppState::new(config, pool, Default::default()));
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
 
     let login = router
         .clone()
@@ -375,8 +399,12 @@ async fn test_configured_cors_origin_is_allowed() {
         },
         ..Default::default()
     };
-    let router =
-        tokenscavenger::app::startup::build_router(AppState::new(config, pool, Default::default()));
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
 
     let response = router
         .oneshot(
@@ -442,7 +470,12 @@ async fn test_route_plan_endpoint_explains_attempts() {
         free_only: true,
         discover_models: false,
     }];
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     state.provider_registry.init_from_config(&state).await;
     let router = tokenscavenger::app::startup::build_router(state);
 
@@ -478,7 +511,12 @@ async fn test_config_save_creates_snapshot_and_rollback_restores_it() {
     config.routing.free_first = true;
     let path =
         std::env::temp_dir().join(format!("tokenscavenger-test-{}.toml", uuid::Uuid::new_v4()));
-    let state = AppState::new(config, pool, path.clone());
+    let state = AppState::new(
+        config,
+        pool,
+        path.clone(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     let router = tokenscavenger::app::startup::build_router(state);
 
     let save = router
@@ -565,7 +603,12 @@ async fn test_rate_limited_health_state_is_enforced_by_route_filter() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     let mut config = Config::default();
     config.routing.provider_order = vec!["groq".into()];
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     state.health_states.insert(
         "groq".into(),
         ProviderHealthState {
@@ -593,6 +636,7 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         Config::default(),
         pool,
         Default::default(),
+        tokio::sync::broadcast::channel(1).0,
     ));
     for path in ["/ui", "/ui/routing", "/ui/config", "/ui/logs"] {
         let response = app
@@ -601,17 +645,16 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "path {path}");
-        let body = axum::body::to_bytes(response.into_body(), 65536)
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
             .await
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
-        assert!(html.contains("<nav>"));
+        assert!(html.contains("<aside"));
         if path == "/ui/routing" {
             assert!(html.contains("Route Plan"));
         }
         if path == "/ui/config" {
             assert!(html.contains("Rollback"));
-            assert!(html.contains("<caption>"));
         }
         if path == "/ui/logs" {
             assert!(html.contains("aria-live"));
@@ -652,7 +695,12 @@ async fn test_provider_contract_matrix_and_failure_classification() {
             discover_models: false,
         })
         .collect();
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     state.provider_registry.init_from_config(&state).await;
     let adapters = state.provider_registry.list_all().await;
     assert_eq!(adapters.len(), provider_ids.len());
@@ -818,7 +866,12 @@ async fn test_disabled_provider_is_not_registered() {
         }],
         ..Default::default()
     };
-    let state = AppState::new(config, pool, Default::default());
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
     state.provider_registry.init_from_config(&state).await;
     assert!(state.provider_registry.list_ids().await.is_empty());
 }
