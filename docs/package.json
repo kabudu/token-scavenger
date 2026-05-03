@@ -1,0 +1,18 @@
+{
+  "name": "tokenscavenger-marketing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:css": "tailwindcss -i src/index.css -o style.css --minify",
+    "build:ts": "tsc --project tsconfig.json",
+    "build": "pnpm run build:css && pnpm run build:ts",
+    "dev": "pnpm run build && live-server . --host=127.0.0.1 --port=4173 --entry-file=index.html --open=/index.html",
+    "preview": "pnpm run dev"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.2.4",
+    "live-server": "^1.2.2",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^5.6.0"
+  }
+}

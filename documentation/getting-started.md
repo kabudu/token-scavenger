@@ -13,15 +13,30 @@ This guide walks you through your first TokenScavenger deployment from scratch.
 
 ## Step 1: Install
 
+### Download Binary (Recommended)
+
+1. Download the latest release for your platform:
+   - **macOS**: `tokenscavenger-macos-arm64` (M1/M2/M3) or `x86_64` (Intel)
+   - **Linux**: `tokenscavenger-linux-x86_64` (Static binary)
+   - **Windows**: `tokenscavenger-windows-x64.exe`
+
+2. Make it executable and run the setup wizard:
+   ```bash
+   chmod +x tokenscavenger
+   ./tokenscavenger
+   ```
+
 ### From source
 
+If you prefer to build it yourself, ensure you have the Rust toolchain installed:
+
 ```bash
-git clone https://github.com/your-org/token-scavenger.git
+git clone https://github.com/kabudu/token-scavenger.git
 cd token-scavenger
 cargo build --release
 ```
 
-The binary will be at `./target/release/tokenscavenger`.
+The binary will be available at `./target/release/tokenscavenger`.
 
 ### Using Docker (optional)
 
@@ -32,7 +47,7 @@ docker run -p 8000:8000 -v $(pwd)/config:/config tokenscavenger -c /config/token
 
 ## Step 2: Get API Keys
 
-Sign up for free accounts at these providers and generate an API key:
+Sign up for accounts at these providers and generate an API key:
 
 | Provider | URL | Free Tier Limit |
 |----------|-----|----------------|
@@ -48,6 +63,8 @@ Sign up for free accounts at these providers and generate an API key:
 | **Zhipu AI** | https://open.bigmodel.cn/ | Free flash models |
 | **Cohere** | https://dashboard.cohere.com/ | 1,000 calls/month trial |
 | **Cloudflare** | https://dash.cloudflare.com/ | 10,000 neurons/day |
+| **DeepSeek** | https://platform.deepseek.com/ | Paid fallback |
+| **xAI Grok** | https://console.x.ai/ | Paid fallback |
 
 Set them as environment variables:
 
@@ -55,6 +72,8 @@ Set them as environment variables:
 export GROQ_API_KEY="gsk_..."
 export GEMINI_API_KEY="AIza..."
 export OPENROUTER_API_KEY="sk-or-..."
+export DEEPSEEK_API_KEY="sk-..."
+export XAI_API_KEY="xai-..."
 ```
 
 ## Step 3: Configure
@@ -83,7 +102,7 @@ allow_paid_fallback = false
 # Provider order defines the fallback chain
 provider_order = ["groq", "cerebras", "google", "openrouter", "cloudflare",
                   "nvidia", "mistral", "github-models", "siliconflow",
-                  "huggingface", "cohere", "zai"]
+                  "huggingface", "cohere", "zai", "deepseek", "xai"]
 
 [resilience]
 max_retries_per_provider = 2
@@ -104,11 +123,29 @@ api_key = "${GEMINI_API_KEY}"
 id = "openrouter"
 enabled = true
 api_key = "${OPENROUTER_API_KEY}"
+
+# Optional paid fallback providers. They are ignored unless
+# [routing].allow_paid_fallback is true.
+[[providers]]
+id = "deepseek"
+enabled = true
+api_key = "${DEEPSEEK_API_KEY}"
+free_only = false
+
+[[providers]]
+id = "xai"
+enabled = true
+api_key = "${XAI_API_KEY}"
+free_only = false
 ```
 
 ## Step 4: Start
 
 ```bash
+# If using a pre-built binary:
+./tokenscavenger -c tokenscavenger.toml
+
+# If you built from source:
 ./target/release/tokenscavenger -c tokenscavenger.toml
 ```
 
@@ -147,6 +184,16 @@ curl http://localhost:8000/v1/chat/completions \
     "stream": false
   }'
 ```
+
+### Response semantics
+
+TokenScavenger returns OpenAI-shaped JSON errors, but preserves status codes that downstream clients can act on:
+
+- `429 rate_limit_exceeded` means every viable route failed because of upstream rate limits or quota. Back off and honor `Retry-After` when present.
+- `503 route_exhausted` means no viable non-rate-limited route remained, such as disabled providers, unhealthy providers, an open circuit breaker, unsupported features, or no model match.
+- `400` and `401` usually require changing the request or credentials rather than retrying unchanged.
+
+See [API Behavior](api-behavior.md) for the full contract.
 
 ### With streaming
 
@@ -234,9 +281,29 @@ Then use the alias in your request:
 {"model": "free:llama-70b", "messages": [...]}
 ```
 
+### Mastering Model Aliases
+Aliases are powerful tools for creating stable, provider-agnostic endpoints for your applications. Unlike core provider settings, aliases are stored in the database and are best managed via the **Admin UI (Config > Alias Editor)**.
+
+#### Scenario: High-Availability Failover
+If you want to ensure your "smart chat" always works even if a specific provider is down:
+1. Create an alias named `smart-chat`.
+2. Add multiple target models in order of preference:
+   - `groq/llama3-70b-8192` (Fastest)
+   - `cerebras/llama3.1-70b` (Alternative)
+   - `google/gemini-1.5-pro` (Fallback)
+3. Point your code to `model="smart-chat"`.
+4. TokenScavenger will try them in the exact order you defined. If Groq is unhealthy or rate-limited, it automatically fails over to Cerebras, then Gemini.
+
+### The "Default Model" Pattern
+You can create an alias literally named `default`. This allows you to point legacy scripts or simple integrations to TokenScavenger without specifying any model at all. If a request comes in with a missing or unrecognized model, TokenScavenger can be configured to use this `default` mapping.
+
+### Hot-Reloading Configuration
+Most settings—including aliases, model priority, and provider status—can be changed via the **Admin UI** while the service is running. Changes are applied immediately to new requests without needing a restart.
+
 ## Next Steps
 
 - [Configuration Reference](configuration.md) — full config schema documentation
+- [API Behavior](api-behavior.md) — endpoint coverage, error semantics, and retry/backoff rules
 - [Provider Matrix](provider-matrix.md) — detailed provider capabilities and limits
 - [Deployment Guide](deployment.md) — production deployment, Docker, systemd
 - [API Reference](https://platform.openai.com/docs/api-reference/chat) — TokenScavenger follows the OpenAI API specification

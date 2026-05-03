@@ -10,7 +10,7 @@ All contributors must abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ### Reporting Bugs
 
-1. Check the [issue tracker](https://github.com/your-org/token-scavenger/issues) to see if the bug is already reported.
+1. Check the [issue tracker](https://github.com/kabudu/token-scavenger/issues) to see if the bug is already reported.
 2. If not, open a new issue with:
    - A clear title and description
    - Steps to reproduce
@@ -21,7 +21,8 @@ All contributors must abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 1. Open a feature request issue describing the proposed feature.
 2. Explain the use case and why it benefits the project.
-3. If possible, outline how the feature might be implemented.
+3. Check [ROADMAP.md](ROADMAP.md) to see whether the idea fits one of the current product directions.
+4. If possible, outline how the feature might be implemented.
 
 ### Pull Requests
 
@@ -33,6 +34,8 @@ All contributors must abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
 6. Ensure all tests pass and no new warnings are introduced.
 7. Update relevant documentation and the `.dev/` implementation checklists.
 8. Submit a pull request with a clear description of the changes.
+
+For larger product changes, use [ROADMAP.md](ROADMAP.md) as the north star and keep each PR narrow enough to review safely.
 
 ## Development Setup
 
@@ -92,7 +95,7 @@ src/
 3. Register the adapter in `src/providers/registry.rs` (`create_adapter` function).
 4. Add the provider ID to the default `provider_order` in `src/router/policy.rs`.
 5. Add curated models in `src/discovery/curated.rs`.
-6. Update `docs/provider-matrix.md` with the new provider's details.
+6. Update `documentation/provider-matrix.md` with the new provider's details.
 7. Add the provider ID to the `provider_order` defaults.
 
 ## Versioning

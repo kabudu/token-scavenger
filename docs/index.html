@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="title" content="TokenScavenger | Free-tier LLM Routing" />
+    <meta
+      name="description"
+      content="TokenScavenger is a self-hosted Rust router for free-tier LLM providers with explicit paid fallback, combining OpenAI-compatible APIs with smart routing and circuit breakers."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="icon" type="image/png" href="assets/TokenScavengerLogo.png" />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="TokenScavenger | Free-tier LLM Routing"
+    />
+    <meta
+      property="og:description"
+      content="A lightweight OpenAI-compatible gateway that routes inference through free-tier providers, optional paid fallback, and a single API surface."
+    />
+    <meta property="og:image" content="/assets/TokenScavengerLogo.png" />
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:title" content="TokenScavenger" />
+    <meta
+      property="twitter:description"
+      content="Self-hosted LLM routing optimized for free-tier providers and explicit paid fallback, built in Rust with SQLite, OpenAI-compatible APIs, and an operator dashboard."
+    />
+    <title>TokenScavenger | Free-tier LLM Routing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <a
+      id="skip-link"
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-slate-800 focus:px-4 focus:py-2 focus:rounded"
+      >Skip to main content</a
+    >
+    <header class="border-b border-white/10 bg-slate-950/95 backdrop-blur-xl">
+      <div
+        class="mx-auto flex max-w-7xl items-center justify-between px-6 py-5"
+      >
+        <a
+          href="#hero"
+          class="flex items-center gap-3 text-white focus-visible:ring-2 focus-visible:ring-orange-500 rounded"
+        >
+          <img
+            src="./assets/TokenScavengerLogo.png"
+            alt="TokenScavenger logo"
+            class="h-11 w-11 rounded-xl object-cover"
+          />
+          <span class="text-lg font-semibold tracking-tight">
+            Token<span class="text-orange-500">Scavenger</span>
+          </span>
+        </a>
+        <button
+          type="button"
+          data-mobile-toggle
+          aria-controls="mobile-navigation"
+          aria-expanded="false"
+          class="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-slate-900/80 text-slate-100 md:hidden"
+        >
+          <span class="sr-only">Toggle navigation</span>
+          <svg
+            viewBox="0 0 24 24"
+            class="h-6 w-6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M4 7h16M4 12h16M4 17h16"></path>
+          </svg>
+        </button>
+        <nav
+          class="hidden items-center gap-8 text-sm font-medium text-slate-300 md:flex"
+        >
+          <a href="#features" class="hover:text-white">Features</a>
+          <a href="#providers" class="hover:text-white">Providers</a>
+          <a href="#open-source" class="hover:text-white">Open source</a>
+          <a
+            href="https://github.com/kabudu/token-scavenger/tree/main/documentation"
+            class="hover:text-white"
+            >Documentation</a
+          >
+          <a
+            href="https://github.com/kabudu/token-scavenger"
+            class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white hover:bg-white/10"
+            >GitHub</a
+          >
+        </nav>
+      </div>
+      <nav
+        id="mobile-navigation"
+        data-mobile-nav
+        class="hidden border-t border-white/5 bg-slate-950/95 px-6 py-4 md:hidden"
+      >
+        <div class="flex flex-col gap-4 text-sm font-medium text-slate-300">
+          <a href="#features" data-close-menu class="hover:text-white"
+            >Features</a
+          >
+          <a href="#providers" data-close-menu class="hover:text-white"
+            >Providers</a
+          >
+          <a href="#open-source" data-close-menu class="hover:text-white"
+            >Open source</a
+          >
+          <a
+            href="https://github.com/kabudu/token-scavenger/tree/main/documentation"
+            data-close-menu
+            class="hover:text-white"
+            >Documentation</a
+          >
+          <a
+            href="https://github.com/kabudu/token-scavenger"
+            data-close-menu
+            class="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-white text-center hover:bg-white/10"
+            >GitHub</a
+          >
+        </div>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section
+        id="hero"
+        class="hero-gradient relative overflow-hidden px-6 py-20 sm:py-24"
+      >
+        <div
+          class="absolute inset-x-0 top-0 h-56 bg-gradient-to-b from-orange-500/10 to-transparent"
+        ></div>
+        <div
+          class="mx-auto flex max-w-7xl flex-col gap-10 lg:flex-row lg:items-center lg:justify-between"
+        >
+          <div class="max-w-2xl">
+            <p
+              class="mb-4 inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-4 py-2 text-xs uppercase tracking-[0.25em] text-orange-300"
+              style="margin-right: 5px"
+            >
+              <span
+                class="inline-flex h-2 w-2 rounded-full bg-orange-500"
+              ></span>
+              Free-tier first routing
+            </p>
+            <p
+              class="mb-4 inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-4 py-2 text-xs uppercase tracking-[0.25em] text-orange-300"
+            >
+              <span
+                class="inline-flex h-2 w-2 rounded-full bg-orange-500"
+              ></span>
+              Opensource. MIT License.
+            </p>
+            <h1
+              class="text-4xl font-extrabold tracking-tight text-white sm:text-5xl lg:text-6xl"
+            >
+              Scavenge every free LLM token with a single OpenAI-compatible
+              gateway.
+            </h1>
+            <p class="mt-6 max-w-xl text-lg leading-8 text-slate-300">
+              TokenScavenger is a lightweight Rust router that prefers free-tier
+              providers, falls back automatically, and exposes a single API
+              surface for existing OpenAI clients.
+            </p>
+            <div class="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center">
+              <a
+                href="https://github.com/kabudu/token-scavenger"
+                class="inline-flex items-center justify-center rounded-2xl bg-orange-500 px-8 py-4 text-sm font-semibold text-slate-950 shadow-lg shadow-orange-500/20 hover:bg-orange-600"
+              >
+                View on GitHub
+              </a>
+              <a
+                href="https://github.com/kabudu/token-scavenger/tree/main/documentation"
+                class="inline-flex items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-8 py-4 text-sm font-semibold text-white hover:border-orange-500/40 hover:bg-white/10"
+              >
+                Read docs
+              </a>
+            </div>
+          </div>
+
+          <div
+            class="glass-card w-full max-w-2xl rounded-[2rem] border border-white/10 bg-slate-900/85 p-8 shadow-2xl shadow-slate-950/40"
+          >
+            <div
+              class="flex items-center justify-between border-b border-white/10 pb-4"
+            >
+              <div>
+                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">
+                  Live status
+                </p>
+                <p class="mt-1 text-sm text-slate-300">
+                  All providers central health and fallback routing.
+                </p>
+              </div>
+              <div
+                class="rounded-2xl bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300"
+              >
+                LIVE
+              </div>
+            </div>
+            <div class="mt-8 grid gap-4 sm:grid-cols-2">
+              <div class="rounded-3xl bg-white/5 p-5">
+                <p class="text-xs uppercase tracking-[0.25em] text-slate-400">
+                  Scavenged tokens
+                </p>
+                <p class="mt-3 text-3xl font-semibold text-white">12.4M</p>
+              </div>
+              <div class="rounded-3xl bg-white/5 p-5">
+                <p class="text-xs uppercase tracking-[0.25em] text-slate-400">
+                  Providers
+                </p>
+                <p class="mt-3 text-3xl font-semibold text-white">14+</p>
+              </div>
+            </div>
+            <div
+              class="mt-8 h-52 overflow-hidden rounded-3xl bg-slate-950/80 p-4"
+            >
+              <div class="flex h-full items-end gap-2">
+                <span
+                  class="block h-1/2 w-full rounded-t-3xl bg-orange-500/20"
+                ></span>
+                <span
+                  class="block h-3/5 w-full rounded-t-3xl bg-orange-500/30"
+                ></span>
+                <span
+                  class="block h-1/3 w-full rounded-t-3xl bg-orange-500/10"
+                ></span>
+                <span
+                  class="block h-4/5 w-full rounded-t-3xl bg-orange-500/30"
+                ></span>
+                <span
+                  class="block h-1/2 w-full rounded-t-3xl bg-emerald-400/30"
+                ></span>
+                <span
+                  class="block h-2/3 w-full rounded-t-3xl bg-orange-500/20"
+                ></span>
+                <span
+                  class="block h-3/4 w-full rounded-t-3xl bg-orange-500/15"
+                ></span>
+                <span
+                  class="block h-1/2 w-full rounded-t-3xl bg-orange-500/10"
+                ></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="providers" class="px-6 py-24 lg:px-8">
+        <div class="mx-auto max-w-7xl">
+          <div class="mb-12 text-center">
+            <p class="text-sm uppercase tracking-[0.35em] text-orange-500">
+              Providers
+            </p>
+            <h2 class="mt-3 text-3xl font-bold text-white sm:text-4xl">
+              Native support for 14+ free-tier and fallback endpoints
+            </h2>
+            <p
+              class="mt-4 max-w-2xl mx-auto text-base leading-7 text-slate-400"
+            >
+              Built-in adapters for the most important free inference providers
+              plus DeepSeek and xAI paid fallback, with per-provider health,
+              rate-limit handling, and alias-aware routing.
+            </p>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">Groq</h3>
+              <p class="mt-2 text-sm text-emerald-300">Llama 3 · Mixtral</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">Gemini</h3>
+              <p class="mt-2 text-sm text-emerald-300">Free and flash models</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">Cloudflare</h3>
+              <p class="mt-2 text-sm text-emerald-300">Workers AI routing</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">GitHub</h3>
+              <p class="mt-2 text-sm text-emerald-300">Azure-hosted models</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">Mistral</h3>
+              <p class="mt-2 text-sm text-emerald-300">Free model discovery</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">Cerebras</h3>
+              <p class="mt-2 text-sm text-emerald-300">CSoft inference</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">NVIDIA</h3>
+              <p class="mt-2 text-sm text-emerald-300">NIM endpoints</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">SiliconFlow</h3>
+              <p class="mt-2 text-sm text-emerald-300">DeepSeek v3</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">DeepSeek</h3>
+              <p class="mt-2 text-sm text-orange-300">Paid fallback</p>
+            </article>
+            <article class="feature-card rounded-3xl p-6 text-center">
+              <h3 class="text-lg font-semibold text-white">xAI Grok</h3>
+              <p class="mt-2 text-sm text-orange-300">Paid fallback</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="features"
+        class="border-t border-white/10 px-6 py-24 lg:px-8"
+      >
+        <div class="mx-auto max-w-7xl">
+          <div class="mb-12 text-center">
+            <h2 class="text-3xl font-bold text-white sm:text-4xl">
+              Why TokenScavenger?
+            </h2>
+            <p
+              class="mt-4 mx-auto max-w-2xl text-base leading-7 text-slate-400"
+            >
+              Tokens are the new currency of the AI era. TokenScavenger ensures
+              you get the most value out of every free token available.
+            </p>
+          </div>
+          <div class="grid gap-8 lg:grid-cols-3">
+            <article class="feature-card rounded-3xl p-8">
+              <h3 class="text-xl font-semibold text-white">
+                Drop-in OpenAI compatibility
+              </h3>
+              <p class="mt-4 text-slate-300">
+                Keep your existing OpenAI SDKs and only update the base URL.
+                TokenScavenger normalizes provider differences at the adapter
+                boundary.
+              </p>
+            </article>
+            <article class="feature-card rounded-3xl p-8">
+              <h3 class="text-xl font-semibold text-white">
+                Smart circuit breakers
+              </h3>
+              <p class="mt-4 text-slate-300">
+                Automatically detect provider failures and route traffic to the
+                best available free provider without client-side changes.
+              </p>
+            </article>
+            <article class="feature-card rounded-3xl p-8">
+              <h3 class="text-xl font-semibold text-white">
+                Single binary Rust
+              </h3>
+              <p class="mt-4 text-slate-300">
+                Self-hosted durability in one static binary. No Python runtime
+                required for core production operation.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="open-source"
+        class="border-t border-white/10 bg-slate-950/70 px-6 py-24 lg:px-8"
+      >
+        <div class="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+          <div>
+            <p class="text-sm uppercase tracking-[0.35em] text-orange-500">
+              Open source
+            </p>
+            <h2 class="mt-3 text-3xl font-bold text-white sm:text-4xl">
+              Built in public for self-hosted operators
+            </h2>
+            <p class="mt-5 text-base leading-7 text-slate-300">
+              TokenScavenger is MIT-licensed, inspectable, and designed to run
+              as infrastructure you control. The routing rules, provider
+              adapters, SQLite schema, release workflow, and operator UI live in
+              the repository.
+            </p>
+            <div class="mt-8 flex flex-wrap gap-3">
+              <a
+                href="https://github.com/kabudu/token-scavenger"
+                class="rounded-full bg-orange-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-orange-400"
+                >View on GitHub</a
+              >
+              <a
+                href="https://github.com/kabudu/token-scavenger/blob/main/LICENSE"
+                class="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+                >MIT license</a
+              >
+            </div>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <article class="feature-card rounded-3xl p-6">
+              <h3 class="text-lg font-semibold text-white">Transparent routing</h3>
+              <p class="mt-3 text-sm leading-6 text-slate-300">
+                Provider selection, fallback policy, and rate-limit behavior are
+                visible in code, docs, logs, metrics, and the admin UI.
+              </p>
+            </article>
+            <article class="feature-card rounded-3xl p-6">
+              <h3 class="text-lg font-semibold text-white">Self-hosted by default</h3>
+              <p class="mt-3 text-sm leading-6 text-slate-300">
+                The core runtime is one Rust binary with SQLite storage and no
+                required managed control plane.
+              </p>
+            </article>
+            <article class="feature-card rounded-3xl p-6">
+              <h3 class="text-lg font-semibold text-white">Contributor-friendly</h3>
+              <p class="mt-3 text-sm leading-6 text-slate-300">
+                Provider adapters follow a shared abstraction, making new
+                upstream integrations easier to review and maintain.
+              </p>
+            </article>
+            <article class="feature-card rounded-3xl p-6">
+              <h3 class="text-lg font-semibold text-white">Release artifacts</h3>
+              <p class="mt-3 text-sm leading-6 text-slate-300">
+                Cross-platform release builds include checksums so operators can
+                verify the binary they deploy.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer
+      class="border-t border-white/10 bg-slate-950/95 px-6 py-10 text-slate-400"
+    >
+      <div
+        class="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <p class="text-sm">
+          © <span id="copyright-year">2026</span> TokenScavenger. Built for
+          free-tier LLM routing and operator-ready deployment.
+        </p>
+        <div class="flex flex-wrap gap-4 text-sm text-slate-300">
+          <a
+            href="https://github.com/kabudu/token-scavenger"
+            class="hover:text-white"
+            >GitHub</a
+          >
+          <a
+            href="https://github.com/kabudu/token-scavenger/tree/main/documentation"
+            class="hover:text-white"
+            >Repository docs</a
+          >
+        </div>
+      </div>
+    </footer>
+
+    <button
+      type="button"
+      data-scroll-top
+      aria-label="Scroll to top"
+      class="fixed bottom-5 right-5 z-40 hidden h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-orange-500 text-slate-950 shadow-xl shadow-orange-950/30 transition hover:bg-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 sm:bottom-6 sm:right-6"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        class="h-5 w-5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m18 15-6-6-6 6"></path>
+      </svg>
+    </button>
+
+    <script type="module" src="./build/main.js"></script>
+  </body>
+</html>

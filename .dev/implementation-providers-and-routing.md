@@ -54,6 +54,8 @@ The original spec requires TokenScavenger to ship with the following baked-in fr
 - Hugging Face Serverless Inference
 - Z AI / Zhipu AI
 - SiliconFlow
+- DeepSeek direct API (paid fallback)
+- xAI / Grok direct API (paid fallback)
 
 Implementation expectations:
 
@@ -314,6 +316,8 @@ The original spec documents this recommended default starter order:
 8. GitHub Models
 9. Z AI
 10. Paid fallback
+   - DeepSeek direct API
+   - xAI / Grok direct API
 
 Implementation requirement:
 

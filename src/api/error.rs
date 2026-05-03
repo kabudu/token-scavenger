@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -31,8 +31,11 @@ pub enum ApiError {
     ProviderUnavailable(String),
     #[error("All routes exhausted: {0}")]
     RouteExhausted(String),
-    #[error("Rate limited")]
-    RateLimited,
+    #[error("Rate limited: {message}")]
+    RateLimited {
+        message: String,
+        retry_after: Option<u64>,
+    },
     #[error("Quota exhausted")]
     QuotaExhausted,
     #[error("Unsupported feature: {0}")]
@@ -68,11 +71,11 @@ impl IntoResponse for ApiError {
                 "provider_unavailable".into(),
                 msg.clone(),
             ),
-            ApiError::RateLimited => (
+            ApiError::RateLimited { message, .. } => (
                 StatusCode::TOO_MANY_REQUESTS,
-                "rate_limited".into(),
+                "rate_limit_exceeded".into(),
                 "rate_limit_error".into(),
-                "Rate limited".into(),
+                message.clone(),
             ),
             ApiError::QuotaExhausted => (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -103,6 +106,16 @@ impl IntoResponse for ApiError {
             },
         };
 
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if let ApiError::RateLimited {
+            retry_after: Some(seconds),
+            ..
+        } = self
+        {
+            if let Ok(value) = seconds.to_string().parse() {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+        }
+        response
     }
 }

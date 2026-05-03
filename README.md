@@ -9,9 +9,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-**A lightweight, self-hosted LLM proxy/router that prioritizes free-tier inference providers.**
+**A lightweight, self-hosted OpenAI-compatible LLM proxy/router that prioritizes free-tier inference providers and can fall back to paid providers when explicitly allowed.**
 
-TokenScavenger exposes an OpenAI-compatible HTTP API so existing clients can switch by changing only their `base_url`. It automatically routes requests across 12+ free-tier providers with automatic fallback, circuit breakers, health monitoring, and a built-in operator web UI.
+TokenScavenger lets existing OpenAI SDK clients switch providers by changing only `base_url`. It keeps provider credentials, routing policy, model discovery, health state, usage accounting, and operator controls inside one Rust binary backed by SQLite.
+
+It is designed for operators who want a local or self-hosted gateway that prefers free tiers first, falls back across compatible providers, and exposes enough metrics and UI state to understand why each route was chosen.
 
 ```text
 ┌─────────────┐     POST /v1/chat/completions     ┌────────────────┐
@@ -36,7 +38,7 @@ TokenScavenger exposes an OpenAI-compatible HTTP API so existing clients can swi
 
 - **Free-tier first routing** — automatically prefers free providers, falls back through a configurable chain
 - **OpenAI-compatible API** — works with existing OpenAI SDK clients (just change `base_url`)
-- **12 built-in providers** — Groq, Google Gemini, OpenRouter, Cloudflare, Cerebras, NVIDIA NIM, Cohere, Mistral AI, GitHub Models, HuggingFace, Zhipu AI, SiliconFlow
+- **14 built-in providers** — Groq, Google Gemini, OpenRouter, Cloudflare, Cerebras, NVIDIA NIM, Cohere, Mistral AI, GitHub Models, HuggingFace, Zhipu AI, SiliconFlow, DeepSeek, xAI Grok
 - **Streaming SSE** — full support for OpenAI-style streaming chat completions
 - **Circuit breakers & retries** — per-provider health tracking with automatic recovery
 - **Model discovery** — automatic provider model list discovery plus curated built-in catalog
@@ -45,21 +47,36 @@ TokenScavenger exposes an OpenAI-compatible HTTP API so existing clients can swi
 - **SQLite persistence** — WAL mode, usage accounting, audit log, health events
 - **Single binary** — no Python, Node, or Docker required for basic operation
 
+## Supported API Surface
+
+| Endpoint                      | Purpose                                                     |
+| ----------------------------- | ----------------------------------------------------------- |
+| `POST /v1/chat/completions`   | OpenAI-compatible chat completions, including streaming SSE |
+| `POST /v1/embeddings`         | OpenAI-compatible embeddings where supported upstream       |
+| `GET /v1/models`              | Merged public model catalog                                 |
+| `GET /healthz`, `GET /readyz` | Health and readiness probes                                 |
+| `GET /metrics`                | Prometheus metrics                                          |
+| `GET /ui`                     | Embedded operator dashboard                                 |
+
+Error responses use the OpenAI-style `{"error": ...}` envelope. Upstream rate-limit exhaustion returns `429` with `rate_limit_exceeded` and `Retry-After` when known; non-rate-limit route exhaustion remains `503 route_exhausted`. See [API behavior](documentation/api-behavior.md) for the full status-code contract.
+
 ## Quick Start
 
 ### 1. Get API keys
 
-Sign up for free API keys from your preferred providers:
+Sign up for API keys from your preferred providers:
 
-| Provider | Sign Up |
-|----------|---------|
-| Groq | https://console.groq.com/ |
-| Google Gemini | https://aistudio.google.com/ |
-| OpenRouter | https://openrouter.ai/ |
-| Cerebras | https://inference-docs.cerebras.ai/ |
-| Mistral | https://console.mistral.ai/ |
-| NVIDIA NIM | https://build.nvidia.com/ |
-| Cloudflare | https://developers.cloudflare.com/workers-ai/ |
+| Provider      | Sign Up                                       |
+| ------------- | --------------------------------------------- |
+| Groq          | https://console.groq.com/                     |
+| Google Gemini | https://aistudio.google.com/                  |
+| OpenRouter    | https://openrouter.ai/                        |
+| Cerebras      | https://inference-docs.cerebras.ai/           |
+| Mistral       | https://console.mistral.ai/                   |
+| NVIDIA NIM    | https://build.nvidia.com/                     |
+| Cloudflare    | https://developers.cloudflare.com/workers-ai/ |
+| DeepSeek      | https://platform.deepseek.com/                |
+| xAI Grok      | https://console.x.ai/                         |
 
 ### 2. Configure
 
@@ -155,7 +172,7 @@ src/
   db/           SQLite pool, migrations (9 tables), helpers
   discovery/    Model discovery, curated catalog, merge logic
   metrics/      Prometheus counters/histograms, structured tracing
-  providers/    12 provider adapter implementations
+  providers/    14 provider adapter implementations
   resilience/   Circuit breakers, health tracking, retry/backoff
   router/       Route planning engine, policy, aliases, fallback
   ui/           Embedded operator web UI (9 views)
@@ -167,11 +184,11 @@ src/
 
 The `tokenscavenger` binary provides three modes of operation:
 
-| Command | Description |
-|---------|-------------|
+| Command                    | Description                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------- |
 | `tokenscavenger` (no args) | Starts the server. On first run, prompts to run the setup wizard if no config is found. |
-| `tokenscavenger setup` | Run the interactive first-time setup wizard. |
-| `tokenscavenger config` | Edit an existing configuration file interactively. |
+| `tokenscavenger setup`     | Run the interactive first-time setup wizard.                                            |
+| `tokenscavenger config`    | Edit an existing configuration file interactively.                                      |
 
 ### `tokenscavenger setup`
 
@@ -186,21 +203,30 @@ can edit each section: server settings, database, routing, resilience, and
 providers. Changes are saved back to the file.
 
 Config search order:
+
 1. `./tokenscavenger.toml` (current directory)
 2. `~/.config/tokenscavenger/tokenscavenger.toml`
 3. `~/.tokenscavenger.toml`
 
 ## Configuration Reference
 
-See [docs/configuration.md](docs/configuration.md) for the full configuration schema.
+See [documentation/configuration.md](documentation/configuration.md) for the full configuration schema.
+
+## API Behavior
+
+See [documentation/api-behavior.md](documentation/api-behavior.md) for endpoint coverage, error response semantics, `429` backoff behavior, `503 route_exhausted`, and streaming fallback rules.
 
 ## Provider Support Matrix
 
-See [docs/provider-matrix.md](docs/provider-matrix.md) for details on each provider's API format, free tier limits, and known quirks.
+See [documentation/provider-matrix.md](documentation/provider-matrix.md) for details on each provider's API format, free tier limits, and known quirks.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for five high-value future enhancements that can push TokenScavenger toward an operator-grade LLM traffic control plane.
 
 ## Deployment
 
-See [docs/deployment.md](docs/deployment.md) for deployment options including Docker, systemd, and cross-compilation.
+See [documentation/deployment.md](documentation/deployment.md) for deployment options including Docker, systemd, and cross-compilation.
 
 ## Operator UI
 
@@ -234,7 +260,7 @@ New releases are created from the GitHub Actions workflow dispatch menu:
 The workflow:
 
 - Bumps the version in `Cargo.toml` and creates a git tag (`vX.Y.Z`)
-- Cross-compiles binaries for Linux (x86\_64), macOS (ARM64), and Windows (x86\_64)
+- Cross-compiles binaries for Linux (x86_64), macOS (ARM64), and Windows (x86_64)
 - Creates a GitHub release with all binaries and checksums attached
 - Generates release notes from commit history
 

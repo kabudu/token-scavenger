@@ -151,7 +151,7 @@ path = "/metrics"
 free_first = true
 allow_paid_fallback = false
 default_alias_strategy = "provider-priority"
-provider_order = ["groq", "cerebras", "google", "openrouter-free", "cloudflare", "nvidia", "mistral", "github-models", "zai"]
+provider_order = ["groq", "cerebras", "google", "openrouter-free", "cloudflare", "nvidia", "mistral", "github-models", "zai", "deepseek", "xai"]
 
 [resilience]
 max_retries_per_provider = 2

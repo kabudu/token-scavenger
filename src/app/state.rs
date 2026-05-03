@@ -49,7 +49,9 @@ pub struct AppState {
     pub ui_sessions: Arc<DashMap<String, i64>>,
 
     /// Broadcast channel for live log events (UI streaming).
-    pub log_tx: broadcast::Sender<String>,
+    /// Wrapped in Option so shutdown can take-and-drop the sender to close
+    /// the channel, which breaks the SSE circular dependency during drain.
+    pub log_tx: Arc<std::sync::Mutex<Option<broadcast::Sender<String>>>>,
 
     /// Broadcast channel for health events (UI streaming).
     pub health_event_tx: broadcast::Sender<String>,
@@ -61,6 +63,9 @@ pub struct AppState {
     /// Shutdown signal.
     pub shutdown_tx: tokio::sync::watch::Sender<bool>,
     pub shutdown_rx: tokio::sync::watch::Receiver<bool>,
+
+    /// JoinHandles for background tasks, drained and awaited during graceful shutdown.
+    pub background_handles: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 
     /// Start time for uptime tracking.
     pub start_time: std::time::Instant,
@@ -106,12 +111,13 @@ impl AppState {
             health_states: Arc::new(DashMap::new()),
             breaker_states: Arc::new(DashMap::new()),
             ui_sessions: Arc::new(DashMap::new()),
-            log_tx,
+            log_tx: Arc::new(std::sync::Mutex::new(Some(log_tx))),
             health_event_tx,
             config_watch_tx,
             config_watch_rx,
             shutdown_tx,
             shutdown_rx,
+            background_handles: Arc::new(std::sync::Mutex::new(Vec::new())),
             start_time: std::time::Instant::now(),
         }
     }

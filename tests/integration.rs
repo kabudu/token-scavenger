@@ -208,6 +208,68 @@ async fn test_admin_config_redacts_provider_secrets() {
 }
 
 #[tokio::test]
+async fn test_admin_config_save_persists_model_priority() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let config = Config::default();
+    let state = AppState::new(
+        config,
+        pool.clone(),
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+
+    // 1. Manually insert a model
+    sqlx::query("INSERT INTO providers (provider_id, display_name) VALUES ('groq', 'Groq')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO models (provider_id, upstream_model_id, public_model_id, priority) VALUES ('groq', 'm1', 'm1', 100)").execute(&pool).await.unwrap();
+
+    let app = axum::Router::new()
+        .route(
+            "/admin/config",
+            axum::routing::put(routes::admin_config_save),
+        )
+        .with_state(state);
+
+    // 2. Update priority via API
+    let update_body = serde_json::json!({
+        "models": [{
+            "provider_id": "groq",
+            "model_id": "m1",
+            "priority": 500
+        }]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/config")
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 3. Verify in DB
+    let priority: i64 = sqlx::query_scalar(
+        "SELECT priority FROM models WHERE provider_id = 'groq' AND upstream_model_id = 'm1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(priority, 500);
+}
+
+#[tokio::test]
 async fn test_startup_router_enforces_auth_on_protected_routes() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
@@ -681,6 +743,8 @@ async fn test_provider_contract_matrix_and_failure_classification() {
         "huggingface",
         "zai",
         "siliconflow",
+        "deepseek",
+        "xai",
     ];
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     let mut config = Config::default();
@@ -922,4 +986,155 @@ async fn test_not_found_returns_404() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+#[tokio::test]
+async fn test_multi_model_alias_resolution() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    // 1. Insert an alias with multiple targets
+    sqlx::query("INSERT INTO aliases (alias, target_json, enabled) VALUES ('my-alias', '[\"m1\", \"m2\"]', 1)")
+        .execute(&pool).await.unwrap();
+
+    let config = Config::default();
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+
+    // 2. Resolve alias
+    let resolved = tokenscavenger::router::aliases::resolve_alias(&state, "my-alias")
+        .await
+        .unwrap();
+    assert_eq!(resolved, vec!["m1".to_string(), "m2".to_string()]);
+}
+
+#[tokio::test]
+async fn test_alias_fallback_logic() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    // Alias points to two models. We want to verify the engine builds a combined plan.
+    sqlx::query(
+        "INSERT INTO aliases (alias, target_json, enabled) VALUES ('multi', '[\"m1\", \"m2\"]', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut config = Config::default();
+    config.routing.provider_order = vec!["groq".into()];
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "groq".into(),
+        enabled: true,
+        ..Default::default()
+    }];
+
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    state.provider_registry.init_from_config(&state).await;
+
+    // Build plan for the alias
+    let resolved = tokenscavenger::router::aliases::resolve_alias(&state, "multi")
+        .await
+        .unwrap();
+    let registry = &state.provider_registry;
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+
+    let mut plan = Vec::new();
+    for model in resolved {
+        let model_plan = tokenscavenger::router::selection::build_attempt_plan(
+            &policy,
+            registry,
+            &model,
+            tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        )
+        .await;
+        plan.extend(model_plan);
+    }
+
+    // Should have 2 attempts: groq/m1 and groq/m2
+    assert_eq!(plan.len(), 2);
+    assert_eq!(plan[0].provider_id, "groq");
+    assert_eq!(plan[0].model_id, "m1");
+    assert_eq!(plan[1].provider_id, "groq");
+    assert_eq!(plan[1].model_id, "m2");
+}
+
+#[tokio::test]
+async fn test_paid_providers_require_paid_fallback_policy() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    let mut config = Config::default();
+    config.routing.provider_order = vec!["groq".into(), "deepseek".into(), "xai".into()];
+    config.routing.allow_paid_fallback = false;
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            enabled: true,
+            free_only: true,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "deepseek".into(),
+            enabled: true,
+            free_only: false,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "xai".into(),
+            enabled: true,
+            free_only: false,
+            ..Default::default()
+        },
+    ];
+
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    state.provider_registry.init_from_config(&state).await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = tokenscavenger::router::selection::build_attempt_plan(
+        &policy,
+        &state.provider_registry,
+        "shared-model",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+    )
+    .await;
+    let filtered = tokenscavenger::router::selection::filter_by_paid_policy(plan, &state);
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].provider_id, "groq");
+
+    let mut updated = (*state.config()).clone();
+    updated.routing.allow_paid_fallback = true;
+    state.runtime_config.store(std::sync::Arc::new(updated));
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = tokenscavenger::router::selection::build_attempt_plan(
+        &policy,
+        &state.provider_registry,
+        "shared-model",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+    )
+    .await;
+    let filtered = tokenscavenger::router::selection::filter_by_paid_policy(plan, &state);
+
+    assert_eq!(filtered.len(), 3);
+    assert_eq!(filtered[1].provider_id, "deepseek");
+    assert_eq!(filtered[2].provider_id, "xai");
 }

@@ -85,6 +85,8 @@ fn create_adapter(id: &str) -> Option<Arc<dyn ProviderAdapter>> {
         "siliconflow" => Some(Arc::new(
             crate::providers::stub_adapters::SiliconFlowAdapter,
         )),
+        "deepseek" => Some(Arc::new(crate::providers::stub_adapters::DeepSeekAdapter)),
+        "xai" | "grok" => Some(Arc::new(crate::providers::stub_adapters::XaiAdapter)),
         _ => None,
     }
 }

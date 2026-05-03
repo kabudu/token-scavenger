@@ -4,10 +4,12 @@ use crate::api::openai::embeddings::*;
 use crate::app::state::AppState;
 use crate::config::schema::Config;
 use crate::providers::registry::ProviderRegistry;
-use crate::providers::traits::{EndpointKind, ProviderContext};
+use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::fallback::{FallbackDecision, should_fallback};
 use crate::router::policy::RoutePolicy;
-use crate::router::selection::{build_attempt_plan, filter_by_health, filter_by_model_enabled};
+use crate::router::selection::{
+    build_attempt_plan, filter_by_health, filter_by_model_enabled, filter_by_paid_policy,
+};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -44,16 +46,44 @@ pub async fn route_chat_request(
     let policy = RoutePolicy::from_config(&config);
 
     // Resolve model alias
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model)
+    let resolved_models = crate::router::aliases::resolve_alias(&state, &request.model)
         .await
-        .unwrap_or_else(|| request.model.clone());
+        .unwrap_or_else(|| vec![request.model.clone()]);
 
     // Build attempt plan
-    let plan = build_attempt_plan(
-        &policy,
-        registry,
-        &resolved_model,
-        EndpointKind::ChatCompletions,
+    let mut plan = Vec::new();
+    for model in &resolved_models {
+        let model_plan =
+            build_attempt_plan(&policy, registry, model, EndpointKind::ChatCompletions).await;
+        plan.extend(model_plan);
+    }
+
+    if plan.is_empty() {
+        record_route_failure(
+            &state,
+            RouteFailure {
+                request_id: &request_id,
+                endpoint_kind: "chat",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: None,
+                status: "route_exhausted",
+                http_status: 503,
+                started_at,
+                streaming: false,
+            },
+        )
+        .await;
+        return Err(ApiError::RouteExhausted(format!(
+            "No available providers for model(s): {:?}",
+            resolved_models
+        )));
+    }
+
+    // Filter by health and breaker state
+    let plan = filter_by_model_enabled(
+        filter_by_paid_policy(filter_by_health(plan, &state), &state),
+        &state,
     )
     .await;
 
@@ -65,45 +95,24 @@ pub async fn route_chat_request(
                 endpoint_kind: "chat",
                 requested_model: &request.model,
                 selected_provider_id: None,
-                selected_model_id: None,
+                selected_model_id: Some(&resolved_models.join(", ")),
+                status: "route_exhausted",
+                http_status: 503,
                 started_at,
                 streaming: false,
             },
         )
         .await;
         return Err(ApiError::RouteExhausted(format!(
-            "No available providers for model: {}",
-            resolved_model
-        )));
-    }
-
-    // Filter by health and breaker state
-    let plan = filter_by_model_enabled(filter_by_health(plan, &state), &state).await;
-
-    if plan.is_empty() {
-        record_route_failure(
-            &state,
-            RouteFailure {
-                request_id: &request_id,
-                endpoint_kind: "chat",
-                requested_model: &request.model,
-                selected_provider_id: None,
-                selected_model_id: Some(&resolved_model),
-                started_at,
-                streaming: false,
-            },
-        )
-        .await;
-        return Err(ApiError::RouteExhausted(format!(
-            "All providers for model '{}' are unhealthy or blocked",
-            resolved_model
+            "All providers for model(s) '{:?}' are unhealthy or blocked",
+            resolved_models
         )));
     }
 
     // Trace the plan
     info!(
         request_model = %request.model,
-        resolved_model = %resolved_model,
+        resolved_models = ?resolved_models,
         plan = ?plan.iter().map(|p| &p.provider_id).collect::<Vec<_>>(),
         "Route plan built"
     );
@@ -191,7 +200,7 @@ pub async fn route_chat_request(
                         model_id: &response.model_id,
                         usage: usage_ref.as_ref(),
                         latency_ms: response.latency_ms,
-                        free_tier: true,
+                        free_tier: provider_cfg.free_only,
                         request_id: &request_id,
                         endpoint_kind: "chat",
                         streaming: false,
@@ -265,7 +274,7 @@ pub async fn route_chat_request(
                                             model_id: &response.model_id,
                                             usage: usage_ref.as_ref(),
                                             latency_ms: response.latency_ms,
-                                            free_tier: true,
+                                            free_tier: provider_cfg.free_only,
                                             request_id: &request_id,
                                             endpoint_kind: "chat",
                                             streaming: false,
@@ -298,6 +307,7 @@ pub async fn route_chat_request(
                                 }
                                 Err(e2) => {
                                     warn!(provider = %provider_id, error = %e2, "Retry failed");
+                                    last_error = Some(e2);
                                     retries += 1;
                                 }
                             }
@@ -331,7 +341,7 @@ pub async fn route_chat_request(
                                         model_id: &response.model_id,
                                         usage: usage_ref.as_ref(),
                                         latency_ms: response.latency_ms,
-                                        free_tier: true,
+                                        free_tier: provider_cfg.free_only,
                                         request_id: &request_id,
                                         endpoint_kind: "chat",
                                         streaming: false,
@@ -362,7 +372,10 @@ pub async fn route_chat_request(
                                     }),
                                 });
                             }
-                            Err(_e2) => { /* fall through to next provider */ }
+                            Err(e2) => {
+                                last_error = Some(e2);
+                                /* fall through to next provider */
+                            }
                         }
                     }
                     FallbackDecision::TryNextProvider => { /* continue to next provider */ }
@@ -375,15 +388,17 @@ pub async fn route_chat_request(
                                 requested_model: &request.model,
                                 selected_provider_id: Some(provider_id),
                                 selected_model_id: Some(&attempt.model_id),
+                                status: failure_status_for_error(last_error.as_ref()),
+                                http_status: failure_http_status_for_error(last_error.as_ref()),
                                 started_at,
                                 streaming: false,
                             },
                         )
                         .await;
-                        return Err(ApiError::RouteExhausted(format!(
-                            "Provider {} failed",
-                            provider_id
-                        )));
+                        return Err(api_error_for_exhausted(
+                            format!("Provider {} failed", provider_id),
+                            last_error.as_ref(),
+                        ));
                     }
                 }
             }
@@ -393,7 +408,7 @@ pub async fn route_chat_request(
     // All providers exhausted
     let msg = match last_error {
         Some(ref e) => format!("All providers failed. Last error: {}", e),
-        None => format!("No available providers for model: {}", resolved_model),
+        None => format!("No available providers for model(s): {:?}", resolved_models),
     };
 
     record_route_failure(
@@ -404,13 +419,15 @@ pub async fn route_chat_request(
             requested_model: &request.model,
             selected_provider_id: plan.last().map(|p| p.provider_id.as_str()),
             selected_model_id: plan.last().map(|p| p.model_id.as_str()),
+            status: failure_status_for_error(last_error.as_ref()),
+            http_status: failure_http_status_for_error(last_error.as_ref()),
             started_at,
             streaming: false,
         },
     )
     .await;
 
-    Err(ApiError::RouteExhausted(msg))
+    Err(api_error_for_exhausted(msg, last_error.as_ref()))
 }
 
 /// Route an embeddings request through the provider chain.
@@ -424,12 +441,16 @@ pub async fn route_embeddings_request(
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model)
+    let resolved_models = crate::router::aliases::resolve_alias(&state, &request.model)
         .await
-        .unwrap_or_else(|| request.model.clone());
+        .unwrap_or_else(|| vec![request.model.clone()]);
 
-    let plan =
-        build_attempt_plan(&policy, registry, &resolved_model, EndpointKind::Embeddings).await;
+    let mut plan = Vec::new();
+    for model in &resolved_models {
+        let model_plan =
+            build_attempt_plan(&policy, registry, model, EndpointKind::Embeddings).await;
+        plan.extend(model_plan);
+    }
 
     if plan.is_empty() {
         record_route_failure(
@@ -440,18 +461,24 @@ pub async fn route_embeddings_request(
                 requested_model: &request.model,
                 selected_provider_id: None,
                 selected_model_id: None,
+                status: "route_exhausted",
+                http_status: 503,
                 started_at,
                 streaming: false,
             },
         )
         .await;
         return Err(ApiError::RouteExhausted(format!(
-            "No available providers for embeddings model: {}",
-            resolved_model
+            "No available providers for embeddings model(s): {:?}",
+            resolved_models
         )));
     }
 
-    let plan = filter_by_model_enabled(filter_by_health(plan, &state), &state).await;
+    let plan = filter_by_model_enabled(
+        filter_by_paid_policy(filter_by_health(plan, &state), &state),
+        &state,
+    )
+    .await;
     if plan.is_empty() {
         record_route_failure(
             &state,
@@ -460,7 +487,9 @@ pub async fn route_embeddings_request(
                 endpoint_kind: "embeddings",
                 requested_model: &request.model,
                 selected_provider_id: None,
-                selected_model_id: Some(&resolved_model),
+                selected_model_id: Some(&resolved_models.join(", ")),
+                status: "route_exhausted",
+                http_status: 503,
                 started_at,
                 streaming: false,
             },
@@ -524,7 +553,7 @@ pub async fn route_embeddings_request(
                         model_id: &response.model_id,
                         usage: Some(&usage),
                         latency_ms: response.latency_ms,
-                        free_tier: true,
+                        free_tier: provider_cfg.free_only,
                         request_id: &request_id,
                         endpoint_kind: "embeddings",
                         streaming: false,
@@ -553,16 +582,55 @@ pub async fn route_embeddings_request(
             requested_model: &request.model,
             selected_provider_id: plan.last().map(|p| p.provider_id.as_str()),
             selected_model_id: plan.last().map(|p| p.model_id.as_str()),
+            status: failure_status_for_error(last_error.as_ref()),
+            http_status: failure_http_status_for_error(last_error.as_ref()),
             started_at,
             streaming: false,
         },
     )
     .await;
 
-    Err(ApiError::RouteExhausted(format!(
-        "No embeddings provider available. Last error: {:?}",
-        last_error
-    )))
+    Err(api_error_for_exhausted(
+        format!(
+            "No embeddings provider available. Last error: {:?}",
+            last_error
+        ),
+        last_error.as_ref(),
+    ))
+}
+
+fn api_error_for_exhausted(message: String, last_error: Option<&ProviderError>) -> ApiError {
+    match last_error {
+        Some(ProviderError::RateLimited { retry_after }) => ApiError::RateLimited {
+            message,
+            retry_after: *retry_after,
+        },
+        Some(ProviderError::QuotaExhausted { reset_at, .. }) => ApiError::RateLimited {
+            message,
+            retry_after: reset_at.and_then(retry_after_from_epoch),
+        },
+        _ => ApiError::RouteExhausted(message),
+    }
+}
+
+fn retry_after_from_epoch(reset_at: i64) -> Option<u64> {
+    let now = chrono::Utc::now().timestamp();
+    (reset_at > now).then_some((reset_at - now) as u64)
+}
+
+fn failure_status_for_error(last_error: Option<&ProviderError>) -> &'static str {
+    match last_error {
+        Some(ProviderError::RateLimited { .. }) => "rate_limited",
+        Some(ProviderError::QuotaExhausted { .. }) => "quota_exhausted",
+        _ => "route_exhausted",
+    }
+}
+
+fn failure_http_status_for_error(last_error: Option<&ProviderError>) -> u16 {
+    match last_error {
+        Some(ProviderError::RateLimited { .. } | ProviderError::QuotaExhausted { .. }) => 429,
+        _ => 503,
+    }
 }
 
 struct RouteFailure<'a> {
@@ -571,6 +639,8 @@ struct RouteFailure<'a> {
     requested_model: &'a str,
     selected_provider_id: Option<&'a str>,
     selected_model_id: Option<&'a str>,
+    status: &'a str,
+    http_status: u16,
     started_at: std::time::Instant,
     streaming: bool,
 }
@@ -584,8 +654,8 @@ async fn record_route_failure(state: &AppState, failure: RouteFailure<'_>) {
             requested_model: failure.requested_model,
             selected_provider_id: failure.selected_provider_id,
             selected_model_id: failure.selected_model_id,
-            status: "route_exhausted",
-            http_status: 503,
+            status: failure.status,
+            http_status: failure.http_status as i64,
             latency_ms: failure.started_at.elapsed().as_millis() as i64,
             streaming: failure.streaming,
         },

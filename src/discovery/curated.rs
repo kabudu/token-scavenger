@@ -137,5 +137,39 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             context_window: Some(128_000),
             free_tier: true,
         },
+        // DeepSeek paid fallback
+        DiscoveredModel {
+            provider_id: "deepseek".into(),
+            upstream_model_id: "deepseek-v4-flash".into(),
+            display_name: Some("DeepSeek V4 Flash".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: None,
+            free_tier: false,
+        },
+        DiscoveredModel {
+            provider_id: "deepseek".into(),
+            upstream_model_id: "deepseek-v4-pro".into(),
+            display_name: Some("DeepSeek V4 Pro".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: None,
+            free_tier: false,
+        },
+        // xAI paid fallback
+        DiscoveredModel {
+            provider_id: "xai".into(),
+            upstream_model_id: "grok-4.20".into(),
+            display_name: Some("Grok 4.20".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(2_000_000),
+            free_tier: false,
+        },
+        DiscoveredModel {
+            provider_id: "xai".into(),
+            upstream_model_id: "grok-4.20-reasoning".into(),
+            display_name: Some("Grok 4.20 Reasoning".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(2_000_000),
+            free_tier: false,
+        },
     ]
 }

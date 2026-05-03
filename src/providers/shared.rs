@@ -106,7 +106,7 @@ pub async fn openai_chat_completions(
     let resp = ProviderHttp::post_json(&ctx.client, url, bearer_auth(&config), &body).await?;
     let latency_ms = start.elapsed().as_millis() as i64;
 
-    let _rate_limits = parse_rate_limit_headers(resp.headers());
+    let rate_limits = parse_rate_limit_headers(resp.headers());
     let status = resp.status();
     let response_body: serde_json::Value = resp
         .json()
@@ -119,7 +119,11 @@ pub async fn openai_chat_completions(
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
             .unwrap_or("unknown error");
-        return Err(classify_error(status.as_u16(), msg));
+        return Err(classify_error_with_rate_limits(
+            status.as_u16(),
+            msg,
+            &rate_limits,
+        ));
     }
 
     let model = response_body
@@ -456,8 +460,19 @@ pub async fn openai_stream_completions(
 
 /// Classify HTTP status codes into provider errors.
 pub fn classify_error(status: u16, message: &str) -> ProviderError {
+    classify_error_with_rate_limits(status, message, &Default::default())
+}
+
+/// Classify HTTP status codes into provider errors with optional rate-limit hints.
+pub fn classify_error_with_rate_limits(
+    status: u16,
+    message: &str,
+    rate_limits: &crate::providers::normalization::RateLimitInfo,
+) -> ProviderError {
     match status {
-        429 => ProviderError::RateLimited { retry_after: None },
+        429 => ProviderError::RateLimited {
+            retry_after: rate_limits.retry_after,
+        },
         401 | 403 => ProviderError::Auth(message.to_string()),
         400 => ProviderError::Other(format!("Bad request: {}", message)),
         s if s >= 500 => ProviderError::Other(format!("Upstream {}: {}", s, message)),

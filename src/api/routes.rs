@@ -193,7 +193,7 @@ pub async fn admin_models(
 pub async fn admin_usage_series(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let usage = crate::usage::aggregation::get_usage_series(&state).await;
+    let usage = crate::usage::aggregation::get_usage_series(&state, "24h").await;
     Ok(Json(usage))
 }
 
@@ -201,7 +201,13 @@ pub async fn admin_logs_stream(
     State(state): State<AppState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     // Subscribe BEFORE emitting any trace so events aren't missed.
-    let rx = state.log_tx.subscribe();
+    let rx = {
+        let guard = state.log_tx.lock().unwrap();
+        guard
+            .as_ref()
+            .expect("log_tx sender taken during shutdown")
+            .subscribe()
+    };
 
     // Notify via tracing (will reach all subscribers including this new one).
     tracing::info!("SSE client connected to system stream");
@@ -254,17 +260,22 @@ pub async fn admin_route_plan(
     };
 
     let config = state.config();
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &model)
+    let resolved_models = crate::router::aliases::resolve_alias(&state, &model)
         .await
-        .unwrap_or_else(|| model.clone());
+        .unwrap_or_else(|| vec![model.clone()]);
     let policy = crate::router::policy::RoutePolicy::from_config(&config);
-    let raw_plan = crate::router::selection::build_attempt_plan(
-        &policy,
-        &state.provider_registry,
-        &resolved_model,
-        endpoint_kind,
-    )
-    .await;
+
+    let mut raw_plan = Vec::new();
+    for resolved in &resolved_models {
+        let plan = crate::router::selection::build_attempt_plan(
+            &policy,
+            &state.provider_registry,
+            resolved,
+            endpoint_kind,
+        )
+        .await;
+        raw_plan.extend(plan);
+    }
 
     let mut attempts = Vec::new();
     for attempt in raw_plan {
@@ -289,8 +300,25 @@ pub async fn admin_route_plan(
         .flatten()
         .map(|row| row.0)
         .unwrap_or(true);
-        let included =
-            model_enabled && health != "Unhealthy" && breaker != "Open" && breaker != "HalfOpen";
+        let free_only = config
+            .providers
+            .iter()
+            .find(|provider| provider.id == attempt.provider_id)
+            .map(|provider| provider.free_only)
+            .unwrap_or(true);
+        let paid_allowed = free_only || config.routing.allow_paid_fallback;
+        let included = model_enabled
+            && paid_allowed
+            && health != "Unhealthy"
+            && breaker != "Open"
+            && breaker != "HalfOpen";
+        let reason = if included {
+            "eligible"
+        } else if !paid_allowed {
+            "filtered by paid fallback policy"
+        } else {
+            "filtered by health, breaker, or model enablement"
+        };
         attempts.push(serde_json::json!({
             "provider_id": attempt.provider_id,
             "model_id": attempt.model_id,
@@ -298,14 +326,15 @@ pub async fn admin_route_plan(
             "health": health,
             "breaker_state": breaker,
             "model_enabled": model_enabled,
+            "free_only": free_only,
             "included": included,
-            "reason": if included { "eligible" } else { "filtered by health, breaker, or model enablement" }
+            "reason": reason
         }));
     }
 
     Ok(Json(serde_json::json!({
         "requested_model": model,
-        "resolved_model": resolved_model,
+        "resolved_model": resolved_models.join(", "),
         "endpoint": endpoint,
         "free_first": config.routing.free_first,
         "allow_paid_fallback": config.routing.allow_paid_fallback,
@@ -529,24 +558,52 @@ pub async fn admin_config_save(
     // --- Models (existing logic, unchanged) ---
     if let Some(models) = body.get("models").and_then(|m| m.as_array()) {
         for model_update in models {
-            if let (Some(provider_id), Some(model_id), Some(enabled)) = (
+            if let (Some(provider_id), Some(model_id)) = (
                 model_update.get("provider_id").and_then(|v| v.as_str()),
                 model_update.get("model_id").and_then(|v| v.as_str()),
-                model_update.get("enabled").and_then(|v| v.as_bool()),
             ) {
-                let _ = sqlx::query(
-                    "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, updated_at)
-                     VALUES (?, ?, ?, ?, datetime('now'))
-                     ON CONFLICT(provider_id, upstream_model_id)
-                     DO UPDATE SET enabled = excluded.enabled, updated_at = datetime('now')",
-                )
-                .bind(provider_id)
-                .bind(model_id)
-                .bind(model_id)
-                .bind(enabled)
-                .execute(&state.db)
-                .await;
-                changed = true;
+                let enabled = model_update.get("enabled").and_then(|v| v.as_bool());
+                let priority = model_update.get("priority").and_then(|v| v.as_i64());
+
+                if enabled.is_some() || priority.is_some() {
+                    let mut query = String::from(
+                        "INSERT INTO models (provider_id, upstream_model_id, public_model_id, updated_at",
+                    );
+                    let mut values = String::from(") VALUES (?, ?, ?, datetime('now')");
+                    let mut update = String::from(
+                        " ON CONFLICT(provider_id, upstream_model_id) DO UPDATE SET updated_at = datetime('now')",
+                    );
+
+                    if enabled.is_some() {
+                        query.push_str(", enabled");
+                        values.push_str(", ?");
+                        update.push_str(", enabled = excluded.enabled");
+                    }
+                    if priority.is_some() {
+                        query.push_str(", priority");
+                        values.push_str(", ?");
+                        update.push_str(", priority = excluded.priority");
+                    }
+
+                    let full_query = format!("{} {}) {}", query, values, update);
+                    let mut sql = sqlx::query(&full_query)
+                        .bind(provider_id)
+                        .bind(model_id)
+                        .bind(model_id);
+
+                    if let Some(e) = enabled {
+                        sql = sql.bind(e);
+                    }
+                    if let Some(p) = priority {
+                        sql = sql.bind(p);
+                    }
+
+                    if let Err(e) = sql.execute(&state.db).await {
+                        tracing::error!("Failed to update model priority/enabled: {:?}", e);
+                    } else {
+                        changed = true;
+                    }
+                }
             }
         }
     }
@@ -688,4 +745,101 @@ pub async fn admin_config_rollback(
         "message": "Config rolled back and applied without restart",
         "snapshot_id": snapshot_id
     })))
+}
+pub async fn admin_aliases_list(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    Ok(Json(crate::router::aliases::get_all_aliases(&state).await))
+}
+
+pub async fn admin_delete_alias(
+    State(state): State<AppState>,
+    axum::extract::Path(alias): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    sqlx::query("DELETE FROM aliases WHERE alias = ?")
+        .bind(&alias)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": format!("Alias '{}' deleted", alias)
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveAliasRequest {
+    pub alias: String,
+    pub target: serde_json::Value, // Can be a string or array of strings
+    pub enabled: bool,
+}
+
+pub async fn admin_save_alias(
+    State(state): State<AppState>,
+    Json(payload): Json<SaveAliasRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let target_json = serde_json::to_string(&payload.target)
+        .map_err(|e| ApiError::InvalidRequest(format!("Invalid target JSON: {e}")))?;
+
+    sqlx::query(
+        "INSERT INTO aliases (alias, target_json, enabled, updated_at) VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(alias) DO UPDATE SET target_json = excluded.target_json, enabled = excluded.enabled, updated_at = excluded.updated_at"
+    )
+    .bind(&payload.alias)
+    .bind(target_json)
+    .bind(payload.enabled)
+    .execute(&state.db)
+    .await
+    .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": format!("Alias '{}' saved", payload.alias)
+    })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AnalyticsQuery {
+    pub period: Option<String>,
+}
+
+pub async fn admin_analytics_traffic(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let period = query.period.unwrap_or_else(|| "24h".to_string());
+    Ok(Json(
+        crate::usage::aggregation::get_hourly_traffic(&state, &period).await,
+    ))
+}
+
+pub async fn admin_analytics_distribution(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let period = query.period.unwrap_or_else(|| "24h".to_string());
+    Ok(Json(
+        crate::usage::aggregation::get_provider_distribution(&state, &period).await,
+    ))
+}
+
+pub async fn admin_analytics_summary(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let period = query.period.unwrap_or_else(|| "24h".to_string());
+    Ok(Json(
+        crate::usage::aggregation::get_usage_series(&state, &period).await,
+    ))
+}
+
+pub async fn admin_analytics_metrics(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let period = query.period.unwrap_or_else(|| "24h".to_string());
+    Ok(Json(
+        crate::usage::aggregation::get_period_summary(&state, &period).await,
+    ))
 }

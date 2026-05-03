@@ -2,24 +2,44 @@ use crate::config::schema::{
     Config, DatabaseConfig, LoggingConfig, MetricsConfig, ProviderConfig, ResilienceConfig,
     RoutingConfig, ServerConfig,
 };
+use console::{Style, style};
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use std::path::Path;
 use tracing::info;
 
 /// Run the first-time setup wizard. Creates a config file, then returns the path.
 pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error::Error>> {
+    let orange = Style::new().for_stderr().color256(208).bold(); // Orange-ish
+    let cyan = Style::new().for_stderr().cyan().bold();
+    let emerald = Style::new().for_stderr().green().bold();
+
     println!();
-    println!("╔══════════════════════════════════════════════════════╗");
-    println!("║        TokenScavenger — First-Time Setup            ║");
-    println!("║                                                    ║");
-    println!("║  No configuration file was found. Let's create     ║");
-    println!("║  one together. You can change these settings       ║");
-    println!("║  later with `tokenscavenger config` or the web UI. ║");
-    println!("╚══════════════════════════════════════════════════════╝");
+    println!(
+        "{}",
+        cyan.apply_to("╔══════════════════════════════════════════════════════╗")
+    );
+    println!(
+        "║        {}{} — Setup Wizard               ║",
+        cyan.apply_to("Token"),
+        orange.apply_to("Scavenger")
+    );
+    println!(
+        "{}",
+        cyan.apply_to("╚══════════════════════════════════════════════════════╝")
+    );
+    println!();
+    println!(
+        "  {}",
+        style("Welcome! Let's get your local LLM proxy running.").italic()
+    );
+    println!(
+        "  {}",
+        style("These settings can be managed later via the Web UI.").italic()
+    );
     println!();
 
     // --- Server settings ---
-    println!("── Server Settings ──");
+    println!("{}", cyan.apply_to("── Server Settings ──"));
     let bind: String = Input::new()
         .with_prompt("HTTP bind address")
         .default("0.0.0.0:8000".into())
@@ -41,7 +61,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
 
     // --- Database settings ---
     println!();
-    println!("── Database Settings ──");
+    println!("{}", cyan.apply_to("── Database Settings ──"));
     let default_db = crate::cli::default_config_path()
         .parent()
         .map(|p| p.join("tokenscavenger.db"))
@@ -55,7 +75,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
 
     // --- Routing settings ---
     println!();
-    println!("── Routing Settings ──");
+    println!("{}", cyan.apply_to("── Routing Settings ──"));
     let free_first = Confirm::new()
         .with_prompt("Prefer free-tier providers first?")
         .default(true)
@@ -68,8 +88,8 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
 
     // --- Provider setup ---
     println!();
-    println!("── Provider Setup ──");
-    println!("TokenScavenger supports 12+ free and paid LLM providers.");
+    println!("{}", orange.apply_to("── Provider Setup ──"));
+    println!("TokenScavenger supports 14+ free and paid LLM providers.");
     println!("Select the providers you'd like to configure now.");
 
     let available_providers = vec![
@@ -85,6 +105,8 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
         "github (Models)",
         "zhipu (ZAI)",
         "siliconflow",
+        "deepseek",
+        "xai (Grok)",
     ];
 
     let chosen = MultiSelect::new()
@@ -98,7 +120,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
         let raw_id = available_providers[idx];
         let id = provider_id_from_label(raw_id).to_string();
         println!();
-        println!("  Configuring {id}:");
+        println!("  Configuring {}:", cyan.apply_to(&id));
 
         let api_key: String = Password::new()
             .with_prompt("  API key")
@@ -107,7 +129,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
 
         let free_only = Confirm::new()
             .with_prompt("  Use only free-tier endpoints?")
-            .default(true)
+            .default(default_free_only_for_provider(&id))
             .interact()?;
 
         let custom_url = Confirm::new()
@@ -194,14 +216,30 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
     std::fs::write(target_path, header + &toml_string)?;
 
     println!();
-    println!("✓ Configuration saved to: {}", target_path.display());
+    println!(
+        "{} Configuration saved to: {}",
+        emerald.apply_to("✓"),
+        style(target_path.display()).bold()
+    );
     println!();
-    println!("You can now start TokenScavenger:");
-    println!("  tokenscavenger --config {}", target_path.display());
+    println!(
+        "You can now start {}{}:",
+        cyan.apply_to("Token"),
+        orange.apply_to("Scavenger")
+    );
+    println!(
+        "  tokenscavenger --config {}",
+        style(target_path.display()).underlined()
+    );
     println!();
-    println!("To reconfigure later:");
-    println!("  tokenscavenger config");
-    println!("Or open the web UI: http://{bind}/ui", bind = bind);
+    println!("To reconfigure later use the web UI:");
+    println!(
+        "  {}",
+        style(format!("http://{bind}/ui", bind = bind))
+            .cyan()
+            .underlined()
+    );
+    println!();
 
     info!(
         "Setup wizard completed — config written to {}",
@@ -224,19 +262,33 @@ fn provider_id_from_label(label: &str) -> &str {
         "huggingface (Inference API)" => "huggingface",
         "github (Models)" => "github-models",
         "zhipu (ZAI)" => "zai",
+        "xai (Grok)" => "xai",
         other => other,
     }
 }
 
+fn default_free_only_for_provider(provider_id: &str) -> bool {
+    !matches!(provider_id, "deepseek" | "xai")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::provider_id_from_label;
+    use super::{default_free_only_for_provider, provider_id_from_label};
 
     #[test]
     fn setup_labels_map_to_registry_ids() {
         assert_eq!(provider_id_from_label("github (Models)"), "github-models");
         assert_eq!(provider_id_from_label("zhipu (ZAI)"), "zai");
+        assert_eq!(provider_id_from_label("xai (Grok)"), "xai");
+        assert_eq!(provider_id_from_label("deepseek"), "deepseek");
         assert_eq!(provider_id_from_label("google (Gemini)"), "google");
         assert_eq!(provider_id_from_label("groq"), "groq");
+    }
+
+    #[test]
+    fn paid_fallback_providers_default_to_paid_mode() {
+        assert!(!default_free_only_for_provider("deepseek"));
+        assert!(!default_free_only_for_provider("xai"));
+        assert!(default_free_only_for_provider("groq"));
     }
 }

@@ -27,6 +27,9 @@ target
 *.db-wal
 *.db-shm
 
+# Website dependencies
+/docs/node_modules
+
 # OS metadata files
 .DS_Store
 Thumbs.db

@@ -34,7 +34,7 @@ default_alias_strategy = "provider-priority"
 provider_order = [                  # Fallback ordering
     "groq", "cerebras", "google", "openrouter", "cloudflare",
     "nvidia", "mistral", "github-models", "siliconflow",
-    "huggingface", "cohere", "zai"
+    "huggingface", "cohere", "zai", "deepseek", "xai"
 ]
 
 [resilience]
@@ -98,7 +98,7 @@ target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 | Field | Default | Description |
 |-------|---------|-------------|
 | `free_first` | `true` | When true, free-tier providers are always preferred over paid. |
-| `allow_paid_fallback` | `false` | If true and all free providers are exhausted, paid providers may be used. |
+| `allow_paid_fallback` | `false` | If true, providers marked `free_only = false` may be used after earlier routes are exhausted. |
 | `default_alias_strategy` | `"provider-priority"` | Strategy for resolving model aliases with multiple targets. |
 | `provider_order` | `[default list]` | Ordered list defining the fallback chain. First match wins. |
 
@@ -125,7 +125,7 @@ This is an array of provider configurations. Each entry specifies:
 | `discover_models` | `true` | Whether to query the provider's model list endpoint. |
 
 Supported provider IDs:
-`groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`
+`groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`)
 
 ### `[[aliases]]`
 
@@ -185,4 +185,28 @@ target = ["cerebras/llama3.1-8b", "groq/llama3-8b-8192"]
 [[aliases]]
 alias = "powerful"
 target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash", "openrouter/meta-llama/llama-3.3-70b-instruct:free"]
+```
+
+### Free-first with paid fallback
+
+```toml
+[routing]
+free_first = true
+allow_paid_fallback = true
+provider_order = ["groq", "cerebras", "openrouter", "deepseek", "xai"]
+
+[[providers]]
+id = "groq"
+api_key = "${GROQ_API_KEY}"
+free_only = true
+
+[[providers]]
+id = "deepseek"
+api_key = "${DEEPSEEK_API_KEY}"
+free_only = false
+
+[[providers]]
+id = "xai"
+api_key = "${XAI_API_KEY}"
+free_only = false
 ```

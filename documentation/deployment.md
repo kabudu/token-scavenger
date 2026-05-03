@@ -46,7 +46,7 @@ cargo build --release
 
 ### Using the Dockerfile
 
-Create a `Dockerfile` in the project root:
+The repository includes a `Dockerfile`. A minimal production-oriented version looks like this:
 
 ```dockerfile
 FROM rust:1.85 AS builder

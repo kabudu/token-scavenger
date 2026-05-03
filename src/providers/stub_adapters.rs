@@ -1,7 +1,7 @@
 //! All provider adapter stubs with correct API details.
 //!
 //! The adapters are organized into categories:
-//! - OpenAI-compatible: OpenRouter, Cerebras, NVIDIA, Mistral, GitHub Models, HuggingFace, SiliconFlow
+//! - OpenAI-compatible: OpenRouter, Cerebras, NVIDIA, Mistral, GitHub Models, HuggingFace, SiliconFlow, DeepSeek, xAI
 //! - Semi-compatible: ZAI/Zhipu (different base path)
 //! - Non-OpenAI: Cloudflare (has both), Cohere (v2/chat format)
 //!
@@ -775,6 +775,167 @@ impl ProviderAdapter for HuggingFaceAdapter {
         tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
     ) -> Result<(), ProviderError> {
         crate::providers::shared::openai_stream_completions(ctx, request, "huggingface", tx).await
+    }
+}
+
+/// DeepSeek — OpenAI-compatible paid inference
+/// Base: https://api.deepseek.com
+/// Auth: Bearer token
+/// Models: deepseek-v4-flash, deepseek-v4-pro
+pub struct DeepSeekAdapter;
+
+#[async_trait]
+impl ProviderAdapter for DeepSeekAdapter {
+    fn provider_id(&self) -> &'static str {
+        "deepseek"
+    }
+    fn display_name(&self) -> &'static str {
+        "DeepSeek"
+    }
+    fn supports_endpoint(&self, kind: &EndpointKind) -> bool {
+        matches!(
+            kind,
+            EndpointKind::ChatCompletions | EndpointKind::ModelList
+        )
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::Bearer
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            openai_compatible: true,
+            has_quirks: true,
+            quirks: vec![
+                "OpenAI-compatible base URL omits /v1 by default".into(),
+                "deepseek-chat and deepseek-reasoner are legacy compatibility aliases".into(),
+            ],
+            supports_streaming: true,
+            supports_tools: true,
+            supports_json_mode: true,
+            supports_vision: false,
+            docs_url: Some("https://api-docs.deepseek.com/".into()),
+        }
+    }
+    fn base_url(&self, config: &ProviderConfig) -> Url {
+        shared::provider_base_url("deepseek", config, "https://api.deepseek.com")
+    }
+    fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
+        bearer_auth(config)
+    }
+    async fn discover_models(
+        &self,
+        ctx: &ProviderContext,
+    ) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let mut models = shared::openai_discover_models(ctx, "deepseek").await?;
+        for model in &mut models {
+            model.free_tier = false;
+        }
+        Ok(models)
+    }
+    async fn chat_completions(
+        &self,
+        ctx: &ProviderContext,
+        request: NormalizedChatRequest,
+    ) -> Result<ProviderChatResponse, ProviderError> {
+        shared::openai_chat_completions(ctx, request, "deepseek").await
+    }
+    async fn embeddings(
+        &self,
+        _ctx: &ProviderContext,
+        _request: NormalizedEmbeddingsRequest,
+    ) -> Result<ProviderEmbeddingsResponse, ProviderError> {
+        Err(ProviderError::UnsupportedFeature(
+            "DeepSeek does not support embeddings in TokenScavenger".into(),
+        ))
+    }
+
+    async fn stream_chat_completions(
+        &self,
+        ctx: &ProviderContext,
+        request: NormalizedChatRequest,
+        tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
+    ) -> Result<(), ProviderError> {
+        crate::providers::shared::openai_stream_completions(ctx, request, "deepseek", tx).await
+    }
+}
+
+/// xAI — OpenAI-compatible paid inference for Grok models
+/// Base: https://api.x.ai/v1
+/// Auth: Bearer token
+pub struct XaiAdapter;
+
+#[async_trait]
+impl ProviderAdapter for XaiAdapter {
+    fn provider_id(&self) -> &'static str {
+        "xai"
+    }
+    fn display_name(&self) -> &'static str {
+        "xAI (Grok)"
+    }
+    fn supports_endpoint(&self, kind: &EndpointKind) -> bool {
+        matches!(
+            kind,
+            EndpointKind::ChatCompletions | EndpointKind::ModelList
+        )
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::Bearer
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            openai_compatible: true,
+            has_quirks: true,
+            quirks: vec![
+                "Chat completions are a legacy-compatible endpoint; new xAI features may appear on Responses first".into(),
+                "Reasoning models reject some classic chat parameters such as stop or penalties".into(),
+            ],
+            supports_streaming: true,
+            supports_tools: true,
+            supports_json_mode: true,
+            supports_vision: true,
+            docs_url: Some("https://docs.x.ai/docs/api-reference".into()),
+        }
+    }
+    fn base_url(&self, config: &ProviderConfig) -> Url {
+        shared::provider_base_url("xai", config, "https://api.x.ai/v1")
+    }
+    fn default_headers(&self, config: &ProviderConfig) -> HeaderMap {
+        bearer_auth(config)
+    }
+    async fn discover_models(
+        &self,
+        ctx: &ProviderContext,
+    ) -> Result<Vec<DiscoveredModel>, ProviderError> {
+        let mut models = shared::openai_discover_models(ctx, "xai").await?;
+        for model in &mut models {
+            model.free_tier = false;
+        }
+        Ok(models)
+    }
+    async fn chat_completions(
+        &self,
+        ctx: &ProviderContext,
+        request: NormalizedChatRequest,
+    ) -> Result<ProviderChatResponse, ProviderError> {
+        shared::openai_chat_completions(ctx, request, "xai").await
+    }
+    async fn embeddings(
+        &self,
+        _ctx: &ProviderContext,
+        _request: NormalizedEmbeddingsRequest,
+    ) -> Result<ProviderEmbeddingsResponse, ProviderError> {
+        Err(ProviderError::UnsupportedFeature(
+            "xAI does not support embeddings in TokenScavenger".into(),
+        ))
+    }
+
+    async fn stream_chat_completions(
+        &self,
+        ctx: &ProviderContext,
+        request: NormalizedChatRequest,
+        tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
+    ) -> Result<(), ProviderError> {
+        crate::providers::shared::openai_stream_completions(ctx, request, "xai", tx).await
     }
 }
 

@@ -1,6 +1,6 @@
 # Provider Support Matrix
 
-TokenScavenger ships with 12 built-in provider adapters. This document details each provider's API format, capabilities, free-tier limits, and known quirks.
+TokenScavenger ships with 14 built-in provider adapters. This document details each provider's API format, capabilities, free-tier limits, paid fallback behavior, and known quirks.
 
 ## Legend
 
@@ -27,6 +27,8 @@ TokenScavenger ships with 12 built-in provider adapters. This document details e
 | SiliconFlow | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ (1k RPM free) |
 | ZAI / Zhipu | Semi-OpenAI | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ (flash models) |
 | Cohere | Native v2/chat | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ (1k calls/month) |
+| DeepSeek | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ❌ | Paid fallback |
+| xAI (Grok) | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ✅ | Paid fallback |
 
 ## Provider Details
 
@@ -191,3 +193,31 @@ TokenScavenger ships with 12 built-in provider adapters. This document details e
 | **Quirks** | ⚠️ Uses `/v2/chat` not `/v1/chat/completions`. Content is an array of objects `[{type: "text", text: "..."}]`. SSE uses named event types. Trial: 1,000 calls/month, 20 req/min. |
 | **Rate limits** | 20 req/min (trial), 500 req/min (production) |
 | **Docs** | https://docs.cohere.com |
+
+### DeepSeek
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `https://api.deepseek.com` |
+| **Auth** | `Authorization: Bearer <key>` |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Paid models** | `deepseek-v4-flash`, `deepseek-v4-pro` |
+| **Quirks** | ⚠️ Default OpenAI-compatible base URL omits `/v1`. Legacy compatibility names `deepseek-chat` and `deepseek-reasoner` may still work but are scheduled for deprecation by DeepSeek. |
+| **Routing** | Configure with `free_only = false`; TokenScavenger routes to it only when `[routing].allow_paid_fallback = true`. |
+| **Docs** | https://api-docs.deepseek.com/ |
+
+### xAI (Grok)
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `https://api.x.ai/v1` |
+| **Auth** | `Authorization: Bearer <key>` |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Paid models** | `grok-4.20`, `grok-4.20-reasoning` |
+| **Quirks** | ⚠️ xAI treats chat completions as a compatibility endpoint. Reasoning models can reject some classic chat parameters such as stop sequences and penalties. |
+| **Routing** | Configure with `free_only = false`; TokenScavenger routes to it only when `[routing].allow_paid_fallback = true`. |
+| **Docs** | https://docs.x.ai/docs/api-reference |

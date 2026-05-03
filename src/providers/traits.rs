@@ -6,7 +6,7 @@ use reqwest::header::HeaderMap;
 use url::Url;
 
 /// Kinds of endpoints a provider can support.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EndpointKind {
     ChatCompletions,
     Embeddings,

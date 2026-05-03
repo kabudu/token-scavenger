@@ -89,11 +89,18 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
 
     // 10. Perform initial provider discovery
     let state_for_disc = state.clone();
-    tokio::spawn(async move {
-        info!("Starting initial provider discovery...");
-        crate::discovery::refresh::refresh_all(&state_for_disc).await;
-        info!("Initial provider discovery complete");
+    let disc_handle = tokio::spawn(async move {
+        let mut shutdown_rx = state_for_disc.shutdown_rx.clone();
+        tokio::select! {
+            _ = crate::discovery::refresh::refresh_all(&state_for_disc) => {
+                info!("Initial provider discovery complete");
+            }
+            _ = shutdown_rx.changed() => {
+                info!("Initial provider discovery cancelled by shutdown");
+            }
+        }
     });
+    state.background_handles.lock().unwrap().push(disc_handle);
 
     Ok(StartupResult {
         state,
@@ -145,7 +152,7 @@ async fn load_db_config_overrides(state: &AppState) {
 fn spawn_background_tasks(base_state: AppState) {
     // Discovery refresh loop
     let s = base_state.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let interval = s.config().resilience.health_probe_interval_secs * 6;
         loop {
             let mut shutdown_rx = s.shutdown_rx.clone();
@@ -160,10 +167,11 @@ fn spawn_background_tasks(base_state: AppState) {
         }
         info!("Discovery refresh loop stopped");
     });
+    base_state.background_handles.lock().unwrap().push(handle);
 
     // Health probe loop
     let s = base_state.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let interval = s.config().resilience.health_probe_interval_secs;
         loop {
             let mut shutdown_rx = s.shutdown_rx.clone();
@@ -180,11 +188,12 @@ fn spawn_background_tasks(base_state: AppState) {
         }
         info!("Health probe loop stopped");
     });
+    base_state.background_handles.lock().unwrap().push(handle);
 
     // Circuit breaker decay/reset loop
     let s = base_state.clone();
     let cooldown = base_state.config().resilience.breaker_cooldown_secs;
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             let mut shutdown_rx = s.shutdown_rx.clone();
             tokio::select! {
@@ -196,10 +205,11 @@ fn spawn_background_tasks(base_state: AppState) {
         }
         info!("Breaker decay loop stopped");
     });
+    base_state.background_handles.lock().unwrap().push(handle);
 
     // Usage aggregation flush loop
     let s = base_state.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             let mut shutdown_rx = s.shutdown_rx.clone();
             tokio::select! {
@@ -211,10 +221,11 @@ fn spawn_background_tasks(base_state: AppState) {
         }
         info!("Usage flush loop stopped");
     });
+    base_state.background_handles.lock().unwrap().push(handle);
 
     // Retention cleanup loop
     let s = base_state.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             let mut shutdown_rx = s.shutdown_rx.clone();
             tokio::select! {
@@ -229,6 +240,7 @@ fn spawn_background_tasks(base_state: AppState) {
         }
         info!("Retention cleanup loop stopped");
     });
+    base_state.background_handles.lock().unwrap().push(handle);
 
     info!("All background tasks started");
 }
@@ -316,6 +328,30 @@ pub fn build_router(state: AppState) -> Router {
             "/admin/config/rollback",
             axum::routing::post(crate::api::routes::admin_config_rollback),
         )
+        .route(
+            "/admin/aliases",
+            axum::routing::get(crate::api::routes::admin_aliases_list),
+        )
+        .route(
+            "/admin/aliases/{alias}",
+            axum::routing::delete(crate::api::routes::admin_delete_alias),
+        )
+        .route(
+            "/admin/analytics/traffic",
+            axum::routing::get(crate::api::routes::admin_analytics_traffic),
+        )
+        .route(
+            "/admin/analytics/distribution",
+            axum::routing::get(crate::api::routes::admin_analytics_distribution),
+        )
+        .route(
+            "/admin/analytics/summary",
+            axum::routing::get(crate::api::routes::admin_analytics_summary),
+        )
+        .route(
+            "/admin/analytics/metrics",
+            axum::routing::get(crate::api::routes::admin_analytics_metrics),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             crate::api::auth::auth_middleware,
@@ -333,7 +369,7 @@ pub fn build_router(state: AppState) -> Router {
 
 fn cors_layer(config: &Config) -> CorsLayer {
     let mut layer = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::PUT])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,

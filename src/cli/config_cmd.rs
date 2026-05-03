@@ -15,11 +15,27 @@ pub fn run_config_editor(config_path: &Path) -> Result<(), Box<dyn std::error::E
         }
     };
 
+    let orange = console::Style::new().for_stderr().color256(208).bold();
+    let cyan = console::Style::new().for_stderr().cyan().bold();
+
     println!();
-    println!("╔══════════════════════════════════════════════════════╗");
-    println!("║        TokenScavenger — Configuration Editor        ║");
-    println!("╚══════════════════════════════════════════════════════╝");
-    println!("Config file: {}", config_path.display());
+    println!(
+        "{}",
+        cyan.apply_to("╔══════════════════════════════════════════════════════╗")
+    );
+    println!(
+        "║        {}{} — Configuration Editor        ║",
+        cyan.apply_to("Token"),
+        orange.apply_to("Scavenger")
+    );
+    println!(
+        "{}",
+        cyan.apply_to("╚══════════════════════════════════════════════════════╝")
+    );
+    println!(
+        "  Config file: {}",
+        console::style(config_path.display()).bold()
+    );
     println!();
 
     let mut config = config;
@@ -262,7 +278,7 @@ fn add_provider(config: &mut Config) -> Result<(), Box<dyn std::error::Error>> {
     println!("  New Provider");
 
     let id: String = Input::new()
-        .with_prompt("  Provider ID (e.g. groq, google, openrouter)")
+        .with_prompt("  Provider ID (e.g. groq, google, openrouter, deepseek, xai)")
         .interact_text()?;
 
     let api_key: String = Password::new()
@@ -272,7 +288,7 @@ fn add_provider(config: &mut Config) -> Result<(), Box<dyn std::error::Error>> {
 
     let free_only = Confirm::new()
         .with_prompt("  Use only free-tier endpoints?")
-        .default(true)
+        .default(!matches!(id.as_str(), "deepseek" | "xai" | "grok"))
         .interact()?;
 
     let custom_url = Confirm::new()

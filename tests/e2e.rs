@@ -16,10 +16,18 @@ use tower::ServiceExt;
 struct MiniMock {
     failures: AtomicU32,
     succeed_after: u32,
+    rate_limited: bool,
 }
 
 /// Build a TokenScavenger test app with one mock provider.
 async fn build_e2e_app(succeed_after: u32) -> (axum::Router, tokenscavenger::app::state::AppState) {
+    build_e2e_app_with_failure(succeed_after, false).await
+}
+
+async fn build_e2e_app_with_failure(
+    succeed_after: u32,
+    rate_limited: bool,
+) -> (axum::Router, tokenscavenger::app::state::AppState) {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
@@ -120,6 +128,11 @@ async fn build_e2e_app(succeed_after: u32) -> (axum::Router, tokenscavenger::app
         ) -> Result<ProviderChatResponse, ProviderError> {
             let count = self.state.failures.fetch_add(1, Ordering::SeqCst);
             if count < self.state.succeed_after {
+                if self.state.rate_limited {
+                    return Err(ProviderError::RateLimited {
+                        retry_after: Some(7),
+                    });
+                }
                 return Err(ProviderError::Other("mock unavailable".into()));
             }
 
@@ -151,6 +164,7 @@ async fn build_e2e_app(succeed_after: u32) -> (axum::Router, tokenscavenger::app
             state: Arc::new(MiniMock {
                 failures: AtomicU32::new(0),
                 succeed_after,
+                rate_limited,
             }),
         }))
         .await;
@@ -230,6 +244,44 @@ async fn e2e_retry_then_success() {
     let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["choices"][0]["message"]["content"], "OK");
+}
+
+#[tokio::test]
+async fn e2e_upstream_rate_limit_exhaustion_returns_429() {
+    let (app, state) = build_e2e_app_with_failure(u32::MAX, true).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-rate-limited")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model", "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(resp.headers().get("retry-after").unwrap(), "7");
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["code"], "rate_limit_exceeded");
+
+    let row: (String, i64) =
+        sqlx::query_as("SELECT status, http_status FROM request_log WHERE request_id = ?")
+            .bind("req-e2e-rate-limited")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "rate_limited");
+    assert_eq!(row.1, 429);
 }
 
 #[tokio::test]

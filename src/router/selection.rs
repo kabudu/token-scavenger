@@ -83,6 +83,35 @@ pub fn filter_by_health(plan: Vec<RouteAttempt>, state: &AppState) -> Vec<RouteA
     }).collect()
 }
 
+/// Filter paid providers unless routing policy explicitly allows paid fallback.
+pub fn filter_by_paid_policy(plan: Vec<RouteAttempt>, state: &AppState) -> Vec<RouteAttempt> {
+    let config = state.config();
+    if config.routing.allow_paid_fallback {
+        return plan;
+    }
+
+    plan.into_iter()
+        .filter(|attempt| {
+            let is_free_only = config
+                .providers
+                .iter()
+                .find(|provider| provider.id == attempt.provider_id)
+                .map(|provider| provider.free_only)
+                .unwrap_or(true);
+
+            if !is_free_only {
+                tracing::info!(
+                    provider = %attempt.provider_id,
+                    model = %attempt.model_id,
+                    "Filtered out: paid fallback disabled"
+                );
+            }
+
+            is_free_only
+        })
+        .collect()
+}
+
 /// Filter an attempt plan by persisted model enablement.
 /// Missing model rows are allowed so curated/default models still work before discovery.
 pub async fn filter_by_model_enabled(

@@ -4,7 +4,7 @@ use crate::api::openai::chat::StreamDelta;
 use crate::app::state::AppState;
 use crate::providers::traits::{EndpointKind, ProviderContext};
 use crate::router::policy::RoutePolicy;
-use crate::router::selection::build_attempt_plan;
+use crate::router::selection::{build_attempt_plan, filter_by_health, filter_by_paid_policy};
 use axum::response::sse::Event;
 use futures::stream::Stream;
 use std::convert::Infallible;
@@ -147,29 +147,37 @@ pub async fn create_chat_stream(
     let policy = RoutePolicy::from_config(&config);
 
     // Resolve model alias
-    let resolved_model = crate::router::aliases::resolve_alias(&state, &request.model)
+    let resolved_models = crate::router::aliases::resolve_alias(&state, &request.model)
         .await
-        .unwrap_or_else(|| request.model.clone());
+        .unwrap_or_else(|| vec![request.model.clone()]);
 
     // Build attempt plan
-    let plan = build_attempt_plan(
-        &policy,
-        registry,
-        &resolved_model,
-        EndpointKind::ChatCompletions,
-    )
-    .await;
+    let mut plan = Vec::new();
+    for model in &resolved_models {
+        let model_plan =
+            build_attempt_plan(&policy, registry, model, EndpointKind::ChatCompletions).await;
+        plan.extend(model_plan);
+    }
 
     if plan.is_empty() {
         return Err(ApiError::RouteExhausted(format!(
-            "No available providers for streaming model: {}",
-            resolved_model
+            "No available providers for streaming model(s): {:?}",
+            resolved_models
+        )));
+    }
+
+    let plan = filter_by_paid_policy(filter_by_health(plan, &state), &state);
+
+    if plan.is_empty() {
+        return Err(ApiError::RouteExhausted(format!(
+            "All providers for streaming model(s) '{:?}' are unavailable or paid fallback is disabled",
+            resolved_models
         )));
     }
 
     info!(
         request_model = %request.model,
-        resolved_model = %resolved_model,
+        resolved_models = ?resolved_models,
         plan = ?plan.iter().map(|p| &p.provider_id).collect::<Vec<_>>(),
         "Stream route plan built"
     );

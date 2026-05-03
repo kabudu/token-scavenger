@@ -41,6 +41,8 @@ impl RoutePolicy {
             "siliconflow".into(),
             "huggingface".into(),
             "cohere".into(),
+            "deepseek".into(),
+            "xai".into(),
         ]
     }
 }

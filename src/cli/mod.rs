@@ -1,7 +1,16 @@
 pub mod config_cmd;
+pub mod service;
 pub mod setup;
 
 use std::path::PathBuf;
+
+#[derive(clap::Subcommand, Debug, Clone, Copy)]
+pub enum ServiceAction {
+    /// Install TokenScavenger as a background service.
+    Install,
+    /// Uninstall the TokenScavenger background service.
+    Uninstall,
+}
 
 /// Standard config file paths checked in order.
 pub fn config_search_paths() -> Vec<PathBuf> {

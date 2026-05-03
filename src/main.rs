@@ -48,6 +48,11 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Manage the system service (install/uninstall).
+    Service {
+        #[command(subcommand)]
+        action: tokenscavenger::cli::ServiceAction,
+    },
 }
 
 #[tokio::main]
@@ -66,6 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .clone()
                 .unwrap_or_else(tokenscavenger::cli::default_config_path);
             setup::run_setup_wizard(&target)?;
+            return Ok(());
+        }
+        Some(Command::Service { action }) => {
+            tokenscavenger::cli::service::handle_service_command(*action)?;
             return Ok(());
         }
         None => {

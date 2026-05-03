@@ -62,6 +62,7 @@ async-stream = "0.3"
 
 # Templating for UI
 askama = "0.15"
+console = "0.16.3"
 
 [features]
 default = []

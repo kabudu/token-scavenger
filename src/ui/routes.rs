@@ -85,7 +85,7 @@ pub fn render_shell(
     <div class="p-4 border-t border-white/5 bg-black/20">
     <div class="flex items-center justify-between mb-2">
         <span class="text-[10px] font-bold text-slate-500 uppercase">Version</span>
-        <span class="text-[10px] font-mono text-emerald-500">v0.1.0-STABLE</span>
+        <span class="text-[10px] font-mono text-emerald-500">v{}-STABLE</span>
     </div>
     <div class="flex items-center justify-between">
         <span class="text-[10px] font-bold text-slate-500 uppercase">Uptime</span>
@@ -113,22 +113,46 @@ pub fn render_shell(
     <div class="glass-card max-w-md w-full p-6 transform scale-95 transition-transform duration-300" id="global-modal-content">
         <h3 id="global-modal-title" class="text-lg font-bold mb-2"></h3>
         <p id="global-modal-message" class="text-sm text-slate-300 mb-6"></p>
-        <div class="flex justify-end">
+        <div class="flex justify-end gap-3" id="global-modal-actions">
             <button class="btn" style="background:#334155;" onclick="hideModal()">Close</button>
         </div>
     </div>
 </div>
 <script>
 function showModal(title, message, isError) {{
-    document.getElementById('global-modal-title').innerText = title;
-    document.getElementById('global-modal-title').className = `text-lg font-bold mb-2 ${{isError ? 'text-red-400' : 'text-emerald-400'}}`;
-    document.getElementById('global-modal-message').innerText = (typeof message === 'object') ? JSON.stringify(message, null, 2) : message;
-    if (typeof message === 'object') {{ document.getElementById('global-modal-message').classList.add('font-mono', 'whitespace-pre-wrap', 'text-[10px]'); }}
+    const titleEl = document.getElementById('global-modal-title');
+    const msgEl = document.getElementById('global-modal-message');
+    const actionsEl = document.getElementById('global-modal-actions');
+    
+    titleEl.innerText = title;
+    titleEl.className = `text-lg font-bold mb-2 ${{isError ? 'text-red-400' : 'text-emerald-400'}}`;
+    msgEl.innerText = (typeof message === 'object') ? JSON.stringify(message, null, 2) : message;
+    
+    if (typeof message === 'object') {{ 
+        msgEl.classList.add('font-mono', 'whitespace-pre-wrap', 'text-[10px]'); 
+    }} else {{
+        msgEl.classList.remove('font-mono', 'whitespace-pre-wrap', 'text-[10px]');
+    }}
+
+    actionsEl.innerHTML = `<button class="btn" style="background:#334155;" onclick="hideModal()">Close</button>`;
+
     const modal = document.getElementById('global-modal');
     modal.classList.remove('hidden');
     void modal.offsetWidth;
     modal.classList.remove('opacity-0');
     document.getElementById('global-modal-content').classList.remove('scale-95');
+}}
+function showConfirm(title, message, onConfirm) {{
+    showModal(title, message, false);
+    const actionsEl = document.getElementById('global-modal-actions');
+    actionsEl.innerHTML = `
+        <button class="btn" style="background:#334155;" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-primary" id="modal-confirm-btn">Confirm</button>
+    `;
+    document.getElementById('modal-confirm-btn').onclick = () => {{
+        onConfirm();
+        hideModal();
+    }};
 }}
 function hideModal() {{
     const modal = document.getElementById('global-modal');
@@ -173,6 +197,7 @@ if (worstState === "Healthy") {{
 </html>"##,
         head,
         nav,
+        env!("CARGO_PKG_VERSION"),
         uptime_str,
         title,
         content,
@@ -194,10 +219,37 @@ if (worstState === "Healthy") {{
     )
 }
 
+/// Format a number with commas
+fn format_number(num: i64) -> String {
+    let mut s = num.to_string();
+    let mut result = String::new();
+    while s.len() > 3 {
+        let len = s.len();
+        result = format!(",{}", &s[len - 3..]) + &result;
+        s = s[..len - 3].to_string();
+    }
+    s + &result
+}
+
+/// Format a number as currency (USD)
+fn format_currency(amount: f64) -> String {
+    if amount == 0.0 {
+        "$0.00".to_string()
+    } else if amount < 0.01 {
+        format!("${:.4}", amount)
+    } else {
+        format!("${:.2}", amount)
+    }
+}
+
 /// Render the dashboard view.
 pub async fn render_dashboard(state: &AppState) -> String {
     let config = state.config();
-    let usage = crate::usage::aggregation::get_usage_series(state).await;
+
+    // Initial data for SSR
+    let usage = crate::usage::aggregation::get_usage_series(state, "24h").await;
+    let metrics = crate::usage::aggregation::get_period_summary(state, "24h").await;
+
     let mut estimated_cost = 0.0_f64;
     let mut total_tokens = 0_i64;
     if let Some(series) = usage.get("series").and_then(|v| v.as_array()) {
@@ -209,42 +261,30 @@ pub async fn render_dashboard(state: &AppState) -> String {
             total_tokens += entry
                 .get("input_tokens")
                 .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            total_tokens += entry
-                .get("output_tokens")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+                .unwrap_or(0)
+                + entry
+                    .get("output_tokens")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
         }
     }
-    let request_count: i64 = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM request_log")
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .map(|row| row.0)
-        .unwrap_or(0);
-    let avg_latency: i64 = sqlx::query_as::<_, (i64,)>(
-        "SELECT COALESCE(CAST(AVG(latency_ms) AS INTEGER), 0) FROM request_log",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .map(|row| row.0)
-    .unwrap_or(0);
 
-    // Fetch per-provider average latency
+    let request_count = metrics
+        .get("request_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let avg_latency = metrics
+        .get("avg_latency")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
     let provider_latencies: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
         "SELECT selected_provider_id, CAST(AVG(latency_ms) AS INTEGER) FROM request_log WHERE status = 'success' GROUP BY selected_provider_id"
     )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .collect();
+    .fetch_all(&state.db).await.unwrap_or_default().into_iter().collect();
 
-    let hourly_traffic = crate::usage::aggregation::get_hourly_traffic(state).await;
-    let provider_dist = crate::usage::aggregation::get_provider_distribution(state).await;
+    let hourly_traffic = crate::usage::aggregation::get_hourly_traffic(state, "24h").await;
+    let provider_dist = crate::usage::aggregation::get_provider_distribution(state, "24h").await;
 
     let mut provider_rows = String::new();
     for p in &config.providers {
@@ -282,31 +322,43 @@ pub async fn render_dashboard(state: &AppState) -> String {
 
     let content = format!(
         r##"
+        <div class="flex items-center justify-between mb-2">
+            <div class="text-xs font-bold text-slate-500 uppercase tracking-widest">Performance Metrics</div>
+            <div class="period-selector" id="main-period-selector">
+                <div class="period-btn active" onclick="changePeriod('24h')">24H</div>
+                <div class="period-btn" onclick="changePeriod('7d')">7D</div>
+                <div class="period-btn" onclick="changePeriod('30d')">30D</div>
+                <div class="period-btn" onclick="changePeriod('1y')">1Y</div>
+            </div>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <div class="glass-card p-5 metric-glow-orange">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Active Providers</span><i class="fas fa-server text-[#D35400]"></i></div>
-            <div class="text-3xl font-bold">{}</div>
+            <div id="stat-providers" class="text-3xl font-bold">{}</div>
           </div>
           <div class="glass-card p-5">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Total Requests</span><i class="fas fa-exchange-alt text-slate-500"></i></div>
-            <div class="text-3xl font-bold">{}</div>
+            <div id="stat-requests" class="text-3xl font-bold">{}</div>
           </div>
           <div class="glass-card p-5 metric-glow-cyan">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Total Tokens</span><i class="fas fa-coins text-cyan-400"></i></div>
-            <div class="text-3xl font-bold">{}</div>
+            <div id="stat-tokens" class="text-3xl font-bold">{}</div>
           </div>
           <div class="glass-card p-5">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Avg Latency</span><i class="fas fa-bolt text-yellow-400"></i></div>
-            <div class="text-3xl font-bold">{}<span class="text-sm font-normal text-slate-500 ml-1">ms</span></div>
+            <div class="text-3xl font-bold"><span id="stat-latency">{}</span><span class="text-sm font-normal text-slate-500 ml-1">ms</span></div>
           </div>
           <div class="glass-card p-5 metric-glow-emerald">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Estimated Spend</span><i class="fas fa-piggy-bank text-emerald-400"></i></div>
-            <div class="text-3xl font-bold">${:.4}</div>
+            <div class="text-3xl font-bold"><span id="stat-spend">{}</span></div>
           </div>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div class="lg:col-span-2 glass-card p-6">
-            <div class="flex items-center justify-between mb-6"><h3 class="font-bold text-slate-300">Token Scavenging Efficiency (24h)</h3></div>
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="font-bold text-slate-300">Token Scavenging Efficiency</h3>
+                <div class="text-[10px] text-slate-500 font-mono" id="traffic-period-label">PAST 24 HOURS</div>
+            </div>
             <div class="h-64"><canvas id="trafficChart"></canvas></div>
           </div>
           <div class="lg:col-span-1 glass-card p-6">
@@ -330,42 +382,111 @@ pub async fn render_dashboard(state: &AppState) -> String {
         </div>
     "##,
         config.providers.iter().filter(|p| p.enabled).count(),
-        request_count,
-        total_tokens,
+        format_number(request_count),
+        format_number(total_tokens),
         avg_latency,
-        estimated_cost,
+        format_currency(estimated_cost),
         provider_rows
     );
 
     let scripts = format!(
         r##"<script>
       Chart.defaults.color = "#64748b"; Chart.defaults.font.family = "Inter";
-      const ctxTraffic = document.getElementById("trafficChart").getContext("2d");
-      const gradientFox = ctxTraffic.createLinearGradient(0, 0, 0, 400);
-      gradientFox.addColorStop(0, "rgba(211, 84, 0, 0.3)"); gradientFox.addColorStop(1, "rgba(211, 84, 0, 0)");
-      const trafficData = {};
-      new Chart(ctxTraffic, {{
-        type: "line",
-        data: {{
-          labels: trafficData.labels || [],
-          datasets: [
-            {{ label: "Scavenged Tokens (Free)", data: trafficData.free_tokens || [], borderColor: "#D35400", backgroundColor: gradientFox, fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3 }},
-            {{ label: "Paid Overflow", data: trafficData.paid_tokens || [], borderColor: "#00F5FF", borderDash: [5, 5], fill: false, tension: 0.4, borderWidth: 1.5, pointRadius: 3 }}
-          ]
-        }},
-        options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ display: true, position: "top", align: "end", labels: {{ boxWidth: 10, usePointStyle: true }} }} }}, scales: {{ y: {{ beginAtZero: true, grid: {{ color: "rgba(255, 255, 255, 0.03)" }} }}, x: {{ grid: {{ display: false }} }} }} }}
-      }});
-      const providerData = {};
-      new Chart(document.getElementById("providerChart").getContext("2d"), {{
-        type: "doughnut",
-        data: {{
-          labels: providerData.labels || [],
-          datasets: [{{ data: providerData.data || [], backgroundColor: ["#D35400", "#E67E22", "#00FF9F", "#00F5FF", "#1e293b"], borderWidth: 0, hoverOffset: 10 }}]
-        }},
-        options: {{ responsive: true, maintainAspectRatio: false, cutout: "70%", plugins: {{ legend: {{ position: "bottom", labels: {{ boxWidth: 8, padding: 20 }} }} }} }}
-      }});
+      let trafficChart, providerChart;
+      
+      const initCharts = (trafficData, providerData) => {{
+          const ctxTraffic = document.getElementById("trafficChart").getContext("2d");
+          const gradientFox = ctxTraffic.createLinearGradient(0, 0, 0, 400);
+          gradientFox.addColorStop(0, "rgba(211, 84, 0, 0.3)"); gradientFox.addColorStop(1, "rgba(211, 84, 0, 0)");
+          
+          trafficChart = new Chart(ctxTraffic, {{
+            type: "line",
+            data: {{
+              labels: trafficData.labels || [],
+              datasets: [
+                {{ label: "Scavenged Tokens (Free)", data: trafficData.free_tokens || [], borderColor: "#D35400", backgroundColor: gradientFox, fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3 }},
+                {{ label: "Paid Overflow", data: trafficData.paid_tokens || [], borderColor: "#00F5FF", borderDash: [5, 5], fill: false, tension: 0.4, borderWidth: 1.5, pointRadius: 3 }}
+              ]
+            }},
+            options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ display: true, position: "top", align: "end", labels: {{ boxWidth: 10, usePointStyle: true }} }} }}, scales: {{ y: {{ beginAtZero: true, grid: {{ color: "rgba(255, 255, 255, 0.03)" }} }}, x: {{ grid: {{ display: false }} }} }} }}
+          }});
+          
+          providerChart = new Chart(document.getElementById("providerChart").getContext("2d"), {{
+            type: "doughnut",
+            data: {{
+              labels: providerData.labels || [],
+              datasets: [{{ data: providerData.data || [], backgroundColor: ["#D35400", "#E67E22", "#00FF9F", "#00F5FF", "#1e293b"], borderWidth: 0, hoverOffset: 10 }}]
+            }},
+            options: {{ responsive: true, maintainAspectRatio: false, cutout: "70%", plugins: {{ legend: {{ position: "bottom", labels: {{ boxWidth: 8, padding: 20 }} }} }} }}
+          }});
+      }};
+
+      let currentAnalyticsPeriod = "24h";
+      let analyticsRefreshInFlight = false;
+
+      function updatePeriodControls(period) {{
+          document.querySelectorAll('#main-period-selector .period-btn').forEach(btn => {{
+              btn.classList.toggle('active', btn.innerText.toLowerCase() === period.toLowerCase());
+          }});
+          document.getElementById('traffic-period-label').innerText = 'PAST ' + (period === '24h' ? '24 HOURS' : period === '7d' ? '7 DAYS' : period === '30d' ? 'MONTH' : 'YEAR');
+      }}
+
+      async function refreshDashboardAnalytics(period = currentAnalyticsPeriod) {{
+          if (analyticsRefreshInFlight || document.hidden) return;
+          analyticsRefreshInFlight = true;
+          try {{
+              const [traffic, dist, summary, metrics] = await Promise.all([
+                  fetch(`/admin/analytics/traffic?period=${{period}}`).then(r => r.json()),
+                  fetch(`/admin/analytics/distribution?period=${{period}}`).then(r => r.json()),
+                  fetch(`/admin/analytics/summary?period=${{period}}`).then(r => r.json()),
+                  fetch(`/admin/analytics/metrics?period=${{period}}`).then(r => r.json())
+              ]);
+
+              trafficChart.data.labels = traffic.labels || [];
+              trafficChart.data.datasets[0].data = traffic.free_tokens || [];
+              trafficChart.data.datasets[1].data = traffic.paid_tokens || [];
+              trafficChart.update();
+
+              providerChart.data.labels = dist.labels || [];
+              providerChart.data.datasets[0].data = dist.data || [];
+              providerChart.update();
+
+              let totalTokens = 0, totalCost = 0;
+              (summary.series || []).forEach(s => {{
+                  totalTokens += (s.input_tokens || 0) + (s.output_tokens || 0);
+                  totalCost += s.estimated_cost_usd || 0;
+              }});
+
+              document.getElementById('stat-requests').innerText = (metrics.request_count || 0).toLocaleString();
+              document.getElementById('stat-tokens').innerText = totalTokens.toLocaleString();
+              document.getElementById('stat-latency').innerText = metrics.avg_latency || 0;
+              document.getElementById('stat-spend').innerText = new Intl.NumberFormat('en-US', {{ style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }}).format(totalCost);
+          }} catch (error) {{
+              console.warn("Dashboard analytics refresh failed", error);
+          }} finally {{
+              analyticsRefreshInFlight = false;
+          }}
+      }}
+
+      async function changePeriod(period) {{
+          currentAnalyticsPeriod = period;
+          updatePeriodControls(period);
+          await refreshDashboardAnalytics(period);
+      }}
+
+      initCharts({}, {});
+      setInterval(() => refreshDashboardAnalytics(), 30000);
+      
       const es=new EventSource('/admin/logs/stream');
-      es.onmessage=(e)=>{{ const el=document.getElementById('logs'); const line=document.createElement('div'); line.className="mb-1"; line.textContent=e.data; el.appendChild(line); el.scrollTop=el.scrollHeight; }};
+      es.onmessage=(e)=>{{ 
+          const el=document.getElementById('logs'); 
+          const line=document.createElement('div'); 
+          line.className="mb-1"; 
+          line.textContent=e.data; 
+          el.appendChild(line); 
+          el.scrollTop=el.scrollHeight; 
+          if (el.childNodes.length > 100) el.removeChild(el.firstChild);
+      }};
     </script>"##,
         serde_json::to_string(&hourly_traffic).unwrap_or("{}".into()),
         serde_json::to_string(&provider_dist).unwrap_or("{}".into())
@@ -394,10 +515,44 @@ pub async fn render_providers(state: &AppState) -> String {
     }
     let content = format!(
         r#"
+        <div class="glass-card p-6 mb-6">
+            <div class="flex items-center justify-between gap-4 mb-4">
+                <h3 class="font-bold">Add Provider</h3>
+                <span class="text-xs text-slate-500">Paid fallback obeys routing policy</span>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-[180px_1fr_1fr_auto_auto] gap-3 items-end">
+                <label class="block">
+                    <span class="block text-xs text-slate-500 mb-1">Provider</span>
+                    <select id="new-provider-id" onchange="syncProviderDefaults()">
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="xai">xAI (Grok)</option>
+                        <option value="groq">Groq</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="google">Google</option>
+                        <option value="cerebras">Cerebras</option>
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="block text-xs text-slate-500 mb-1">API Key</span>
+                    <input id="new-provider-key" type="password" autocomplete="off" placeholder="sk-...">
+                </label>
+                <label class="block">
+                    <span class="block text-xs text-slate-500 mb-1">Base URL</span>
+                    <input id="new-provider-base-url" type="url" placeholder="Default">
+                </label>
+                <label class="flex items-center gap-2 min-h-[38px] text-sm text-slate-300">
+                    <input id="new-provider-free-only" type="checkbox">
+                    <span>Free only</span>
+                </label>
+                <button class="btn min-h-[38px]" onclick="addProvider()">Add</button>
+            </div>
+        </div>
         <div class="glass-card overflow-hidden">
             <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
                 <h3 class="font-bold">Configured Providers</h3>
-                <button class="btn" onclick="refreshDiscovery()">Refresh Discovery</button>
+                <button id="refresh-discovery-btn" class="btn flex items-center justify-center min-w-[140px]" onclick="refreshDiscovery()">
+                    <span class="btn-text">Refresh Discovery</span>
+                </button>
             </div>
             <div class="p-0 overflow-x-auto">
                 <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>ID</th><th>Health</th><th>Status</th><th>Actions</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
@@ -406,9 +561,41 @@ pub async fn render_providers(state: &AppState) -> String {
         rows
     );
     let scripts = r#"<script>
+    function syncProviderDefaults() {
+        const id = document.getElementById('new-provider-id').value;
+        const freeOnly = document.getElementById('new-provider-free-only');
+        const baseUrl = document.getElementById('new-provider-base-url');
+        freeOnly.checked = !(id === 'deepseek' || id === 'xai');
+        baseUrl.placeholder = id === 'deepseek' ? 'https://api.deepseek.com' : id === 'xai' ? 'https://api.x.ai/v1' : 'Default';
+    }
+    async function addProvider() {
+        const id = document.getElementById('new-provider-id').value;
+        const apiKey = document.getElementById('new-provider-key').value.trim();
+        const baseUrl = document.getElementById('new-provider-base-url').value.trim();
+        const freeOnly = document.getElementById('new-provider-free-only').checked;
+        if (!apiKey) { showModal('Error', 'API key is required', true); return; }
+        const provider = { id, enabled: true, api_key: apiKey, free_only: freeOnly };
+        if (baseUrl) provider.base_url = baseUrl;
+        const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({providers:[provider]})});
+        if (r.ok) location.reload(); else showModal('Error', 'Provider add failed', true);
+    }
     async function toggleProvider(id, enabled) { const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({providers:[{id, enabled}]})}); if (r.ok) location.reload(); else showModal('Error', 'Provider update failed', true); }
     async function testProvider(id) { const r = await fetch('/admin/providers/'+encodeURIComponent(id)+'/test', {method:'POST'}); const data = await r.json(); showModal('Test Result', data, data.status === 'error'); }
-    async function refreshDiscovery() { const r = await fetch('/admin/providers/discovery/refresh', {method:'POST'}); if (r.ok) location.reload(); else showModal('Error', 'Discovery refresh failed', true); }
+    async function refreshDiscovery() { 
+        const btn = document.getElementById('refresh-discovery-btn');
+        if (!btn) return;
+        btn.classList.add('btn-loading');
+        try {
+            const r = await fetch('/admin/providers/discovery/refresh', {method:'POST'}); 
+            if (r.ok) location.reload(); 
+            else showModal('Error', 'Discovery refresh failed', true); 
+        } catch (e) {
+            showModal('Error', 'Network error', true);
+        } finally {
+            btn.classList.remove('btn-loading');
+        }
+    }
+    syncProviderDefaults();
     </script>"#;
     render_shell("Providers", "providers", &content, scripts, state)
 }
@@ -431,7 +618,7 @@ pub async fn render_models(state: &AppState) -> String {
             <div class="p-0 overflow-x-auto min-h-[300px]">
                 <table class="w-full text-left">
                     <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
-                        <tr><th>Model ID</th><th>Provider</th><th>Status</th><th>Actions</th></tr>
+                        <tr><th>Model ID</th><th>Provider</th><th>Status</th><th>Priority</th><th>Actions</th></tr>
                     </thead>
                     <tbody id="modelsTableBody" class="divide-y divide-white/5"></tbody>
                 </table>
@@ -481,10 +668,11 @@ pub async fn render_models(state: &AppState) -> String {
                 const next_enabled = !enabled;
                 const button_label = enabled ? "Disable" : "Enable";
                 const button_class = enabled ? "btn-danger" : "btn";
+                const prio = m.priority || 100;
                 const status_html = enabled 
                     ? `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Enabled</span>`
                     : `<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Disabled</span>`;
-                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}</td><td class="text-sm">${{p}}</td><td>${{status_html}}</td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
+                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}</td><td class="text-sm">${{p}}</td><td>${{status_html}}</td><td><input type="number" value="${{prio}}" class="w-16 bg-black/20 border border-white/10 rounded px-2 py-0.5 text-xs text-center" onchange="updateModelPriority('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}', this.value)"></td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
             }});
         }}
         document.getElementById('modelsTableBody').innerHTML = html;
@@ -495,6 +683,7 @@ pub async fn render_models(state: &AppState) -> String {
     function nextPage() {{ const search = document.getElementById('modelSearch').value.toLowerCase(); const prov = document.getElementById('providerFilter').value; const totalPages = Math.ceil(modelsArr.filter(m => (m.upstream_model_id || '').toLowerCase().includes(search) && (prov ? m.provider_id === prov : true)).length / pageSize); if (currentPage < totalPages) {{ currentPage++; renderTable(); }} }}
 
     async function toggleModel(provider_id, model_id, enabled) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, enabled}}]}})}}); if (r.ok) location.reload(); else showModal('Error', 'Model update failed', true); }}
+    async function updateModelPriority(provider_id, model_id, priority) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, priority: parseInt(priority)}}]}})}}); if (r.ok) location.reload(); else showModal('Error', 'Priority update failed', true); }}
     
     renderTable();
     </script>"#,
@@ -579,7 +768,7 @@ pub async fn render_routing(state: &AppState) -> String {
 
 /// Render the usage view.
 pub async fn render_usage(state: &AppState) -> String {
-    let series = crate::usage::aggregation::get_usage_series(state).await;
+    let series = crate::usage::aggregation::get_usage_series(state, "24h").await;
     let rows = match series.get("series").and_then(|s| s.as_array()) {
         Some(arr) => arr.iter().map(|entry| {
             let p = entry.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
@@ -645,6 +834,9 @@ pub async fn render_config(state: &AppState) -> String {
         .fetch_all(&state.db).await.unwrap_or_default().into_iter()
         .map(|(id, created_at, source)| format!(r#"<tr><td class="font-mono text-cyan-400">{}</td><td class="text-sm">{}</td><td class="text-sm">{}</td><td><button class="btn" style="background:#334155;" onclick="rollback({})">Rollback</button></td></tr>"#, id, created_at, source, id))
         .collect::<Vec<_>>().join("\n");
+
+    let models = crate::discovery::merge::get_all_models(state).await;
+    let models_json = serde_json::to_string(&models).unwrap_or("{}".into());
     let content = format!(
         r#"
         <div class="grid gap-6">
@@ -658,11 +850,41 @@ pub async fn render_config(state: &AppState) -> String {
                 </div>
             </div>
             <div class="glass-card p-6">
-                <h3 class="font-bold mb-4">Alias Editor</h3>
-                <div class="flex gap-4">
-                    <input id="alias" placeholder="alias" aria-label="Alias" class="w-1/3">
-                    <input id="target" placeholder="target model" aria-label="Target model" class="flex-1">
-                    <button class="btn" onclick="saveAlias()">Save Alias</button>
+                <h3 class="font-bold mb-4 text-emerald-400">Alias Editor</h3>
+                <div class="flex flex-col gap-4">
+                    <div class="flex gap-4">
+                        <input id="alias" placeholder="alias (e.g. 'gpt-4')" aria-label="Alias" class="w-1/3">
+                        <div class="flex-1 relative">
+                            <div id="target-tags" class="flex flex-wrap gap-2 p-2 min-h-[42px] bg-black/20 border border-white/10 rounded items-center">
+                                <input id="target-search" placeholder="Search and add models..." class="flex-1 bg-transparent border-0 p-0 focus:ring-0 text-sm min-w-[150px]">
+                            </div>
+                            <div id="target-dropdown" class="absolute left-0 right-0 top-full mt-1 dropdown-opaque border border-white/10 rounded-md shadow-xl z-50 max-h-60 overflow-y-auto hidden">
+                                <!-- Dropdown items -->
+                            </div>
+                        </div>
+                        <button id="save-alias-btn" class="btn h-[42px] flex items-center justify-center min-w-[120px]" onclick="saveAlias()">
+                            <span class="btn-text">Save Alias</span>
+                        </button>
+                        <button id="cancel-edit-btn" class="btn h-[42px] hidden" style="background:#334155;" onclick="cancelEdit()">Cancel</button>
+                    </div>
+                    <p class="text-[10px] text-slate-500">Aliases can map to multiple models. TokenScavenger will try them in order if the first one fails or is unhealthy.</p>
+                </div>
+            </div>
+
+            <!-- Alias Management List -->
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+                    <h3 class="font-bold text-sm">Configured Aliases</h3>
+                </div>
+                <div class="p-0 overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
+                            <tr><th>Alias Name</th><th>Target Models</th><th class="text-right px-6">Actions</th></tr>
+                        </thead>
+                        <tbody id="alias-list-body" class="divide-y divide-white/5">
+                            <tr><td colspan="3" class="text-center text-slate-500 py-8">Loading aliases...</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
             <div class="glass-card overflow-hidden">
@@ -674,19 +896,192 @@ pub async fn render_config(state: &AppState) -> String {
         </div>"#,
         snapshots
     );
-    let scripts = r#"<script>
-    async function saveAlias() { const alias=document.getElementById('alias').value.trim(); const target=document.getElementById('target').value.trim(); if (!alias || !target) return showModal('Error', 'Alias and target are required', true); const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({aliases:[{alias, target, enabled:true}]})}); if (r.ok) { showModal('Success', 'Alias saved successfully', false); setTimeout(()=>location.reload(), 1500); } else showModal('Error', 'Failed to save alias', true); }
-    async function rollback(snapshot_id) { const r = await fetch('/admin/config/rollback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({snapshot_id})}); if (r.ok) location.reload(); else showModal('Error', 'Rollback failed', true); }
-    async function saveConfig() { try { const cfg = JSON.parse(document.getElementById('raw-config').value); const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)}); if (r.ok) { showModal('Success', 'Configuration deployed successfully', false); setTimeout(()=>location.reload(), 1500); } else { const err = await r.json(); showModal('Validation Error', err, true); } } catch(e) { showModal('Parse Error', 'Invalid JSON', true); } }
+
+    let scripts = format!(
+        r#"<script>
+    const modelsPayload = {};
+    const allModels = modelsPayload.models || [];
+    let selectedModels = [];
+
+    const searchInput = document.getElementById('target-search');
+    const dropdown = document.getElementById('target-dropdown');
+    const tagsContainer = document.getElementById('target-tags');
+
+    function renderTags() {{
+        const existingTags = tagsContainer.querySelectorAll('.model-tag');
+        existingTags.forEach(t => t.remove());
+        selectedModels.forEach(m => {{
+            const tag = document.createElement('span');
+            tag.className = 'model-tag px-2 py-1 bg-cyan-500/10 text-cyan-400 text-xs rounded border border-cyan-500/20 flex items-center gap-2';
+            tag.innerHTML = `${{m}} <i class="fas fa-times cursor-pointer hover:text-white" onclick="removeModel('${{m}}')"></i>`;
+            tagsContainer.insertBefore(tag, searchInput);
+        }});
+    }}
+
+    function removeModel(m) {{
+        selectedModels = selectedModels.filter(x => x !== m);
+        renderTags();
+    }}
+
+    function addModel(m) {{
+        if (!selectedModels.includes(m)) {{
+            selectedModels.push(m);
+            renderTags();
+        }}
+        searchInput.value = '';
+        dropdown.classList.add('hidden');
+    }}
+
+    function cancelEdit() {{
+        document.getElementById('alias').value = '';
+        document.getElementById('alias').disabled = false;
+        selectedModels = [];
+        renderTags();
+        document.getElementById('save-alias-btn').querySelector('.btn-text').innerText = 'Save Alias';
+        document.getElementById('cancel-edit-btn').classList.add('hidden');
+    }}
+
+    function editAlias(alias, targets) {{
+        document.getElementById('alias').value = alias;
+        document.getElementById('alias').disabled = true;
+        selectedModels = [...targets];
+        renderTags();
+        document.getElementById('save-alias-btn').querySelector('.btn-text').innerText = 'Update Alias';
+        document.getElementById('cancel-edit-btn').classList.remove('hidden');
+        document.getElementById('alias').scrollIntoView({{ behavior: 'smooth' }});
+    }}
+
+    searchInput.onfocus = () => showDropdown(searchInput.value);
+    searchInput.oninput = (e) => showDropdown(e.target.value);
     
-    // Load config
-    fetch('/admin/config').then(r=>r.json()).then(d => {
+    document.addEventListener('click', (e) => {{
+        if (!tagsContainer.contains(e.target) && !dropdown.contains(e.target)) {{
+            dropdown.classList.add('hidden');
+        }}
+    }});
+
+    function showDropdown(query) {{
+        const q = query.toLowerCase();
+        const filtered = allModels.filter(m => 
+            !selectedModels.includes(m.upstream_model_id) && 
+            (m.upstream_model_id.toLowerCase().includes(q) || m.provider_id.toLowerCase().includes(q))
+        ).slice(0, 50);
+
+        if (filtered.length === 0) {{
+            dropdown.classList.add('hidden');
+            return;
+        }}
+
+        dropdown.innerHTML = filtered.map(m => `
+            <div class="px-4 py-2 hover:bg-white/5 cursor-pointer flex justify-between items-center group" onclick="addModel('${{m.upstream_model_id}}')">
+                <span class="text-sm text-slate-200">${{m.upstream_model_id}}</span>
+                <span class="text-[10px] text-slate-500 group-hover:text-cyan-400">${{m.provider_id}}</span>
+            </div>
+        `).join('');
+        dropdown.classList.remove('hidden');
+    }}
+
+    async function loadAliases() {{
+        const body = document.getElementById('alias-list-body');
+        try {{
+            const resp = await fetch('/admin/aliases');
+            if (!resp.ok) throw new Error('Failed to load');
+            const aliases = await resp.json();
+            
+            if (aliases.length === 0) {{
+                body.innerHTML = '<tr><td colspan="3" class="text-center text-slate-500 py-8">No aliases configured.</td></tr>';
+                return;
+            }}
+
+            body.innerHTML = aliases.map(a => {{
+                const targets = Array.isArray(a.target) ? a.target : [a.target];
+                const targetsJson = JSON.stringify(targets).replace(/"/g, '&quot;');
+                return `
+                <tr>
+                    <td class="px-6 py-4 font-mono text-cyan-400">${{a.alias}}</td>
+                    <td class="px-6 py-4">
+                        <div class="flex flex-wrap gap-1">
+                            ${{targets.map(t => `<span class="text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/10">${{t}}</span>`).join('')}}
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                        <div class="flex justify-end gap-2">
+                            <button onclick="editAlias('${{a.alias.replace(/'/g, "\\'")}}', ${{targetsJson}})" class="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors" title="Edit">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button onclick="deleteAlias('${{a.alias.replace(/'/g, "\\'")}}')" class="p-2 text-red-400 hover:bg-red-400/10 rounded transition-colors" title="Delete">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `}}).join('');
+        }} catch (e) {{
+            body.innerHTML = '<tr><td colspan="3" class="text-center text-red-400 py-8">Error loading aliases.</td></tr>';
+        }}
+    }}
+
+    async function deleteAlias(name) {{
+        showConfirm('Delete Alias', `Are you sure you want to delete alias "${{name}}"? This action cannot be undone.`, async () => {{
+            try {{
+                const resp = await fetch(`/admin/aliases/${{encodeURIComponent(name)}}`, {{ method: 'DELETE' }});
+                if (resp.ok) {{
+                    loadAliases();
+                }} else {{
+                    showModal('Error', 'Failed to delete alias', true);
+                }}
+            }} catch (e) {{
+                console.error(e);
+            }}
+        }});
+    }}
+
+    async function saveAlias() {{ 
+        const alias=document.getElementById('alias').value.trim(); 
+        const btn = document.getElementById('save-alias-btn');
+        if (!alias || selectedModels.length === 0) return showModal('Error', 'Alias and at least one target model are required', true); 
+        
+        btn.classList.add('btn-loading');
+        try {{
+            const r = await fetch('/admin/config', {{
+                method:'PUT', 
+                headers:{{'Content-Type':'application/json'}}, 
+                body:JSON.stringify({{
+                    aliases:[{{
+                        alias, 
+                        target: selectedModels.length === 1 ? selectedModels[0] : selectedModels, 
+                        enabled:true
+                    }}]
+                }})
+            }}); 
+            
+            if (r.ok) {{ 
+                cancelEdit();
+                loadAliases();
+                showModal('Success', 'Alias saved successfully', false); 
+            }} else {{
+                showModal('Error', 'Failed to save alias', true); 
+            }}
+        }} catch (e) {{
+            showModal('Error', 'Network error', true);
+        }} finally {{
+            btn.classList.remove('btn-loading');
+        }}
+    }}
+    async function rollback(snapshot_id) {{ const r = await fetch('/admin/config/rollback', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{snapshot_id}})}}); if (r.ok) location.reload(); else showModal('Error', 'Rollback failed', true); }}
+    async function saveConfig() {{ try {{ const cfg = JSON.parse(document.getElementById('raw-config').value); const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(cfg)}}); if (r.ok) {{ showModal('Success', 'Configuration deployed successfully', false); setTimeout(()=>location.reload(), 1500); }} else {{ const err = await r.json(); showModal('Validation Error', err, true); }} }} catch(e) {{ showModal('Parse Error', 'Invalid JSON', true); }} }}
+    
+    // Load initial data
+    loadAliases();
+    fetch('/admin/config').then(r=>r.json()).then(d => {{
         document.getElementById('raw-config').value = JSON.stringify(d, null, 2);
-    }).catch(() => {
+    }}).catch(() => {{
         document.getElementById('raw-config').value = "Failed to load config.";
-    });
-    </script>"#;
-    render_config_html(&content, scripts, state)
+    }});
+    </script>"#,
+        models_json
+    );
+    render_config_html(&content, &scripts, state)
 }
 
 fn render_config_html(content: &str, scripts: &str, state: &AppState) -> String {
