@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       bump_type:
-        description: "Version bump type"
+        description: "Version selection"
         required: true
         type: choice
-        default: patch
+        default: current
         options:
+          - current
           - patch
           - minor
           - major
@@ -19,7 +20,7 @@ concurrency:
 
 jobs:
   prepare:
-    name: Bump version & tag
+    name: Select version & tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -35,26 +36,31 @@ jobs:
       - name: Install cargo-edit
         run: cargo install cargo-edit
 
-      - name: Bump version
+      - name: Select release version
         id: bump
         run: |
-          cargo set-version --bump ${{ github.event.inputs.bump_type }}
+          if [ "${{ github.event.inputs.bump_type }}" != "current" ]; then
+            cargo set-version --bump ${{ github.event.inputs.bump_type }}
+          fi
+
           NEW_VER=$(cargo metadata --format-version=1 --no-deps 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")
           echo "new_version=$NEW_VER" >> "$GITHUB_OUTPUT"
-          echo "Bumped to v$NEW_VER"
+          echo "Preparing release v$NEW_VER"
 
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add Cargo.toml Cargo.lock 2>/dev/null || git add Cargo.toml
-          git commit -m "chore: bump version to v$NEW_VER" || echo "Nothing to commit"
+          if [ "${{ github.event.inputs.bump_type }}" != "current" ]; then
+            git add Cargo.toml Cargo.lock 2>/dev/null || git add Cargo.toml
+            git commit -m "chore: bump version to v$NEW_VER" || echo "Nothing to commit"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
 
           if git rev-parse "v$NEW_VER" >/dev/null 2>&1; then
             echo "Tag v$NEW_VER already exists — aborting"
             exit 1
           fi
           git tag "v$NEW_VER"
-          git push origin HEAD:${{ github.ref_name }}
           git push origin "v$NEW_VER"
 
   build:

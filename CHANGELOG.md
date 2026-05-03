@@ -5,43 +5,54 @@ All notable changes to TokenScavenger will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-04-28
+## [Unreleased]
 
 ### Added
 
-- **Core proxy engine**: OpenAI-compatible HTTP API with Axum + Tokio
-- **12 provider adapters**: Groq, Google Gemini, OpenRouter, Cloudflare, Cerebras, NVIDIA NIM, Cohere, Mistral AI, GitHub Models, HuggingFace, Zhipu AI, SiliconFlow
-- **Free-tier routing**: Automatic provider fallback with configurable ordering
-- **SSE streaming**: Full OpenAI-compatible streaming chat completions
-- **Circuit breakers**: Per-provider failure tracking with automatic recovery
-- **Health monitoring**: Real-time provider health scoring
-- **Retry logic**: Exponential backoff with jitter
-- **Model discovery**: Dynamic model list fetching from provider endpoints
-- **Curated catalog**: 15+ pre-configured free-tier models
-- **Model aliases**: Configurable shorthand names for routing
-- **Usage accounting**: Token tracking and cost estimation
-- **Prometheus metrics**: Request counts, latency histograms, token usage, health states
-- **Structured logging**: JSON-formatted logs with correlation IDs
-- **Secret redaction**: Automatic masking of API keys in logs and UI
-- **SQLite persistence**: WAL mode, 9-table schema with indexes
-- **Database migrations**: Automatic schema upgrades on startup
-- **Web UI**: 9-view operator dashboard (Dashboard, Providers, Models, Routing, Usage, Health, Logs, Config, Audit)
-- **API auth**: Optional Bearer token authentication
-- **CORS support**: Configurable cross-origin access
-- **CLI interface**: `-c` for config path, `-d` for database override
-- **Graceful shutdown**: Connection draining with configurable timeout
-- **30 tests**: 18 unit + 12 integration tests, all passing
+### Changed
 
-### Configuration
+### Fixed
 
-- TOML-based configuration with `${ENV_VAR}` expansion
-- Full schema: server, database, logging, metrics, routing, resilience, providers, aliases
+## [0.1.0] - 2026-05-03
 
-### Documentation
+### Added
 
-- README with quick start, architecture overview, SDK examples
-- Getting started guide with step-by-step walkthrough
-- Configuration reference with all fields documented
-- Provider support matrix with 12 providers detailed
-- Deployment guide for Docker, systemd, reverse proxy, monitoring
-- Contributing guide and code of conduct
+- OpenAI-compatible API surface for `POST /v1/chat/completions`, streaming chat completions, `POST /v1/embeddings`, and `GET /v1/models`.
+- Health, readiness, metrics, admin, and embedded operator UI routes.
+- Single-binary Axum/Tokio runtime backed by SQLite with WAL mode, migrations, usage accounting, health events, audit entries, and retention-ready timestamps.
+- Provider adapter framework with shared OpenAI-compatible helpers, provider capabilities, auth handling, model discovery, response normalization, rate-limit classification, and streaming support.
+- Fourteen built-in provider integrations: Groq, Google Gemini, OpenRouter, Cloudflare Workers AI, Cerebras, NVIDIA NIM, Cohere, Mistral AI, GitHub Models, HuggingFace, ZAI/Zhipu AI, SiliconFlow, DeepSeek, and xAI/Grok.
+- Free-first routing with configurable provider order, model aliases, model enablement, model priority, health filtering, circuit breakers, retry/backoff behavior, and explicit paid fallback policy.
+- OpenAI-style error responses with upstream rate-limit exhaustion surfaced as `429 rate_limit_exceeded` or `quota_exhausted`, and non-rate-limit route exhaustion surfaced as `503 route_exhausted`.
+- Runtime config hot reload through the admin API and web UI, including server, routing, resilience, provider, model, and alias changes.
+- Runtime overrides persisted to a sidecar `.overrides.toml` file and merged back on startup.
+- First-run guided setup wizard and interactive `tokenscavenger config` editor.
+- `tokenscavenger service install` and `tokenscavenger service uninstall` commands for macOS LaunchAgent installation/removal and Linux systemd command generation.
+- Embedded operator UI with dashboard, providers, models, routing, usage, analytics, health, logs, config, and audit views.
+- Dashboard analytics auto-refresh and a provider management flow for adding and testing providers from the UI.
+- Prometheus metrics, structured request-path logging, live log streaming, request IDs, and secret redaction in logs/UI/API responses.
+- Release workflow for GitHub Actions with Linux, macOS ARM64, and Windows binaries plus SHA256 checksums.
+- CI workflow with formatting, clippy, build, tests, integration tests, benchmark smoke, and cross-build checks.
+- Documentation set covering getting started, configuration, API behavior, provider matrix, deployment, contributing, roadmap, pull request template, changelog, and the marketing website in `docs/`.
+
+### Changed
+
+- Moved long-form project documentation from the marketing `docs/` site into the repository `documentation/` folder.
+- Expanded project positioning from free-tier-only routing to free-first routing with explicit opt-in paid fallback.
+- Updated provider catalog, setup wizard, README, provider matrix, and marketing site to reflect the direct DeepSeek and xAI/Grok paid fallback integrations.
+- Updated route-plan explanations to include resolved aliases, paid fallback eligibility, model enablement, health, breaker state, and filtering reasons.
+- Updated usage accounting to distinguish free-tier and paid fallback provider attempts.
+- Updated the release workflow to support creating a release from the current `Cargo.toml` version as well as patch/minor/major bumps.
+- Updated README and CONTRIBUTING links to point at `documentation/` and `ROADMAP.md`.
+
+### Fixed
+
+- Returned OpenAI-compatible `429` responses when all exhausted routes failed because of upstream rate limits or quota exhaustion.
+- Preserved `Retry-After` hints when upstream providers expose reliable rate-limit reset metadata.
+- Enforced the invariant that providers marked `free_only = false` are not routed unless `[routing].allow_paid_fallback = true`.
+- Prevented disabled providers and disabled models from being selected during routing.
+- Improved route exhaustion accounting so failed requests record the appropriate status and HTTP status.
+- Fixed the marketing website preview route so `pnpm run preview` serves the site instead of returning `Cannot GET //`.
+- Added dashboard analytics auto-refresh so operators do not need to manually reload the UI.
+- Added a scroll-to-top control on the marketing website for easier navigation.
+- Removed stale public-facing placeholders from contributor documentation.

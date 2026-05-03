@@ -282,13 +282,14 @@ New releases are created from the GitHub Actions workflow dispatch menu:
 
 1. Navigate to **Actions → Release** in the GitHub repository
 2. Click **Run workflow**
-3. Choose the version bump type: `patch` (1.0.0 → 1.0.1), `minor` (1.0.0 → 1.1.0),
-   or `major` (1.0.0 → 2.0.0)
+3. Choose `current` to release the version already in `Cargo.toml`, or choose
+   `patch` (1.0.0 → 1.0.1), `minor` (1.0.0 → 1.1.0), or `major` (1.0.0 → 2.0.0)
+   to bump before releasing.
 4. Click **Run workflow**
 
 The workflow:
 
-- Bumps the version in `Cargo.toml` and creates a git tag (`vX.Y.Z`)
+- Uses the current `Cargo.toml` version or bumps it, then creates a git tag (`vX.Y.Z`)
 - Cross-compiles binaries for Linux (x86_64), macOS (ARM64), and Windows (x86_64)
 - Creates a GitHub release with all binaries and checksums attached
 - Generates release notes from commit history
