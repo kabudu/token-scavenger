@@ -1,3 +1,4 @@
+use crate::cli::setup::{default_free_only_for_provider, provider_id_from_label};
 use crate::config::loader::load_config;
 use crate::config::schema::{Config, ProviderConfig};
 use dialoguer::{Confirm, Input, Password, Select};
@@ -277,9 +278,38 @@ fn add_provider(config: &mut Config) -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("  New Provider");
 
-    let id: String = Input::new()
-        .with_prompt("  Provider ID (e.g. groq, google, openrouter, deepseek, xai)")
-        .interact_text()?;
+    let available_providers = vec![
+        "groq",
+        "google (Gemini)",
+        "openrouter",
+        "cerebras",
+        "mistral",
+        "nvidia (NIM)",
+        "cloudflare (Workers AI)",
+        "huggingface (Inference API)",
+        "cohere",
+        "github (Models)",
+        "zhipu (ZAI)",
+        "siliconflow",
+        "deepseek",
+        "xai (Grok)",
+        "Custom (enter any ID)",
+    ];
+
+    let choice = Select::new()
+        .with_prompt("  Provider")
+        .items(&available_providers)
+        .default(0)
+        .interact()?;
+
+    let id: String = if choice == available_providers.len() - 1 {
+        // "Custom" entry
+        Input::new()
+            .with_prompt("  Provider ID")
+            .interact_text()?
+    } else {
+        provider_id_from_label(available_providers[choice]).to_string()
+    };
 
     let api_key: String = Password::new()
         .with_prompt("  API key")
@@ -288,7 +318,7 @@ fn add_provider(config: &mut Config) -> Result<(), Box<dyn std::error::Error>> {
 
     let free_only = Confirm::new()
         .with_prompt("  Use only free-tier endpoints?")
-        .default(!matches!(id.as_str(), "deepseek" | "xai" | "grok"))
+        .default(default_free_only_for_provider(&id))
         .interact()?;
 
     let custom_url = Confirm::new()

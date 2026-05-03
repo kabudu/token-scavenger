@@ -254,7 +254,7 @@ pub fn has_existing_config() -> bool {
     crate::cli::find_existing_config().is_some()
 }
 
-fn provider_id_from_label(label: &str) -> &str {
+pub(crate) fn provider_id_from_label(label: &str) -> &str {
     match label {
         "google (Gemini)" => "google",
         "nvidia (NIM)" => "nvidia",
@@ -267,7 +267,7 @@ fn provider_id_from_label(label: &str) -> &str {
     }
 }
 
-fn default_free_only_for_provider(provider_id: &str) -> bool {
+pub(crate) fn default_free_only_for_provider(provider_id: &str) -> bool {
     !matches!(provider_id, "deepseek" | "xai")
 }
 

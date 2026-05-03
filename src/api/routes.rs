@@ -489,8 +489,14 @@ pub async fn admin_config_save(
         for provider_update in providers {
             if let Some(id) = provider_update.get("id").and_then(|v| v.as_str()) {
                 let enabled = provider_update.get("enabled");
-                let api_key = provider_update.get("api_key").and_then(|v| v.as_str());
-                let base_url = provider_update.get("base_url").and_then(|v| v.as_str());
+                let api_key = provider_update
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
+                let base_url = provider_update
+                    .get("base_url")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
                 let free_only = provider_update.get("free_only").and_then(|v| v.as_bool());
                 let is_removal = provider_update
                     .get("remove")
