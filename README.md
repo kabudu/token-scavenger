@@ -182,13 +182,15 @@ src/
 
 ## CLI Commands
 
-The `tokenscavenger` binary provides three modes of operation:
+The `tokenscavenger` binary provides server, setup, configuration, and service-management modes:
 
-| Command                    | Description                                                                             |
-| -------------------------- | --------------------------------------------------------------------------------------- |
-| `tokenscavenger` (no args) | Starts the server. On first run, prompts to run the setup wizard if no config is found. |
-| `tokenscavenger setup`     | Run the interactive first-time setup wizard.                                            |
-| `tokenscavenger config`    | Edit an existing configuration file interactively.                                      |
+| Command                                | Description                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `tokenscavenger` (no args)             | Starts the server. On first run, prompts to run the setup wizard if no config is found. |
+| `tokenscavenger setup`                 | Run the interactive first-time setup wizard.                                            |
+| `tokenscavenger config`                | Edit an existing configuration file interactively.                                      |
+| `tokenscavenger service install`       | Install TokenScavenger as a background service on supported platforms.                  |
+| `tokenscavenger service uninstall`     | Remove the installed background service on supported platforms.                         |
 
 ### `tokenscavenger setup`
 
@@ -201,6 +203,33 @@ the resulting config at `~/.config/tokenscavenger/tokenscavenger.toml`.
 Loads an existing configuration file and presents an interactive menu where you
 can edit each section: server settings, database, routing, resilience, and
 providers. Changes are saved back to the file.
+
+### `tokenscavenger service install`
+
+Installs TokenScavenger as a background service after a config file exists. Run
+`tokenscavenger setup` first if this is a fresh machine.
+
+On macOS, this creates and loads:
+
+```text
+~/Library/LaunchAgents/com.tokenscavenger.server.plist
+```
+
+On Linux, this prints the `systemd` commands needed to create, enable, and start
+`/etc/systemd/system/tokenscavenger.service` with `sudo`.
+
+```bash
+tokenscavenger service install
+```
+
+### `tokenscavenger service uninstall`
+
+Removes the macOS LaunchAgent when running on macOS. On Linux, it prints the
+`systemd` commands needed to stop, disable, remove, and reload the service.
+
+```bash
+tokenscavenger service uninstall
+```
 
 Config search order:
 
