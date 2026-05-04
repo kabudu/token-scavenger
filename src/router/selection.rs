@@ -113,7 +113,8 @@ pub fn filter_by_paid_policy(plan: Vec<RouteAttempt>, state: &AppState) -> Vec<R
 }
 
 /// Filter an attempt plan by persisted model enablement.
-/// Missing model rows are allowed so curated/default models still work before discovery.
+/// Only models with an explicit row in the models table are routable.
+/// Missing rows (model never discovered/seeded for this provider) are excluded.
 pub async fn filter_by_model_enabled(
     plan: Vec<RouteAttempt>,
     state: &AppState,
@@ -131,7 +132,7 @@ pub async fn filter_by_model_enabled(
         .ok()
         .flatten()
         .map(|row| row.0)
-        .unwrap_or(true);
+        .unwrap_or(false);
 
         if enabled {
             filtered.push(attempt);

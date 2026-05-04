@@ -173,3 +173,24 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
         },
     ]
 }
+
+/// Insert curated model catalog rows into the models table so that
+/// `filter_by_model_enabled` can find them. Uses INSERT OR IGNORE to
+/// avoid overwriting rows already populated by provider discovery.
+pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
+    let catalog = curated_catalog();
+    for model in &catalog {
+        let _ = sqlx::query(
+            "INSERT OR IGNORE INTO models \
+             (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, \
+              discovered_at, updated_at) \
+             VALUES (?, ?, ?, 1, ?, 1, datetime('now'), datetime('now'))",
+        )
+        .bind(&model.provider_id)
+        .bind(&model.upstream_model_id)
+        .bind(model.display_name.as_deref().unwrap_or(&model.upstream_model_id))
+        .bind(model.free_tier)
+        .execute(db)
+        .await;
+    }
+}

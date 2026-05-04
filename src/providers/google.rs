@@ -204,9 +204,8 @@ impl ProviderAdapter for GoogleAdapter {
         request: NormalizedChatRequest,
     ) -> Result<ProviderChatResponse, ProviderError> {
         // Gemini uses POST /v1beta/models/{model}:generateContent
-        let endpoint_path = format!("/models/{}:generateContent", request.model);
-        let url = ctx
-            .base_url
+        let endpoint_path = format!("models/{}:generateContent", request.model);
+        let url = crate::providers::shared::with_trailing_slash(&ctx.base_url)
             .join(&endpoint_path)
             .map_err(|e| ProviderError::Other(e.to_string()))?;
 
@@ -304,9 +303,8 @@ impl ProviderAdapter for GoogleAdapter {
         ctx: &ProviderContext,
         request: NormalizedEmbeddingsRequest,
     ) -> Result<ProviderEmbeddingsResponse, ProviderError> {
-        let endpoint_path = format!("/models/{}:embedContent", request.model);
-        let url = ctx
-            .base_url
+        let endpoint_path = format!("models/{}:embedContent", request.model);
+        let url = crate::providers::shared::with_trailing_slash(&ctx.base_url)
             .join(&endpoint_path)
             .map_err(|e| ProviderError::Other(e.to_string()))?;
 
@@ -373,9 +371,8 @@ impl ProviderAdapter for GoogleAdapter {
         tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
     ) -> Result<(), ProviderError> {
         // Gemini uses :streamGenerateContent instead of :generateContent
-        let endpoint_path = format!("/models/{}:streamGenerateContent", request.model);
-        let url = ctx
-            .base_url
+        let endpoint_path = format!("models/{}:streamGenerateContent", request.model);
+        let url = crate::providers::shared::with_trailing_slash(&ctx.base_url)
             .join(&endpoint_path)
             .map_err(|e| ProviderError::Other(e.to_string()))?;
 

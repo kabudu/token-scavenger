@@ -66,6 +66,19 @@ async fn build_e2e_app_with_failure(
     .await
     .unwrap();
 
+    // Seed a model row so filter_by_model_enabled finds it.
+    // Without this, unwrap_or(false) excludes the mock provider.
+    sqlx::query(
+        "INSERT OR IGNORE INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, discovered_at, updated_at)
+         VALUES (?, ?, ?, 1, 1, 1, datetime('now'), datetime('now'))",
+    )
+    .bind("mock")
+    .bind("test-model")
+    .bind("test-model")
+    .execute(&state.db)
+    .await
+    .unwrap();
+
     // Register a simple mock adapter
     use async_trait::async_trait;
     use reqwest::header::HeaderMap;
@@ -410,7 +423,7 @@ async fn e2e_streaming_response_is_wire_level_sse() {
 async fn e2e_disabled_model_is_not_routed() {
     let (app, state) = build_e2e_app(0).await;
     sqlx::query(
-        "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled)
+        "INSERT OR REPLACE INTO models (provider_id, upstream_model_id, public_model_id, enabled)
          VALUES (?, ?, ?, 0)",
     )
     .bind("mock")
