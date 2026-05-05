@@ -858,3 +858,37 @@ pub async fn admin_analytics_metrics(
         crate::usage::aggregation::get_period_summary(&state, &period).await,
     ))
 }
+
+#[derive(serde::Deserialize)]
+pub struct BackfillPricingQuery {
+    pub dry_run: Option<bool>,
+}
+
+pub async fn admin_pricing(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        crate::usage::pricing_catalog::get_pricing_state(&state.db).await,
+    ))
+}
+
+pub async fn admin_pricing_refresh(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let result =
+        crate::usage::pricing_catalog::refresh_pricing_sources(&state.db, &state.http_client, true)
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    Ok(Json(result))
+}
+
+pub async fn admin_pricing_backfill(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<BackfillPricingQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let dry_run = query.dry_run.unwrap_or(true);
+    let result = crate::usage::pricing_catalog::backfill_zero_cost_paid_usage(&state.db, dry_run)
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    Ok(Json(result))
+}

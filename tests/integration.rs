@@ -869,6 +869,65 @@ async fn test_usage_events_insert_and_query() {
     assert_eq!(row.2, 50);
 }
 
+#[tokio::test]
+async fn test_paid_deepseek_usage_records_nonzero_cost() {
+    let pool = SqlitePool::connect("sqlite::memory:")
+        .await
+        .expect("Failed to create in-memory SQLite");
+
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+    tokenscavenger::usage::pricing_catalog::seed_builtin_pricing(&pool)
+        .await
+        .expect("Failed to seed pricing");
+
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+
+    tokenscavenger::usage::accounting::record_usage(
+        &state,
+        tokenscavenger::usage::accounting::UsageRecord {
+            provider_id: "deepseek",
+            model_id: "deepseek-chat",
+            usage: Some(&tokenscavenger::api::openai::chat::UsageResponse {
+                prompt_tokens: 1_000,
+                completion_tokens: 500,
+                total_tokens: 1_500,
+                prompt_cache_hit_tokens: Some(400),
+                prompt_cache_miss_tokens: Some(600),
+                reasoning_tokens: None,
+            }),
+            latency_ms: 42,
+            free_tier: false,
+            request_id: "paid-req-1",
+            endpoint_kind: "chat",
+            streaming: false,
+        },
+    )
+    .await
+    .expect("Failed to record usage");
+
+    let row: (f64, String, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT estimated_cost_usd, cost_confidence, cached_input_tokens, cache_miss_input_tokens
+         FROM usage_events WHERE request_id = ?",
+    )
+    .bind("paid-req-1")
+    .fetch_one(&state.db)
+    .await
+    .expect("Failed to query paid usage");
+
+    assert!(row.0 > 0.0);
+    assert_eq!(row.1, "provider_published");
+    assert_eq!(row.2, Some(400));
+    assert_eq!(row.3, Some(600));
+}
+
 #[test]
 fn test_secret_redaction() {
     let cases = vec![

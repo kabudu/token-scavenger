@@ -16,6 +16,10 @@ struct MetricsRegistry {
     breaker_states: BTreeMap<(String, String), f64>,
     quota_remaining: BTreeMap<String, f64>,
     discovery_runs: BTreeMap<(String, String), u64>,
+    estimated_cost: BTreeMap<(String, String, String), f64>,
+    pricing_refresh: BTreeMap<(String, String), u64>,
+    pricing_age_seconds: BTreeMap<String, f64>,
+    unknown_price: BTreeMap<(String, String), u64>,
 }
 
 /// Register a request metric.
@@ -150,6 +154,69 @@ pub fn record_discovery_run(provider: &str, status: &str) {
     }
 }
 
+/// Record estimated spend for a completed request.
+pub fn record_estimated_cost(provider: &str, model: &str, confidence: &str, amount_usd: f64) {
+    counter!(
+        "tokenscavenger_estimated_cost_usd_total",
+        "provider" => provider.to_string(),
+        "model" => model.to_string(),
+        "confidence" => confidence.to_string(),
+    )
+    .increment((amount_usd.max(0.0) * 1_000_000.0).round() as u64);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .estimated_cost
+            .entry((provider.into(), model.into(), confidence.into()))
+            .or_default() += amount_usd;
+    }
+}
+
+/// Record a pricing refresh attempt.
+pub fn record_pricing_refresh(provider: &str, status: &str) {
+    counter!(
+        "tokenscavenger_pricing_refresh_total",
+        "provider" => provider.to_string(),
+        "status" => status.to_string(),
+    )
+    .increment(1);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .pricing_refresh
+            .entry((provider.into(), status.into()))
+            .or_default() += 1;
+    }
+}
+
+/// Record the age of a provider pricing source.
+pub fn record_pricing_age(provider: &str, age_seconds: f64) {
+    gauge!(
+        "tokenscavenger_pricing_age_seconds",
+        "provider" => provider.to_string(),
+    )
+    .set(age_seconds);
+    if let Ok(mut metrics) = METRICS.lock() {
+        metrics
+            .pricing_age_seconds
+            .insert(provider.into(), age_seconds);
+    }
+}
+
+/// Record paid usage where no price is known.
+pub fn record_unknown_price(provider: &str, model: &str) {
+    counter!(
+        "tokenscavenger_usage_unknown_price_total",
+        "provider" => provider.to_string(),
+        "model" => model.to_string(),
+    )
+    .increment(1);
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .unknown_price
+            .entry((provider.into(), model.into()))
+            .or_default() += 1;
+    }
+}
+
 /// Render all metrics as Prometheus text format.
 pub fn render_metrics() -> String {
     use std::fmt::Write;
@@ -259,6 +326,70 @@ pub fn render_metrics() -> String {
     if let Some(metrics) = metrics.as_ref() {
         for ((provider, status), value) in &metrics.discovery_runs {
             writeln!(output, "tokenscavenger_discovery_runs_total{{provider=\"{provider}\",status=\"{status}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_estimated_cost_usd_total Estimated request cost in USD"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_estimated_cost_usd_total counter"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, model, confidence), value) in &metrics.estimated_cost {
+            writeln!(output, "tokenscavenger_estimated_cost_usd_total{{provider=\"{provider}\",model=\"{model}\",confidence=\"{confidence}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_pricing_refresh_total Pricing refresh attempts"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_pricing_refresh_total counter"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, status), value) in &metrics.pricing_refresh {
+            writeln!(output, "tokenscavenger_pricing_refresh_total{{provider=\"{provider}\",status=\"{status}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_pricing_age_seconds Age of the active pricing source"
+    )
+    .ok();
+    writeln!(output, "# TYPE tokenscavenger_pricing_age_seconds gauge").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for (provider, value) in &metrics.pricing_age_seconds {
+            writeln!(
+                output,
+                "tokenscavenger_pricing_age_seconds{{provider=\"{provider}\"}} {value}"
+            )
+            .ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_usage_unknown_price_total Paid usage events without known pricing"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_usage_unknown_price_total counter"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((provider, model), value) in &metrics.unknown_price {
+            writeln!(output, "tokenscavenger_usage_unknown_price_total{{provider=\"{provider}\",model=\"{model}\"}} {value}").ok();
         }
     }
 

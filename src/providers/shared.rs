@@ -191,6 +191,19 @@ pub async fn openai_chat_completions(
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
         total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        prompt_cache_hit_tokens: u
+            .get("prompt_cache_hit_tokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        prompt_cache_miss_tokens: u
+            .get("prompt_cache_miss_tokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        reasoning_tokens: u
+            .get("completion_tokens_details")
+            .and_then(|details| details.get("reasoning_tokens"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
     });
 
     Ok(ProviderChatResponse {

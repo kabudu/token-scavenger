@@ -75,11 +75,17 @@ pub fn render_shell(
 
     format!(
         r##"{}
-<body class="flex h-screen overflow-hidden">
-<aside class="w-64 border-r border-white/5 flex flex-col shrink-0 bg-[#020617]">
-    <div class="p-6 flex items-center gap-3">
-    <img src="/ui/logo.png" alt="TokenScavenger Logo" class="w-8 h-8" />
-    <span class="text-lg font-bold tracking-tight">Token<span class="text-[#D35400]">Scavenger</span></span>
+<body class="admin-shell">
+<div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()" aria-hidden="true"></div>
+<aside id="admin-sidebar" class="admin-sidebar w-64 border-r border-white/5 flex flex-col shrink-0 bg-[#020617]" aria-label="Admin navigation">
+    <div class="p-6 flex items-center justify-between gap-3">
+    <div class="flex items-center gap-3 min-w-0">
+        <img src="/ui/logo.png" alt="TokenScavenger Logo" class="w-8 h-8" />
+        <span class="text-lg font-bold tracking-tight truncate">Token<span class="text-[#D35400]">Scavenger</span></span>
+    </div>
+    <button class="sidebar-close-btn" type="button" onclick="closeSidebar()" aria-label="Close navigation">
+        <i class="fas fa-times" aria-hidden="true"></i>
+    </button>
     </div>
     {}
     <div class="p-4 border-t border-white/5 bg-black/20">
@@ -93,9 +99,19 @@ pub fn render_shell(
     </div>
     </div>
 </aside>
-<main class="flex-1 overflow-y-auto relative">
-    <header class="sticky top-0 z-10 bg-[#020617]/80 backdrop-blur-md border-b border-white/5 px-8 py-4 flex items-center justify-between">
-    <div>
+<main class="admin-main flex-1 overflow-y-auto relative">
+    <header class="mobile-topbar">
+    <div class="flex items-center gap-3 min-w-0">
+        <button id="sidebar-toggle" class="sidebar-toggle-btn" type="button" onclick="openSidebar()" aria-label="Open navigation" aria-controls="admin-sidebar" aria-expanded="false">
+            <i class="fas fa-bars" aria-hidden="true"></i>
+        </button>
+        <img src="/ui/logo.png" alt="TokenScavenger Logo" class="w-7 h-7" />
+        <span class="mobile-brand text-base font-bold tracking-tight truncate">Token<span class="text-[#D35400]">Scavenger</span></span>
+    </div>
+    <div class="mobile-title text-sm font-bold truncate">{}</div>
+    </header>
+    <header class="admin-page-header sticky top-0 z-10 bg-[#020617]/80 backdrop-blur-md border-b border-white/5 px-8 py-4 flex items-center justify-between">
+    <div class="min-w-0">
         <h1 class="text-xl font-bold">{}</h1>
     </div>
     <div class="flex items-center gap-4">
@@ -160,6 +176,29 @@ function hideModal() {{
     document.getElementById('global-modal-content').classList.add('scale-95');
     setTimeout(() => {{ modal.classList.add('hidden'); }}, 300);
 }}
+function setSidebarOpen(isOpen) {{
+    const sidebar = document.getElementById('admin-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    const toggle = document.getElementById('sidebar-toggle');
+    if (!sidebar || !overlay) return;
+    sidebar.classList.toggle('open', isOpen);
+    overlay.classList.toggle('open', isOpen);
+    document.body.classList.toggle('sidebar-open', isOpen);
+    if (toggle) toggle.setAttribute('aria-expanded', String(isOpen));
+}}
+function openSidebar() {{ setSidebarOpen(true); }}
+function closeSidebar() {{ setSidebarOpen(false); }}
+document.addEventListener('keydown', (event) => {{
+    if (event.key === 'Escape') closeSidebar();
+}});
+document.querySelectorAll('#admin-sidebar a').forEach((link) => {{
+    link.addEventListener('click', () => {{
+        if (window.matchMedia('(max-width: 900px)').matches) closeSidebar();
+    }});
+}});
+window.matchMedia('(min-width: 901px)').addEventListener('change', (event) => {{
+    if (event.matches) closeSidebar();
+}});
 let startTime = Date.now() - {};
 setInterval(() => {{
     const diff = Math.floor((Date.now() - startTime) / 1000);
@@ -199,6 +238,7 @@ if (worstState === "Healthy") {{
         nav,
         env!("CARGO_PKG_VERSION"),
         uptime_str,
+        title,
         title,
         content,
         uptime * 1000,
@@ -351,6 +391,7 @@ pub async fn render_dashboard(state: &AppState) -> String {
           <div class="glass-card p-5 metric-glow-emerald">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Estimated Spend</span><i class="fas fa-piggy-bank text-emerald-400"></i></div>
             <div class="text-3xl font-bold"><span id="stat-spend">{}</span></div>
+            <div class="text-[10px] text-slate-500 font-mono mt-1" id="stat-spend-confidence">PRICING CONFIDENCE: CHECKED</div>
           </div>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -452,15 +493,18 @@ pub async fn render_dashboard(state: &AppState) -> String {
               providerChart.update();
 
               let totalTokens = 0, totalCost = 0;
+              const confidences = new Set();
               (summary.series || []).forEach(s => {{
                   totalTokens += (s.input_tokens || 0) + (s.output_tokens || 0);
                   totalCost += s.estimated_cost_usd || 0;
+                  String(s.cost_confidence || '').split(',').filter(Boolean).forEach(c => confidences.add(c));
               }});
 
               document.getElementById('stat-requests').innerText = (metrics.request_count || 0).toLocaleString();
               document.getElementById('stat-tokens').innerText = totalTokens.toLocaleString();
               document.getElementById('stat-latency').innerText = metrics.avg_latency || 0;
               document.getElementById('stat-spend').innerText = new Intl.NumberFormat('en-US', {{ style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }}).format(totalCost);
+              document.getElementById('stat-spend-confidence').innerText = confidences.size ? 'PRICING: ' + Array.from(confidences).join(', ').toUpperCase() : 'PRICING: NO USAGE';
           }} catch (error) {{
               console.warn("Dashboard analytics refresh failed", error);
           }} finally {{
@@ -499,6 +543,21 @@ pub async fn render_dashboard(state: &AppState) -> String {
 pub async fn render_providers(state: &AppState) -> String {
     let config = state.config();
     let mut rows = String::new();
+    let provider_options = crate::providers::registry::SUPPORTED_PROVIDERS
+        .iter()
+        .map(|provider| {
+            format!(
+                r#"<option value="{id}" data-free-only="{free_only}" data-default-base-url="{base_url}">{name}</option>"#,
+                id = provider.id,
+                free_only = provider.free_only_default,
+                base_url = provider.default_base_url,
+                name = provider.display_name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let provider_defaults = serde_json::to_string(crate::providers::registry::SUPPORTED_PROVIDERS)
+        .unwrap_or_else(|_| "[]".to_string());
     for p in &config.providers {
         let health = state.health_states.get(&p.id);
         let health_str = health
@@ -515,36 +574,38 @@ pub async fn render_providers(state: &AppState) -> String {
     }
     let content = format!(
         r#"
-        <div class="glass-card p-6 mb-6">
-            <div class="flex items-center justify-between gap-4 mb-4">
-                <h3 class="font-bold">Add Provider</h3>
+        <div class="glass-card provider-add-card p-6 mb-6">
+            <div class="flex items-center justify-between gap-4 mb-5">
+                <div>
+                    <h3 class="font-bold">Add Provider</h3>
+                    <p class="text-xs text-slate-500 mt-1">Choose from the full baked-in provider catalog.</p>
+                </div>
                 <span class="text-xs text-slate-500">Paid fallback obeys routing policy</span>
             </div>
-            <div class="grid grid-cols-1 lg:grid-cols-[180px_1fr_1fr_auto_auto] gap-3 items-end">
-                <label class="block">
-                    <span class="block text-xs text-slate-500 mb-1">Provider</span>
-                    <select id="new-provider-id" onchange="syncProviderDefaults()">
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="xai">xAI (Grok)</option>
-                        <option value="groq">Groq</option>
-                        <option value="openrouter">OpenRouter</option>
-                        <option value="google">Google</option>
-                        <option value="cerebras">Cerebras</option>
+            <div class="provider-add-grid">
+                <label class="provider-field">
+                    <span>Provider</span>
+                    <select id="new-provider-id" class="provider-input" onchange="syncProviderDefaults()">
+                        {}
                     </select>
                 </label>
-                <label class="block">
-                    <span class="block text-xs text-slate-500 mb-1">API Key</span>
-                    <input id="new-provider-key" type="password" autocomplete="off" placeholder="sk-...">
+                <label class="provider-field">
+                    <span>API Key</span>
+                    <input id="new-provider-key" class="provider-input" type="password" autocomplete="off" placeholder="sk-...">
                 </label>
-                <label class="block">
-                    <span class="block text-xs text-slate-500 mb-1">Base URL</span>
-                    <input id="new-provider-base-url" type="url" placeholder="Default">
+                <label class="provider-field">
+                    <span>Base URL</span>
+                    <input id="new-provider-base-url" class="provider-input" type="url" placeholder="Default">
                 </label>
-                <label class="flex items-center gap-2 min-h-[38px] text-sm text-slate-300">
-                    <input id="new-provider-free-only" type="checkbox">
-                    <span>Free only</span>
+                <label class="toggle-row">
+                    <input id="new-provider-free-only" class="toggle-input" type="checkbox">
+                    <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+                    <span class="toggle-copy">
+                        <span>Free only</span>
+                        <small>Block paid endpoint use</small>
+                    </span>
                 </label>
-                <button class="btn min-h-[38px]" onclick="addProvider()">Add</button>
+                <button class="btn provider-add-btn" onclick="addProvider()">Add Provider</button>
             </div>
         </div>
         <div class="glass-card overflow-hidden">
@@ -558,15 +619,17 @@ pub async fn render_providers(state: &AppState) -> String {
                 <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>ID</th><th>Health</th><th>Status</th><th>Actions</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
             </div>
         </div>"#,
-        rows
+        provider_options, rows
     );
     let scripts = r#"<script>
+    const providerDefaults = __PROVIDER_DEFAULTS__;
     function syncProviderDefaults() {
         const id = document.getElementById('new-provider-id').value;
         const freeOnly = document.getElementById('new-provider-free-only');
         const baseUrl = document.getElementById('new-provider-base-url');
-        freeOnly.checked = !(id === 'deepseek' || id === 'xai');
-        baseUrl.placeholder = id === 'deepseek' ? 'https://api.deepseek.com' : id === 'xai' ? 'https://api.x.ai/v1' : 'Default';
+        const selected = providerDefaults.find(provider => provider.id === id) || {};
+        freeOnly.checked = selected.free_only_default !== false;
+        baseUrl.placeholder = selected.default_base_url || 'Default';
     }
     async function addProvider() {
         const id = document.getElementById('new-provider-id').value;
@@ -596,8 +659,9 @@ pub async fn render_providers(state: &AppState) -> String {
         }
     }
     syncProviderDefaults();
-    </script>"#;
-    render_shell("Providers", "providers", &content, scripts, state)
+    </script>"#
+        .replace("__PROVIDER_DEFAULTS__", &provider_defaults);
+    render_shell("Providers", "providers", &content, &scripts, state)
 }
 
 /// Render the models view.
@@ -769,6 +833,7 @@ pub async fn render_routing(state: &AppState) -> String {
 /// Render the usage view.
 pub async fn render_usage(state: &AppState) -> String {
     let series = crate::usage::aggregation::get_usage_series(state, "24h").await;
+    let pricing = crate::usage::pricing_catalog::get_pricing_state(&state.db).await;
     let rows = match series.get("series").and_then(|s| s.as_array()) {
         Some(arr) => arr.iter().map(|entry| {
             let p = entry.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
@@ -779,6 +844,31 @@ pub async fn render_usage(state: &AppState) -> String {
         }).collect::<Vec<_>>().join("\n"),
         None => "<tr><td colspan=\"4\" class=\"px-6 py-4 text-center text-slate-500\">No usage data</td></tr>".into(),
     };
+    let pricing_rows = match pricing.get("rates").and_then(|r| r.as_array()) {
+        Some(arr) if !arr.is_empty() => arr.iter().map(|rate| {
+            let provider = rate.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let model = rate.get("model_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let input = rate.get("input_per_1m").and_then(|v| v.as_f64()).map(|v| format!("${:.4}", v)).unwrap_or_else(|| "-".into());
+            let cached = rate.get("cached_input_per_1m").and_then(|v| v.as_f64()).map(|v| format!("${:.4}", v)).unwrap_or_else(|| "-".into());
+            let output = rate.get("output_per_1m").and_then(|v| v.as_f64()).map(|v| format!("${:.4}", v)).unwrap_or_else(|| "-".into());
+            let confidence = rate.get("confidence").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let source = rate.get("source_kind").and_then(|v| v.as_str()).unwrap_or("unknown");
+            format!(r#"<tr><td class="font-bold">{}</td><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td><span class="px-2 py-0.5 rounded bg-white/5 text-[10px] uppercase">{}</span></td><td class="text-xs text-slate-400">{}</td></tr>"#, provider, model, input, cached, output, confidence, source)
+        }).collect::<Vec<_>>().join("\n"),
+        _ => "<tr><td colspan=\"7\" class=\"px-6 py-4 text-center text-slate-500\">No pricing data</td></tr>".into(),
+    };
+    let source_rows = match pricing.get("sources").and_then(|s| s.as_array()) {
+        Some(arr) if !arr.is_empty() => arr.iter().map(|source| {
+            let provider = source.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let kind = source.get("source_kind").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = source.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let last_success = source.get("last_success_at").and_then(|v| v.as_str()).unwrap_or("-");
+            let error = source.get("last_error_summary").and_then(|v| v.as_str()).unwrap_or("");
+            let color = if status == "ok" { "text-emerald-400" } else { "text-red-400" };
+            format!(r#"<tr><td class="font-bold">{}</td><td class="font-mono text-xs">{}</td><td class="{} text-xs font-bold uppercase">{}</td><td class="font-mono text-xs">{}</td><td class="text-xs text-slate-500">{}</td></tr>"#, provider, kind, color, status, last_success, error)
+        }).collect::<Vec<_>>().join("\n"),
+        _ => "<tr><td colspan=\"5\" class=\"px-6 py-4 text-center text-slate-500\">No pricing sources checked yet</td></tr>".into(),
+    };
     let content = format!(
         r#"
         <div class="glass-card overflow-hidden">
@@ -786,10 +876,32 @@ pub async fn render_usage(state: &AppState) -> String {
             <div class="p-0 overflow-x-auto">
                 <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>Input Tokens</th><th>Output Tokens</th><th>Est. Cost</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
             </div>
+        </div>
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4">
+                <h3 class="font-bold">Pricing Catalog</h3>
+                <button class="btn" onclick="refreshPricing()">Refresh Pricing</button>
+            </div>
+            <div class="p-0 overflow-x-auto">
+                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>Model</th><th>Input / 1M</th><th>Cached / 1M</th><th>Output / 1M</th><th>Confidence</th><th>Source</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+            </div>
+        </div>
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Pricing Source Freshness</h3></div>
+            <div class="p-0 overflow-x-auto">
+                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>Source</th><th>Status</th><th>Last Success</th><th>Last Error</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+            </div>
         </div>"#,
-        rows
+        rows, pricing_rows, source_rows
     );
-    render_shell("Usage", "usage", &content, "", state)
+    let scripts = r#"<script>
+    async function refreshPricing() {
+        const r = await fetch('/admin/pricing/refresh', { method: 'POST' });
+        if (r.ok) location.reload();
+        else showModal('Error', 'Pricing refresh failed', true);
+    }
+    </script>"#;
+    render_shell("Usage", "usage", &content, scripts, state)
 }
 
 /// Render the health view.

@@ -184,15 +184,7 @@ pub async fn route_chat_request(
                 );
 
                 // Record usage and metrics
-                let usage_ref =
-                    response
-                        .usage
-                        .as_ref()
-                        .map(|u| crate::api::openai::chat::UsageResponse {
-                            prompt_tokens: u.prompt_tokens,
-                            completion_tokens: u.completion_tokens,
-                            total_tokens: u.total_tokens,
-                        });
+                let usage_ref = response.usage.as_ref().map(provider_usage_to_openai_usage);
                 let _ = crate::usage::accounting::record_usage(
                     &state,
                     crate::usage::accounting::UsageRecord {
@@ -223,13 +215,7 @@ pub async fn route_chat_request(
                         finish_reason: response.finish_reason,
                         logprobs: None,
                     }],
-                    usage: response
-                        .usage
-                        .map(|u| crate::api::openai::chat::UsageResponse {
-                            prompt_tokens: u.prompt_tokens,
-                            completion_tokens: u.completion_tokens,
-                            total_tokens: u.total_tokens,
-                        }),
+                    usage: response.usage.as_ref().map(provider_usage_to_openai_usage),
                 });
             }
             Err(e) => {
@@ -260,13 +246,10 @@ pub async fn route_chat_request(
                             {
                                 Ok(response) => {
                                     info!(provider = %provider_id, "Retry succeeded");
-                                    let usage_ref = response.usage.as_ref().map(|u| {
-                                        crate::api::openai::chat::UsageResponse {
-                                            prompt_tokens: u.prompt_tokens,
-                                            completion_tokens: u.completion_tokens,
-                                            total_tokens: u.total_tokens,
-                                        }
-                                    });
+                                    let usage_ref = response
+                                        .usage
+                                        .as_ref()
+                                        .map(|u| provider_usage_to_openai_usage(u));
                                     let _ = crate::usage::accounting::record_usage(
                                         &state,
                                         crate::usage::accounting::UsageRecord {
@@ -296,13 +279,10 @@ pub async fn route_chat_request(
                                             finish_reason: response.finish_reason,
                                             logprobs: None,
                                         }],
-                                        usage: response.usage.map(|u| {
-                                            crate::api::openai::chat::UsageResponse {
-                                                prompt_tokens: u.prompt_tokens,
-                                                completion_tokens: u.completion_tokens,
-                                                total_tokens: u.total_tokens,
-                                            }
-                                        }),
+                                        usage: response
+                                            .usage
+                                            .as_ref()
+                                            .map(provider_usage_to_openai_usage),
                                     });
                                 }
                                 Err(e2) => {
@@ -327,13 +307,10 @@ pub async fn route_chat_request(
                         {
                             Ok(response) => {
                                 info!(provider = %provider_id, "Retry after delay succeeded");
-                                let usage_ref = response.usage.as_ref().map(|u| {
-                                    crate::api::openai::chat::UsageResponse {
-                                        prompt_tokens: u.prompt_tokens,
-                                        completion_tokens: u.completion_tokens,
-                                        total_tokens: u.total_tokens,
-                                    }
-                                });
+                                let usage_ref = response
+                                    .usage
+                                    .as_ref()
+                                    .map(|u| provider_usage_to_openai_usage(u));
                                 let _ = crate::usage::accounting::record_usage(
                                     &state,
                                     crate::usage::accounting::UsageRecord {
@@ -363,13 +340,10 @@ pub async fn route_chat_request(
                                         finish_reason: response.finish_reason,
                                         logprobs: None,
                                     }],
-                                    usage: response.usage.map(|u| {
-                                        crate::api::openai::chat::UsageResponse {
-                                            prompt_tokens: u.prompt_tokens,
-                                            completion_tokens: u.completion_tokens,
-                                            total_tokens: u.total_tokens,
-                                        }
-                                    }),
+                                    usage: response
+                                        .usage
+                                        .as_ref()
+                                        .map(provider_usage_to_openai_usage),
                                 });
                             }
                             Err(e2) => {
@@ -545,6 +519,9 @@ pub async fn route_embeddings_request(
                     prompt_tokens: response.usage.prompt_tokens,
                     completion_tokens: response.usage.completion_tokens,
                     total_tokens: response.usage.total_tokens,
+                    prompt_cache_hit_tokens: response.usage.prompt_cache_hit_tokens,
+                    prompt_cache_miss_tokens: response.usage.prompt_cache_miss_tokens,
+                    reasoning_tokens: response.usage.reasoning_tokens,
                 };
                 let _ = crate::usage::accounting::record_usage(
                     &state,
@@ -630,6 +607,19 @@ fn failure_http_status_for_error(last_error: Option<&ProviderError>) -> u16 {
     match last_error {
         Some(ProviderError::RateLimited { .. } | ProviderError::QuotaExhausted { .. }) => 429,
         _ => 503,
+    }
+}
+
+fn provider_usage_to_openai_usage(
+    usage: &crate::api::openai::chat::ProviderUsage,
+) -> crate::api::openai::chat::UsageResponse {
+    crate::api::openai::chat::UsageResponse {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+        prompt_cache_hit_tokens: usage.prompt_cache_hit_tokens,
+        prompt_cache_miss_tokens: usage.prompt_cache_miss_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
     }
 }
 

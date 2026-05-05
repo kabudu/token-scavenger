@@ -9,9 +9,9 @@ pub async fn get_usage_series(state: &AppState, period: &str) -> serde_json::Val
         _ => "-24 hours",
     };
 
-    let result = sqlx::query_as::<_, (String, i64, i64, f64, bool)>(
+    let result = sqlx::query_as::<_, (String, i64, i64, f64, bool, Option<String>)>(
         &format!(
-            "SELECT provider_id, SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost_usd), free_tier
+            "SELECT provider_id, SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost_usd), free_tier, group_concat(DISTINCT cost_confidence)
              FROM usage_events
              WHERE timestamp > datetime('now', '{}')
              GROUP BY provider_id, free_tier",
@@ -25,13 +25,14 @@ pub async fn get_usage_series(state: &AppState, period: &str) -> serde_json::Val
         Ok(rows) => {
             let series: Vec<serde_json::Value> = rows
                 .into_iter()
-                .map(|(p, inp, out, cost, free)| {
+                .map(|(p, inp, out, cost, free, confidence)| {
                     serde_json::json!({
                         "provider_id": p,
                         "input_tokens": inp,
                         "output_tokens": out,
                         "estimated_cost_usd": cost,
                         "free_tier": free,
+                        "cost_confidence": confidence.unwrap_or_else(|| "unknown".into()),
                     })
                 })
                 .collect();

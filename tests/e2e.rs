@@ -159,6 +159,9 @@ async fn build_e2e_app_with_failure(
                     prompt_tokens: 10,
                     completion_tokens: 5,
                     total_tokens: 15,
+                    prompt_cache_hit_tokens: None,
+                    prompt_cache_miss_tokens: None,
+                    reasoning_tokens: None,
                 }),
                 latency_ms: 1,
             })

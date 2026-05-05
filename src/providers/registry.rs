@@ -1,7 +1,103 @@
 use crate::app::state::AppState;
 use crate::providers::traits::{EndpointKind, ProviderAdapter};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ProviderCatalogEntry {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub default_base_url: &'static str,
+    pub free_only_default: bool,
+}
+
+pub const SUPPORTED_PROVIDERS: &[ProviderCatalogEntry] = &[
+    ProviderCatalogEntry {
+        id: "groq",
+        display_name: "Groq",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "google",
+        display_name: "Google AI Studio / Gemini",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "openrouter",
+        display_name: "OpenRouter",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "cloudflare",
+        display_name: "Cloudflare Workers AI",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "cerebras",
+        display_name: "Cerebras",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "nvidia",
+        display_name: "NVIDIA NIM",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "cohere",
+        display_name: "Cohere",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "mistral",
+        display_name: "Mistral AI",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "github-models",
+        display_name: "GitHub Models",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "huggingface",
+        display_name: "Hugging Face Serverless Inference",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "zai",
+        display_name: "Z AI / Zhipu AI",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "siliconflow",
+        display_name: "SiliconFlow",
+        default_base_url: "",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "deepseek",
+        display_name: "DeepSeek",
+        default_base_url: "https://api.deepseek.com",
+        free_only_default: false,
+    },
+    ProviderCatalogEntry {
+        id: "xai",
+        display_name: "xAI / Grok",
+        default_base_url: "https://api.x.ai/v1",
+        free_only_default: false,
+    },
+];
 
 /// Registry of all available provider adapters.
 pub struct ProviderRegistry {

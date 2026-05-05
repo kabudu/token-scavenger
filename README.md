@@ -9,11 +9,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-**A lightweight, self-hosted OpenAI-compatible LLM proxy/router that prioritizes free-tier inference providers and can fall back to paid providers when explicitly allowed.**
+**A lightweight, single-binary, self-hosted OpenAI-compatible LLM router that intelligently scavenges free-tier tokens first - with smart fallback to paid providers when you allow it.**
 
-TokenScavenger lets existing OpenAI SDK clients switch providers by changing only `base_url`. It keeps provider credentials, routing policy, model discovery, health state, usage accounting, and operator controls inside one Rust binary backed by SQLite.
-
-It is designed for operators who want a local or self-hosted gateway that prefers free tiers first, falls back across compatible providers, and exposes enough metrics and UI state to understand why each route was chosen.
+**Just change the `base_url` in your OpenAI SDK** and TokenScavenger handles the rest: provider credentials, routing logic, model discovery, circuit breakers, usage tracking, and a beautiful operator dashboard - all in one Rust binary backed by SQLite.
 
 ```text
 ┌─────────────┐     POST /v1/chat/completions     ┌────────────────┐
@@ -34,18 +32,25 @@ It is designed for operators who want a local or self-hosted gateway that prefer
                     └──────────────┘              └──────────────────┘
 ```
 
+## Why TokenScavenger?
+
+- **Maximize free inference** across 14 permanent free-tier providers without managing dozens of API endpoints.
+- **Zero runtime overhead** — one static binary, no Docker or Python/Node required for basic use.
+- **Production-grade resilience** — circuit breakers, health checks, retries, and full observability.
+- **Beautiful built-in UI** — monitor usage, routing decisions, and provider health in real time.
+- **Drop-in replacement** for OpenAI, LangChain, Vercel AI SDK, LlamaIndex, etc.
+
 ## Features
 
-- **Free-tier first routing** — automatically prefers free providers, falls back through a configurable chain
-- **OpenAI-compatible API** — works with existing OpenAI SDK clients (just change `base_url`)
-- **14 built-in providers** — Groq, Google Gemini, OpenRouter, Cloudflare, Cerebras, NVIDIA NIM, Cohere, Mistral AI, GitHub Models, HuggingFace, Zhipu AI, SiliconFlow, DeepSeek, xAI Grok
-- **Streaming SSE** — full support for OpenAI-style streaming chat completions
-- **Circuit breakers & retries** — per-provider health tracking with automatic recovery
-- **Model discovery** — automatic provider model list discovery plus curated built-in catalog
-- **Prometheus metrics** — request counts, latency histograms, token usage, health states
-- **Embedded web UI** — operator dashboard for providers, models, routing, usage, health, logs, config
-- **SQLite persistence** — WAL mode, usage accounting, audit log, health events
-- **Single binary** — no Python, Node, or Docker required for basic operation
+- **Free-tier-first routing** with configurable fallback chains
+- **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
+- **14 built-in providers** with automatic model discovery
+- **Circuit breakers, retries & health monitoring**
+- **Prometheus metrics** + per-provider token usage tracking
+- **Embedded web UI** with live dashboard, logs, and config editor
+- **SQLite persistence** (WAL mode) for usage accounting and audit log
+- **Interactive setup wizard** and CLI tools
+- **Single static binary** (~15–25 MB)
 
 ## Supported API Surface
 
@@ -184,13 +189,13 @@ src/
 
 The `tokenscavenger` binary provides server, setup, configuration, and service-management modes:
 
-| Command                                | Description                                                                             |
-| -------------------------------------- | --------------------------------------------------------------------------------------- |
-| `tokenscavenger` (no args)             | Starts the server. On first run, prompts to run the setup wizard if no config is found. |
-| `tokenscavenger setup`                 | Run the interactive first-time setup wizard.                                            |
-| `tokenscavenger config`                | Edit an existing configuration file interactively.                                      |
-| `tokenscavenger service install`       | Install TokenScavenger as a background service on supported platforms.                  |
-| `tokenscavenger service uninstall`     | Remove the installed background service on supported platforms.                         |
+| Command                            | Description                                                                             |
+| ---------------------------------- | --------------------------------------------------------------------------------------- |
+| `tokenscavenger` (no args)         | Starts the server. On first run, prompts to run the setup wizard if no config is found. |
+| `tokenscavenger setup`             | Run the interactive first-time setup wizard.                                            |
+| `tokenscavenger config`            | Edit an existing configuration file interactively.                                      |
+| `tokenscavenger service install`   | Install TokenScavenger as a background service on supported platforms.                  |
+| `tokenscavenger service uninstall` | Remove the installed background service on supported platforms.                         |
 
 ### `tokenscavenger setup`
 

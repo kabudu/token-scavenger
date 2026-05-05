@@ -1098,6 +1098,9 @@ impl ProviderAdapter for CohereAdapter {
                     as u32,
                 total_tokens: t.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32
                     + t.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                prompt_cache_hit_tokens: None,
+                prompt_cache_miss_tokens: None,
+                reasoning_tokens: None,
             });
 
         Ok(ProviderChatResponse {

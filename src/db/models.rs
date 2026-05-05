@@ -38,6 +38,7 @@ pub async fn init_db_with_pool_size(
         .await?;
 
     sqlx::migrate!("src/db/migrations").run(&pool).await?;
+    crate::usage::pricing_catalog::seed_builtin_pricing(&pool).await?;
 
     info!("Database migrations applied successfully");
     Ok(pool)

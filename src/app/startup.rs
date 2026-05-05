@@ -228,6 +228,33 @@ fn spawn_background_tasks(base_state: AppState) {
     });
     base_state.background_handles.lock().unwrap().push(handle);
 
+    // Pricing catalog refresh loop. Runs in the background so startup/readiness
+    // are not blocked by provider pricing pages.
+    let s = base_state.clone();
+    let handle = tokio::spawn(async move {
+        match crate::usage::pricing_catalog::refresh_pricing_sources(&s.db, &s.http_client, false)
+            .await
+        {
+            Ok(_) => info!("Startup pricing catalog refresh complete"),
+            Err(error) => tracing::warn!(%error, "Startup pricing catalog refresh failed"),
+        }
+        loop {
+            let mut shutdown_rx = s.shutdown_rx.clone();
+            let jitter_secs = rand::random_range(0..900);
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(86_400 + jitter_secs)) => {
+                    match crate::usage::pricing_catalog::refresh_pricing_sources(&s.db, &s.http_client, false).await {
+                        Ok(_) => info!("Pricing catalog refresh complete"),
+                        Err(error) => tracing::warn!(%error, "Pricing catalog refresh failed"),
+                    }
+                }
+                _ = shutdown_rx.changed() => { if *shutdown_rx.borrow() { break; } }
+            }
+        }
+        info!("Pricing catalog refresh loop stopped");
+    });
+    base_state.background_handles.lock().unwrap().push(handle);
+
     // Retention cleanup loop
     let s = base_state.clone();
     let handle = tokio::spawn(async move {
@@ -356,6 +383,18 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/admin/analytics/metrics",
             axum::routing::get(crate::api::routes::admin_analytics_metrics),
+        )
+        .route(
+            "/admin/pricing",
+            axum::routing::get(crate::api::routes::admin_pricing),
+        )
+        .route(
+            "/admin/pricing/refresh",
+            axum::routing::post(crate::api::routes::admin_pricing_refresh),
+        )
+        .route(
+            "/admin/pricing/backfill",
+            axum::routing::post(crate::api::routes::admin_pricing_backfill),
         )
         .layer(from_fn_with_state(
             state.clone(),

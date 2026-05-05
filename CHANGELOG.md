@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow for GitHub Actions with Linux, macOS ARM64, and Windows binaries plus SHA256 checksums.
 - CI workflow with formatting, clippy, build, tests, integration tests, benchmark smoke, and cross-build checks.
 - Documentation set covering getting started, configuration, API behavior, provider matrix, deployment, contributing, roadmap, pull request template, changelog, and the marketing website in `docs/`.
+- Price refresh for supported LLM providers and models
 
 ### Changed
 

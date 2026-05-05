@@ -97,6 +97,12 @@ pub struct UsageResponse {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_hit_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_miss_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u32>,
 }
 
 /// SSE streaming delta payload for chat completions.
@@ -162,6 +168,9 @@ pub struct ProviderUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    pub prompt_cache_hit_tokens: Option<u32>,
+    pub prompt_cache_miss_tokens: Option<u32>,
+    pub reasoning_tokens: Option<u32>,
 }
 
 /// Result from a provider adapter for chat completions.

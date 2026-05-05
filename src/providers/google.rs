@@ -271,6 +271,9 @@ impl ProviderAdapter for GoogleAdapter {
                 .get("totalTokenCount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
+            reasoning_tokens: None,
         });
 
         let model = response_body
@@ -359,6 +362,9 @@ impl ProviderAdapter for GoogleAdapter {
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 total_tokens: 0,
+                prompt_cache_hit_tokens: None,
+                prompt_cache_miss_tokens: None,
+                reasoning_tokens: None,
             },
             latency_ms: 0,
         })

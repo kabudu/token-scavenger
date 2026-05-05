@@ -1,6 +1,9 @@
 use crate::api::openai::chat::UsageResponse;
 use crate::app::state::AppState;
-use tracing::info;
+use crate::usage::pricing_catalog::{
+    PricingUsage, calculate_cost, free_tier_estimate, lookup_rate, unknown_price_estimate,
+};
+use tracing::{info, warn};
 
 /// Inputs needed to persist a completed request and usage event.
 pub struct UsageRecord<'a> {
@@ -33,13 +36,38 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
+        prompt_cache_hit_tokens: None,
+        prompt_cache_miss_tokens: None,
+        reasoning_tokens: None,
     });
 
-    let estimated_cost = crate::usage::pricing::estimate_cost(
-        usage.prompt_tokens,
-        usage.completion_tokens,
-        record.provider_id,
-    );
+    let pricing_usage = PricingUsage {
+        input_tokens: usage.prompt_tokens,
+        cached_input_tokens: usage.prompt_cache_hit_tokens,
+        cache_miss_input_tokens: usage.prompt_cache_miss_tokens,
+        output_tokens: usage.completion_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+    };
+
+    let cost = if record.free_tier {
+        free_tier_estimate()
+    } else {
+        match lookup_rate(&state.db, record.provider_id, record.model_id).await? {
+            Some(rate) => calculate_cost(&rate, &pricing_usage),
+            None => {
+                warn!(
+                    provider = %record.provider_id,
+                    model = %record.model_id,
+                    "Paid usage recorded without known model pricing"
+                );
+                crate::metrics::prometheus::record_unknown_price(
+                    record.provider_id,
+                    record.model_id,
+                );
+                unknown_price_estimate(record.provider_id, record.model_id, &pricing_usage)
+            }
+        }
+    };
 
     sqlx::query(
         "INSERT INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming)
@@ -56,16 +84,23 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
     .await?;
 
     sqlx::query(
-        "INSERT INTO usage_events (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, free_tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO usage_events
+         (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, cost_confidence, free_tier, cached_input_tokens, cache_miss_input_tokens, reasoning_tokens, pricing_model_id, cost_formula_json, cost_calculated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
     )
     .bind(record.request_id)
     .bind(record.provider_id)
     .bind(record.model_id)
     .bind(usage.prompt_tokens as i64)
     .bind(usage.completion_tokens as i64)
-    .bind(estimated_cost)
+    .bind(cost.amount_usd)
+    .bind(&cost.confidence)
     .bind(record.free_tier)
+    .bind(usage.prompt_cache_hit_tokens.map(|v| v as i64))
+    .bind(usage.prompt_cache_miss_tokens.map(|v| v as i64))
+    .bind(usage.reasoning_tokens.map(|v| v as i64))
+    .bind(cost.pricing_model_id)
+    .bind(cost.formula_json.to_string())
     .execute(&state.db)
     .await?;
 
@@ -88,6 +123,12 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
         "output",
         usage.completion_tokens,
     );
+    crate::metrics::prometheus::record_estimated_cost(
+        record.provider_id,
+        record.model_id,
+        &cost.confidence,
+        cost.amount_usd,
+    );
 
     info!(
         request_id = %record.request_id,
@@ -95,6 +136,8 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
         model = %record.model_id,
         prompt_tokens = usage.prompt_tokens,
         completion_tokens = usage.completion_tokens,
+        estimated_cost_usd = cost.amount_usd,
+        cost_confidence = %cost.confidence,
         latency_ms = record.latency_ms,
         "Usage recorded"
     );
