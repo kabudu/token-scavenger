@@ -146,8 +146,8 @@ pub async fn create_chat_stream(
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
-    // Resolve model alias
-    let resolved_models = crate::router::aliases::resolve_alias(&state, &request.model)
+    // Resolve model group
+    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &request.model)
         .await
         .unwrap_or_else(|| vec![request.model.clone()]);
 

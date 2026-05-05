@@ -22,9 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Single-binary Axum/Tokio runtime backed by SQLite with WAL mode, migrations, usage accounting, health events, audit entries, and retention-ready timestamps.
 - Provider adapter framework with shared OpenAI-compatible helpers, provider capabilities, auth handling, model discovery, response normalization, rate-limit classification, and streaming support.
 - Fourteen built-in provider integrations: Groq, Google Gemini, OpenRouter, Cloudflare Workers AI, Cerebras, NVIDIA NIM, Cohere, Mistral AI, GitHub Models, HuggingFace, ZAI/Zhipu AI, SiliconFlow, DeepSeek, and xAI/Grok.
-- Free-first routing with configurable provider order, model aliases, model enablement, model priority, health filtering, circuit breakers, retry/backoff behavior, and explicit paid fallback policy.
+- Free-first routing with configurable provider order, model groups, model enablement, model priority, health filtering, circuit breakers, retry/backoff behavior, and explicit paid fallback policy.
 - OpenAI-style error responses with upstream rate-limit exhaustion surfaced as `429 rate_limit_exceeded` or `quota_exhausted`, and non-rate-limit route exhaustion surfaced as `503 route_exhausted`.
-- Runtime config hot reload through the admin API and web UI, including server, routing, resilience, provider, model, and alias changes.
+- Runtime config hot reload through the admin API and web UI, including server, routing, resilience, provider, model, and model group changes.
 - Runtime overrides persisted to a sidecar `.overrides.toml` file and merged back on startup.
 - First-run guided setup wizard and interactive `tokenscavenger config` editor.
 - `tokenscavenger service install` and `tokenscavenger service uninstall` commands for macOS LaunchAgent installation/removal and Linux systemd command generation.
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved long-form project documentation from the marketing `docs/` site into the repository `documentation/` folder.
 - Expanded project positioning from free-tier-only routing to free-first routing with explicit opt-in paid fallback.
 - Updated provider catalog, setup wizard, README, provider matrix, and marketing site to reflect the direct DeepSeek and xAI/Grok paid fallback integrations.
-- Updated route-plan explanations to include resolved aliases, paid fallback eligibility, model enablement, health, breaker state, and filtering reasons.
+- Updated route-plan explanations to include resolved model groups, paid fallback eligibility, model enablement, health, breaker state, and filtering reasons.
 - Updated usage accounting to distinguish free-tier and paid fallback provider attempts.
 - Updated the release workflow to support creating a release from the current `Cargo.toml` version as well as patch/minor/major bumps.
 - Updated README and CONTRIBUTING links to point at `documentation/` and `ROADMAP.md`.

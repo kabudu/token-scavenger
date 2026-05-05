@@ -30,7 +30,7 @@ path = "/metrics"                   # Metrics endpoint path
 [routing]
 free_first = true                   # Always prefer free tier first
 allow_paid_fallback = false         # Allow fallback to paid providers
-default_alias_strategy = "provider-priority"
+default_model_group_strategy = "provider-priority"
 provider_order = [                  # Fallback ordering
     "groq", "cerebras", "google", "openrouter", "cloudflare",
     "nvidia", "mistral", "github-models", "siliconflow",
@@ -51,9 +51,9 @@ api_key = "${GROQ_API_KEY}"         # API key (supports env expansion)
 free_only = true                    # Mark as free-tier
 discover_models = true              # Auto-discover available models
 
-# Aliases for simplified model routing
-[[aliases]]
-alias = "free:llama-70b"
+# Model groups for simplified model routing
+[[model_groups]]
+name = "free:llama-70b"
 target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 ```
 
@@ -99,7 +99,7 @@ target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 |-------|---------|-------------|
 | `free_first` | `true` | When true, free-tier providers are always preferred over paid. |
 | `allow_paid_fallback` | `false` | If true, providers marked `free_only = false` may be used after earlier routes are exhausted. |
-| `default_alias_strategy` | `"provider-priority"` | Strategy for resolving model aliases with multiple targets. |
+| `default_model_group_strategy` | `"provider-priority"` | Strategy for resolving model groups with multiple targets. |
 | `provider_order` | `[default list]` | Ordered list defining the fallback chain. First match wins. |
 
 ### `[resilience]`
@@ -127,11 +127,11 @@ This is an array of provider configurations. Each entry specifies:
 Supported provider IDs:
 `groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`)
 
-### `[[aliases]]`
+### `[[model_groups]]`
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `alias` | *(required)* | Short alias name used in `model` field of requests |
+| `name` | *(required)* | Public model group name used in the `model` field of requests |
 | `target` | *(required)* | Array of provider/model pairs to try in order |
 
 ## Example Configurations
@@ -147,7 +147,7 @@ id = "groq"
 api_key = "${GROQ_API_KEY}"
 ```
 
-### Multi-provider with aliases
+### Multi-provider with model groups
 
 ```toml
 [server]
@@ -178,12 +178,12 @@ api_key = "${CEREBRAS_API_KEY}"
 id = "mistral"
 api_key = "${MISTRAL_API_KEY}"
 
-[[aliases]]
-alias = "fast"
+[[model_groups]]
+name = "fast"
 target = ["cerebras/llama3.1-8b", "groq/llama3-8b-8192"]
 
-[[aliases]]
-alias = "powerful"
+[[model_groups]]
+name = "powerful"
 target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash", "openrouter/meta-llama/llama-3.3-70b-instruct:free"]
 ```
 

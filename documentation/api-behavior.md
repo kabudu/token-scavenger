@@ -40,13 +40,13 @@ The `message` is intended for logs and operator diagnostics. Client retry logic 
 | `401` | `auth_error` | The proxy master key is missing or invalid. | Refresh credentials; do not retry unchanged. |
 | `404` | route-specific | Unknown TokenScavenger endpoint. | Fix the URL. |
 | `429` | `rate_limit_exceeded` | An upstream provider rate limit or quota condition prevented completion and no fallback succeeded. | Back off. Respect `Retry-After` when present. |
-| `429` | `quota_exhausted` | Configured provider quota is exhausted until a reset window. | Back off until the indicated reset, or choose another model/alias. |
-| `503` | `route_exhausted` | No viable route remained for reasons other than rate limits, such as unhealthy providers, open circuit breakers, unsupported models, or upstream 5xx failures. | Retry later or use a different model/alias; inspect `/metrics` and the UI. |
+| `429` | `quota_exhausted` | Configured provider quota is exhausted until a reset window. | Back off until the indicated reset, or choose another model group. |
+| `503` | `route_exhausted` | No viable route remained for reasons other than rate limits, such as unhealthy providers, open circuit breakers, unsupported models, or upstream 5xx failures. | Retry later or use a different model group; inspect `/metrics` and the UI. |
 | `500` | `internal_error` | TokenScavenger hit an internal error. | Retry cautiously and inspect logs. |
 
 ## Rate Limits and Backoff
 
-When an upstream provider returns a rate-limit response, TokenScavenger normalizes it into `ProviderError::RateLimited`. If another eligible provider or alias target succeeds, the caller still receives `200`. If every eligible route fails because of rate limiting or quota exhaustion, TokenScavenger returns `429 Too Many Requests`.
+When an upstream provider returns a rate-limit response, TokenScavenger normalizes it into `ProviderError::RateLimited`. If another eligible provider or model group target succeeds, the caller still receives `200`. If every eligible route fails because of rate limiting or quota exhaustion, TokenScavenger returns `429 Too Many Requests`.
 
 When TokenScavenger can derive a backoff window from upstream headers, it includes:
 
@@ -96,4 +96,3 @@ Authorization: Bearer <master-api-key>
 ```
 
 The key is for TokenScavenger itself. Provider API keys remain in TokenScavenger configuration and are never returned in API responses, logs, fixtures, or UI payloads.
-

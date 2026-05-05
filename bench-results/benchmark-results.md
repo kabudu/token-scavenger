@@ -17,8 +17,8 @@ All times are wall-clock, measured with criterion (--quick mode).
 | redaction/redact_secret | 19 ns | Single secret string redaction |
 | redaction/redact_json_value | 208 ns | JSON object redaction with nesting |
 | config_parse | 6.7 µs | Full TOML config parse and validation |
-| alias_resolve_hit | ~15 µs | Alias resolution with DB hit |
-| alias_resolve_miss | ~10 µs | Alias resolution with DB miss |
+| model_group_resolve_hit | ~15 µs | Model group resolution with DB hit |
+| model_group_resolve_miss | ~10 µs | Model group resolution with DB miss |
 | sqlite_write/1 | 518 µs | Single usage event insert |
 | sqlite_write/10 | 847 µs | 10 usage event inserts |
 | sqlite_write/100 | 3.95 ms | 100 usage event inserts (~39.5 µs per insert) |

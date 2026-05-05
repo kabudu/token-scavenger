@@ -185,7 +185,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
         routing: RoutingConfig {
             free_first,
             allow_paid_fallback: allow_paid,
-            default_alias_strategy: "provider-priority".into(),
+            default_model_group_strategy: "provider-priority".into(),
             provider_order: providers.iter().map(|p| p.id.clone()).collect(),
         },
         resilience: ResilienceConfig {

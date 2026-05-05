@@ -260,7 +260,7 @@ pub async fn admin_route_plan(
     };
 
     let config = state.config();
-    let resolved_models = crate::router::aliases::resolve_alias(&state, &model)
+    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &model)
         .await
         .unwrap_or_else(|| vec![model.clone()]);
     let policy = crate::router::policy::RoutePolicy::from_config(&config);
@@ -614,24 +614,24 @@ pub async fn admin_config_save(
         }
     }
 
-    // --- Aliases (existing logic, unchanged) ---
-    if let Some(aliases) = body.get("aliases").and_then(|a| a.as_array()) {
-        for alias_update in aliases {
-            if let (Some(alias), Some(target)) = (
-                alias_update.get("alias").and_then(|v| v.as_str()),
-                alias_update.get("target"),
+    // --- Model groups ---
+    if let Some(model_groups) = body.get("model_groups").and_then(|a| a.as_array()) {
+        for model_group_update in model_groups {
+            if let (Some(name), Some(target)) = (
+                model_group_update.get("name").and_then(|v| v.as_str()),
+                model_group_update.get("target"),
             ) {
-                let enabled = alias_update
+                let enabled = model_group_update
                     .get("enabled")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
                 let _ = sqlx::query(
-                    "INSERT INTO aliases (alias, target_json, enabled, updated_at)
+                    "INSERT INTO model_groups (name, target_json, enabled, updated_at)
                      VALUES (?, ?, ?, datetime('now'))
-                     ON CONFLICT(alias)
+                     ON CONFLICT(name)
                      DO UPDATE SET target_json = excluded.target_json, enabled = excluded.enabled, updated_at = datetime('now')",
                 )
-                .bind(alias)
+                .bind(name)
                 .bind(target.to_string())
                 .bind(enabled)
                 .execute(&state.db)
@@ -752,47 +752,49 @@ pub async fn admin_config_rollback(
         "snapshot_id": snapshot_id
     })))
 }
-pub async fn admin_aliases_list(
+pub async fn admin_model_groups_list(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
-    Ok(Json(crate::router::aliases::get_all_aliases(&state).await))
+    Ok(Json(
+        crate::router::model_groups::get_all_model_groups(&state).await,
+    ))
 }
 
-pub async fn admin_delete_alias(
+pub async fn admin_delete_model_group(
     State(state): State<AppState>,
-    axum::extract::Path(alias): axum::extract::Path<String>,
+    axum::extract::Path(name): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    sqlx::query("DELETE FROM aliases WHERE alias = ?")
-        .bind(&alias)
+    sqlx::query("DELETE FROM model_groups WHERE name = ?")
+        .bind(&name)
         .execute(&state.db)
         .await
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
     Ok(Json(serde_json::json!({
         "status": "ok",
-        "message": format!("Alias '{}' deleted", alias)
+        "message": format!("Model group '{}' deleted", name)
     })))
 }
 
 #[derive(serde::Deserialize)]
-pub struct SaveAliasRequest {
-    pub alias: String,
+pub struct SaveModelGroupRequest {
+    pub name: String,
     pub target: serde_json::Value, // Can be a string or array of strings
     pub enabled: bool,
 }
 
-pub async fn admin_save_alias(
+pub async fn admin_save_model_group(
     State(state): State<AppState>,
-    Json(payload): Json<SaveAliasRequest>,
+    Json(payload): Json<SaveModelGroupRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let target_json = serde_json::to_string(&payload.target)
         .map_err(|e| ApiError::InvalidRequest(format!("Invalid target JSON: {e}")))?;
 
     sqlx::query(
-        "INSERT INTO aliases (alias, target_json, enabled, updated_at) VALUES (?, ?, ?, datetime('now'))
-         ON CONFLICT(alias) DO UPDATE SET target_json = excluded.target_json, enabled = excluded.enabled, updated_at = excluded.updated_at"
+        "INSERT INTO model_groups (name, target_json, enabled, updated_at) VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(name) DO UPDATE SET target_json = excluded.target_json, enabled = excluded.enabled, updated_at = excluded.updated_at"
     )
-    .bind(&payload.alias)
+    .bind(&payload.name)
     .bind(target_json)
     .bind(payload.enabled)
     .execute(&state.db)
@@ -801,7 +803,7 @@ pub async fn admin_save_alias(
 
     Ok(Json(serde_json::json!({
         "status": "ok",
-        "message": format!("Alias '{}' saved", payload.alias)
+        "message": format!("Model group '{}' saved", payload.name)
     })))
 }
 

@@ -988,15 +988,15 @@ async fn test_not_found_returns_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 #[tokio::test]
-async fn test_multi_model_alias_resolution() {
+async fn test_multi_model_group_resolution() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
         .await
         .unwrap();
 
-    // 1. Insert an alias with multiple targets
-    sqlx::query("INSERT INTO aliases (alias, target_json, enabled) VALUES ('my-alias', '[\"m1\", \"m2\"]', 1)")
+    // 1. Insert a model group with multiple targets
+    sqlx::query("INSERT INTO model_groups (name, target_json, enabled) VALUES ('my-group', '[\"m1\", \"m2\"]', 1)")
         .execute(&pool).await.unwrap();
 
     let config = Config::default();
@@ -1007,24 +1007,24 @@ async fn test_multi_model_alias_resolution() {
         tokio::sync::broadcast::channel(1).0,
     );
 
-    // 2. Resolve alias
-    let resolved = tokenscavenger::router::aliases::resolve_alias(&state, "my-alias")
+    // 2. Resolve model group
+    let resolved = tokenscavenger::router::model_groups::resolve_model_group(&state, "my-group")
         .await
         .unwrap();
     assert_eq!(resolved, vec!["m1".to_string(), "m2".to_string()]);
 }
 
 #[tokio::test]
-async fn test_alias_fallback_logic() {
+async fn test_model_group_fallback_logic() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
         .await
         .unwrap();
 
-    // Alias points to two models. We want to verify the engine builds a combined plan.
+    // Model group points to two models. We want to verify the engine builds a combined plan.
     sqlx::query(
-        "INSERT INTO aliases (alias, target_json, enabled) VALUES ('multi', '[\"m1\", \"m2\"]', 1)",
+        "INSERT INTO model_groups (name, target_json, enabled) VALUES ('multi', '[\"m1\", \"m2\"]', 1)",
     )
     .execute(&pool)
     .await
@@ -1046,8 +1046,8 @@ async fn test_alias_fallback_logic() {
     );
     state.provider_registry.init_from_config(&state).await;
 
-    // Build plan for the alias
-    let resolved = tokenscavenger::router::aliases::resolve_alias(&state, "multi")
+    // Build plan for the model group
+    let resolved = tokenscavenger::router::model_groups::resolve_model_group(&state, "multi")
         .await
         .unwrap();
     let registry = &state.provider_registry;

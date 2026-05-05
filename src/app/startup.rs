@@ -334,12 +334,12 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(crate::api::routes::admin_config_rollback),
         )
         .route(
-            "/admin/aliases",
-            axum::routing::get(crate::api::routes::admin_aliases_list),
+            "/admin/model-groups",
+            axum::routing::get(crate::api::routes::admin_model_groups_list),
         )
         .route(
-            "/admin/aliases/{alias}",
-            axum::routing::delete(crate::api::routes::admin_delete_alias),
+            "/admin/model-groups/{name}",
+            axum::routing::delete(crate::api::routes::admin_delete_model_group),
         )
         .route(
             "/admin/analytics/traffic",

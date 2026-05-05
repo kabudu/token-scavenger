@@ -12,8 +12,8 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 **What good looks like:**
 
-- Per-alias routing objectives such as `min_cost`, `min_latency`, `balanced`, `quality_first`, and `local_only`.
-- Configurable max cost per request, per day, per provider, and per alias.
+- Per-model-group routing objectives such as `min_cost`, `min_latency`, `balanced`, `quality_first`, and `local_only`.
+- Configurable max cost per request, per day, per provider, and per model group.
 - Provider/model scoring that combines price, observed latency, recent failure rate, context window, endpoint capability, and operator priority.
 - Route-plan explanations that score each candidate and show why one model won over alternatives.
 - Deterministic tests for budget enforcement, paid fallback gating, and policy tie-breaking.
@@ -34,17 +34,17 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 ## 3. Model Intelligence Layer
 
-**Current baseline:** TokenScavenger already merges curated and discovered model catalogs, supports aliases, exposes model enablement and priority controls, and documents provider capabilities. Alias editing exists in the admin UI.
+**Current baseline:** TokenScavenger already merges curated and discovered model catalogs, supports model groups, exposes model enablement and priority controls, and documents provider capabilities. Model group editing exists in the admin UI.
 
 **Why it matters:** Operators should not have to memorize every upstream model name or manually guess equivalent fallbacks. TokenScavenger can become the map between task intent and concrete provider models.
 
 **What good looks like:**
 
 - Normalized model families, task tags, context windows, modality flags, JSON/tool support, reasoning support, and pricing metadata.
-- Higher-level smart aliases such as `fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced` built on top of the existing alias system.
+- Higher-level smart model groups such as `fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced` built on top of the existing model group system.
 - Compatibility checks that reject or reroute when a provider cannot satisfy tools, JSON mode, vision, embeddings, or context length.
 - Automatic catalog freshness scoring so stale discovery data is visible.
-- Admin UI flows for comparing models across providers and editing advanced alias strategies without hand-writing JSON.
+- Admin UI flows for comparing models across providers and editing advanced model group strategies without hand-writing JSON.
 
 ## 4. Operator-Grade Observability And Incident Workflow
 
@@ -54,7 +54,7 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 **What good looks like:**
 
-- A request trace view that shows alias resolution, candidate providers, skip reasons, retries, selected route, upstream response class, latency, and token usage.
+- A request trace view that shows model group resolution, candidate providers, skip reasons, retries, selected route, upstream response class, latency, and token usage.
 - Deeper time-window analytics for success rate, 429 rate, cost estimate, token volume, fallback count, and provider saturation.
 - Incident annotations for provider outages, quota exhaustion, config changes, and breaker transitions.
 - Exportable diagnostic bundles with secrets redacted.

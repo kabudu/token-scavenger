@@ -119,8 +119,11 @@ pub struct RoutingConfig {
     pub free_first: bool,
     #[serde(default)]
     pub allow_paid_fallback: bool,
-    #[serde(default = "default_alias_strategy")]
-    pub default_alias_strategy: String,
+    #[serde(
+        default = "default_model_group_strategy",
+        alias = "default_alias_strategy"
+    )]
+    pub default_model_group_strategy: String,
     #[serde(default)]
     pub provider_order: Vec<String>,
 }
@@ -130,7 +133,7 @@ impl Default for RoutingConfig {
         Self {
             free_first: true,
             allow_paid_fallback: false,
-            default_alias_strategy: default_alias_strategy(),
+            default_model_group_strategy: default_model_group_strategy(),
             provider_order: Vec::new(),
         }
     }
@@ -205,7 +208,7 @@ fn default_log_level() -> String {
 fn default_metrics_path() -> String {
     "/metrics".to_string()
 }
-fn default_alias_strategy() -> String {
+fn default_model_group_strategy() -> String {
     "provider-priority".to_string()
 }
 fn default_max_retries() -> u32 {

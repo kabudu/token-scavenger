@@ -45,8 +45,8 @@ pub async fn route_chat_request(
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
-    // Resolve model alias
-    let resolved_models = crate::router::aliases::resolve_alias(&state, &request.model)
+    // Resolve model group
+    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &request.model)
         .await
         .unwrap_or_else(|| vec![request.model.clone()]);
 
@@ -441,7 +441,7 @@ pub async fn route_embeddings_request(
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
-    let resolved_models = crate::router::aliases::resolve_alias(&state, &request.model)
+    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &request.model)
         .await
         .unwrap_or_else(|| vec![request.model.clone()]);
 

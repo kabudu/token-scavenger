@@ -25,10 +25,10 @@ async fn test_clean_bootstrap() {
     let table_names: Vec<String> = tables.into_iter().map(|r| r.0).collect();
 
     let expected = [
-        "aliases",
         "config_audit_log",
         "config_snapshots",
         "discovery_runs",
+        "model_groups",
         "models",
         "provider_health_events",
         "providers",
@@ -102,8 +102,8 @@ async fn test_can_insert_and_query_all_tables() {
         .unwrap();
     assert_eq!(m.0, "m1");
 
-    sqlx::query("INSERT INTO aliases (alias, target_json) VALUES (?, ?)")
-        .bind("my-alias")
+    sqlx::query("INSERT INTO model_groups (name, target_json) VALUES (?, ?)")
+        .bind("my-group")
         .bind("\"target\"")
         .execute(&pool)
         .await

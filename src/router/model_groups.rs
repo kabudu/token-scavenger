@@ -1,11 +1,11 @@
 use crate::app::state::AppState;
 
-/// Resolve a model alias to its target model IDs.
-/// Returns `None` if no alias matches (use the model ID directly).
-pub async fn resolve_alias(state: &AppState, model: &str) -> Option<Vec<String>> {
-    // Check DB aliases
+/// Resolve a model group to its target model IDs.
+/// Returns `None` if no model group matches (use the model ID directly).
+pub async fn resolve_model_group(state: &AppState, model: &str) -> Option<Vec<String>> {
+    // Check DB model groups
     let result = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM aliases WHERE alias = ? AND enabled = 1",
+        "SELECT target_json FROM model_groups WHERE name = ? AND enabled = 1",
     )
     .bind(model)
     .fetch_optional(&state.db)
@@ -33,20 +33,20 @@ pub async fn resolve_alias(state: &AppState, model: &str) -> Option<Vec<String>>
     Some(vec![target_json])
 }
 
-/// Get all aliases from the database.
-pub async fn get_all_aliases(state: &AppState) -> Vec<serde_json::Value> {
+/// Get all model groups from the database.
+pub async fn get_all_model_groups(state: &AppState) -> Vec<serde_json::Value> {
     sqlx::query_as::<_, (String, String, bool)>(
-        "SELECT alias, target_json, enabled FROM aliases ORDER BY alias ASC",
+        "SELECT name, target_json, enabled FROM model_groups ORDER BY name ASC",
     )
     .fetch_all(&state.db)
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(alias, target_json, enabled)| {
+    .map(|(name, target_json, enabled)| {
         let target: serde_json::Value =
             serde_json::from_str(&target_json).unwrap_or(serde_json::json!(target_json));
         serde_json::json!({
-            "alias": alias,
+            "name": name,
             "target": target,
             "enabled": enabled
         })

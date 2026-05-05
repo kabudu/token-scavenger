@@ -154,7 +154,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="llama3-70b-8192",  # or any alias
+    model="llama3-70b-8192",  # or any model group
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
@@ -174,7 +174,7 @@ src/
   metrics/      Prometheus counters/histograms, structured tracing
   providers/    14 provider adapter implementations
   resilience/   Circuit breakers, health tracking, retry/backoff
-  router/       Route planning engine, policy, aliases, fallback
+  router/       Route planning engine, policy, model groups, fallback
   ui/           Embedded operator web UI (9 views)
   usage/        Usage accounting, aggregation, pricing
   util/         Secret redaction, time utilities
@@ -264,7 +264,7 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 - Dashboard — system status, uptime, provider count
 - Providers — enable/disable, inspect health and breaker state
 - Models — view discovered and curated models
-- Routing — view fallback order and alias configuration
+- Routing — view fallback order and model group configuration
 - Usage — token counts and estimated costs
 - Health — per-provider health states
 - Logs — real-time log stream via SSE

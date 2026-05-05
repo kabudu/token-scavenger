@@ -261,32 +261,32 @@ for await (const chunk of stream) {
 }
 ```
 
-## Model Aliases
+## Model Groups
 
-TokenScavenger supports configurable model aliases for simplified routing:
+TokenScavenger supports configurable model groups for simplified routing:
 
 ```toml
-[[aliases]]
-alias = "free:llama-70b"
+[[model_groups]]
+name = "free:llama-70b"
 target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 
-[[aliases]]
-alias = "fast-chat"
+[[model_groups]]
+name = "fast-chat"
 target = ["cerebras/llama3.1-8b"]
 ```
 
-Then use the alias in your request:
+Then use the group name in your request:
 
 ```json
 {"model": "free:llama-70b", "messages": [...]}
 ```
 
-### Mastering Model Aliases
-Aliases are powerful tools for creating stable, provider-agnostic endpoints for your applications. Unlike core provider settings, aliases are stored in the database and are best managed via the **Admin UI (Config > Alias Editor)**.
+### Mastering Model Groups
+Model groups are powerful tools for creating stable, provider-agnostic endpoints for your applications. Unlike core provider settings, model groups are stored in the database and are best managed via the **Admin UI (Config > Model Group Editor)**.
 
 #### Scenario: High-Availability Failover
 If you want to ensure your "smart chat" always works even if a specific provider is down:
-1. Create an alias named `smart-chat`.
+1. Create a model group named `smart-chat`.
 2. Add multiple target models in order of preference:
    - `groq/llama3-70b-8192` (Fastest)
    - `cerebras/llama3.1-70b` (Alternative)
@@ -295,10 +295,10 @@ If you want to ensure your "smart chat" always works even if a specific provider
 4. TokenScavenger will try them in the exact order you defined. If Groq is unhealthy or rate-limited, it automatically fails over to Cerebras, then Gemini.
 
 ### The "Default Model" Pattern
-You can create an alias literally named `default`. This allows you to point legacy scripts or simple integrations to TokenScavenger without specifying any model at all. If a request comes in with a missing or unrecognized model, TokenScavenger can be configured to use this `default` mapping.
+You can create a model group literally named `default`. This allows you to point legacy scripts or simple integrations to TokenScavenger without specifying any model at all. If a request comes in with a missing or unrecognized model, TokenScavenger can be configured to use this `default` mapping.
 
 ### Hot-Reloading Configuration
-Most settings—including aliases, model priority, and provider status—can be changed via the **Admin UI** while the service is running. Changes are applied immediately to new requests without needing a restart.
+Most settings—including model groups, model priority, and provider status—can be changed via the **Admin UI** while the service is running. Changes are applied immediately to new requests without needing a restart.
 
 ## Next Steps
 

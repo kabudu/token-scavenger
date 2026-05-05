@@ -850,10 +850,10 @@ pub async fn render_config(state: &AppState) -> String {
                 </div>
             </div>
             <div class="glass-card p-6">
-                <h3 class="font-bold mb-4 text-emerald-400">Alias Editor</h3>
+                <h3 class="font-bold mb-4 text-emerald-400">Model Group Editor</h3>
                 <div class="flex flex-col gap-4">
                     <div class="flex gap-4">
-                        <input id="alias" placeholder="alias (e.g. 'gpt-4')" aria-label="Alias" class="w-1/3">
+                        <input id="model-group-name" placeholder="group name (e.g. 'fast-chat')" aria-label="Model group name" class="w-1/3">
                         <div class="flex-1 relative">
                             <div id="target-tags" class="flex flex-wrap gap-2 p-2 min-h-[42px] bg-black/20 border border-white/10 rounded items-center">
                                 <input id="target-search" placeholder="Search and add models..." class="flex-1 bg-transparent border-0 p-0 focus:ring-0 text-sm min-w-[150px]">
@@ -862,27 +862,27 @@ pub async fn render_config(state: &AppState) -> String {
                                 <!-- Dropdown items -->
                             </div>
                         </div>
-                        <button id="save-alias-btn" class="btn h-[42px] flex items-center justify-center min-w-[120px]" onclick="saveAlias()">
-                            <span class="btn-text">Save Alias</span>
+                        <button id="save-model-group-btn" class="btn h-[42px] flex items-center justify-center min-w-[150px]" onclick="saveModelGroup()">
+                            <span class="btn-text">Save Group</span>
                         </button>
                         <button id="cancel-edit-btn" class="btn h-[42px] hidden" style="background:#334155;" onclick="cancelEdit()">Cancel</button>
                     </div>
-                    <p class="text-[10px] text-slate-500">Aliases can map to multiple models. TokenScavenger will try them in order if the first one fails or is unhealthy.</p>
+                    <p class="text-[10px] text-slate-500">Model groups map one public model name to multiple target models. TokenScavenger will try them in order if the first one fails or is unhealthy.</p>
                 </div>
             </div>
 
-            <!-- Alias Management List -->
+            <!-- Model Group Management List -->
             <div class="glass-card overflow-hidden">
                 <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
-                    <h3 class="font-bold text-sm">Configured Aliases</h3>
+                    <h3 class="font-bold text-sm">Configured Model Groups</h3>
                 </div>
                 <div class="p-0 overflow-x-auto">
                     <table class="w-full text-left">
                         <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
-                            <tr><th>Alias Name</th><th>Target Models</th><th class="text-right px-6">Actions</th></tr>
+                            <tr><th>Group Name</th><th>Target Models</th><th class="text-right px-6">Actions</th></tr>
                         </thead>
-                        <tbody id="alias-list-body" class="divide-y divide-white/5">
-                            <tr><td colspan="3" class="text-center text-slate-500 py-8">Loading aliases...</td></tr>
+                        <tbody id="model-group-list-body" class="divide-y divide-white/5">
+                            <tr><td colspan="3" class="text-center text-slate-500 py-8">Loading model groups...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -933,22 +933,22 @@ pub async fn render_config(state: &AppState) -> String {
     }}
 
     function cancelEdit() {{
-        document.getElementById('alias').value = '';
-        document.getElementById('alias').disabled = false;
+        document.getElementById('model-group-name').value = '';
+        document.getElementById('model-group-name').disabled = false;
         selectedModels = [];
         renderTags();
-        document.getElementById('save-alias-btn').querySelector('.btn-text').innerText = 'Save Alias';
+        document.getElementById('save-model-group-btn').querySelector('.btn-text').innerText = 'Save Group';
         document.getElementById('cancel-edit-btn').classList.add('hidden');
     }}
 
-    function editAlias(alias, targets) {{
-        document.getElementById('alias').value = alias;
-        document.getElementById('alias').disabled = true;
+    function editModelGroup(name, targets) {{
+        document.getElementById('model-group-name').value = name;
+        document.getElementById('model-group-name').disabled = true;
         selectedModels = [...targets];
         renderTags();
-        document.getElementById('save-alias-btn').querySelector('.btn-text').innerText = 'Update Alias';
+        document.getElementById('save-model-group-btn').querySelector('.btn-text').innerText = 'Update Group';
         document.getElementById('cancel-edit-btn').classList.remove('hidden');
-        document.getElementById('alias').scrollIntoView({{ behavior: 'smooth' }});
+        document.getElementById('model-group-name').scrollIntoView({{ behavior: 'smooth' }});
     }}
 
     searchInput.onfocus = () => showDropdown(searchInput.value);
@@ -981,24 +981,24 @@ pub async fn render_config(state: &AppState) -> String {
         dropdown.classList.remove('hidden');
     }}
 
-    async function loadAliases() {{
-        const body = document.getElementById('alias-list-body');
+    async function loadModelGroups() {{
+        const body = document.getElementById('model-group-list-body');
         try {{
-            const resp = await fetch('/admin/aliases');
+            const resp = await fetch('/admin/model-groups');
             if (!resp.ok) throw new Error('Failed to load');
-            const aliases = await resp.json();
+            const modelGroups = await resp.json();
             
-            if (aliases.length === 0) {{
-                body.innerHTML = '<tr><td colspan="3" class="text-center text-slate-500 py-8">No aliases configured.</td></tr>';
+            if (modelGroups.length === 0) {{
+                body.innerHTML = '<tr><td colspan="3" class="text-center text-slate-500 py-8">No model groups configured.</td></tr>';
                 return;
             }}
 
-            body.innerHTML = aliases.map(a => {{
-                const targets = Array.isArray(a.target) ? a.target : [a.target];
+            body.innerHTML = modelGroups.map(group => {{
+                const targets = Array.isArray(group.target) ? group.target : [group.target];
                 const targetsJson = JSON.stringify(targets).replace(/"/g, '&quot;');
                 return `
                 <tr>
-                    <td class="px-6 py-4 font-mono text-cyan-400">${{a.alias}}</td>
+                    <td class="px-6 py-4 font-mono text-cyan-400">${{group.name}}</td>
                     <td class="px-6 py-4">
                         <div class="flex flex-wrap gap-1">
                             ${{targets.map(t => `<span class="text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/10">${{t}}</span>`).join('')}}
@@ -1006,10 +1006,10 @@ pub async fn render_config(state: &AppState) -> String {
                     </td>
                     <td class="px-6 py-4 text-right">
                         <div class="flex justify-end gap-2">
-                            <button onclick="editAlias('${{a.alias.replace(/'/g, "\\'")}}', ${{targetsJson}})" class="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors" title="Edit">
+                            <button onclick="editModelGroup('${{group.name.replace(/'/g, "\\'")}}', ${{targetsJson}})" class="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors" title="Edit">
                                 <i class="fas fa-edit"></i>
                             </button>
-                            <button onclick="deleteAlias('${{a.alias.replace(/'/g, "\\'")}}')" class="p-2 text-red-400 hover:bg-red-400/10 rounded transition-colors" title="Delete">
+                            <button onclick="deleteModelGroup('${{group.name.replace(/'/g, "\\'")}}')" class="p-2 text-red-400 hover:bg-red-400/10 rounded transition-colors" title="Delete">
                                 <i class="fas fa-trash-alt"></i>
                             </button>
                         </div>
@@ -1017,18 +1017,18 @@ pub async fn render_config(state: &AppState) -> String {
                 </tr>
             `}}).join('');
         }} catch (e) {{
-            body.innerHTML = '<tr><td colspan="3" class="text-center text-red-400 py-8">Error loading aliases.</td></tr>';
+            body.innerHTML = '<tr><td colspan="3" class="text-center text-red-400 py-8">Error loading model groups.</td></tr>';
         }}
     }}
 
-    async function deleteAlias(name) {{
-        showConfirm('Delete Alias', `Are you sure you want to delete alias "${{name}}"? This action cannot be undone.`, async () => {{
+    async function deleteModelGroup(name) {{
+        showConfirm('Delete Model Group', `Are you sure you want to delete model group "${{name}}"? This action cannot be undone.`, async () => {{
             try {{
-                const resp = await fetch(`/admin/aliases/${{encodeURIComponent(name)}}`, {{ method: 'DELETE' }});
+                const resp = await fetch(`/admin/model-groups/${{encodeURIComponent(name)}}`, {{ method: 'DELETE' }});
                 if (resp.ok) {{
-                    loadAliases();
+                    loadModelGroups();
                 }} else {{
-                    showModal('Error', 'Failed to delete alias', true);
+                    showModal('Error', 'Failed to delete model group', true);
                 }}
             }} catch (e) {{
                 console.error(e);
@@ -1036,10 +1036,10 @@ pub async fn render_config(state: &AppState) -> String {
         }});
     }}
 
-    async function saveAlias() {{ 
-        const alias=document.getElementById('alias').value.trim(); 
-        const btn = document.getElementById('save-alias-btn');
-        if (!alias || selectedModels.length === 0) return showModal('Error', 'Alias and at least one target model are required', true); 
+    async function saveModelGroup() {{ 
+        const name=document.getElementById('model-group-name').value.trim(); 
+        const btn = document.getElementById('save-model-group-btn');
+        if (!name || selectedModels.length === 0) return showModal('Error', 'Model group name and at least one target model are required', true); 
         
         btn.classList.add('btn-loading');
         try {{
@@ -1047,8 +1047,8 @@ pub async fn render_config(state: &AppState) -> String {
                 method:'PUT', 
                 headers:{{'Content-Type':'application/json'}}, 
                 body:JSON.stringify({{
-                    aliases:[{{
-                        alias, 
+                    model_groups:[{{
+                        name, 
                         target: selectedModels.length === 1 ? selectedModels[0] : selectedModels, 
                         enabled:true
                     }}]
@@ -1057,10 +1057,10 @@ pub async fn render_config(state: &AppState) -> String {
             
             if (r.ok) {{ 
                 cancelEdit();
-                loadAliases();
-                showModal('Success', 'Alias saved successfully', false); 
+                loadModelGroups();
+                showModal('Success', 'Model group saved successfully', false); 
             }} else {{
-                showModal('Error', 'Failed to save alias', true); 
+                showModal('Error', 'Failed to save model group', true); 
             }}
         }} catch (e) {{
             showModal('Error', 'Network error', true);
@@ -1072,7 +1072,7 @@ pub async fn render_config(state: &AppState) -> String {
     async function saveConfig() {{ try {{ const cfg = JSON.parse(document.getElementById('raw-config').value); const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(cfg)}}); if (r.ok) {{ showModal('Success', 'Configuration deployed successfully', false); setTimeout(()=>location.reload(), 1500); }} else {{ const err = await r.json(); showModal('Validation Error', err, true); }} }} catch(e) {{ showModal('Parse Error', 'Invalid JSON', true); }} }}
     
     // Load initial data
-    loadAliases();
+    loadModelGroups();
     fetch('/admin/config').then(r=>r.json()).then(d => {{
         document.getElementById('raw-config').value = JSON.stringify(d, null, 2);
     }}).catch(() => {{

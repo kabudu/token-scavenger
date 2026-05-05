@@ -188,7 +188,12 @@ pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
         )
         .bind(&model.provider_id)
         .bind(&model.upstream_model_id)
-        .bind(model.display_name.as_deref().unwrap_or(&model.upstream_model_id))
+        .bind(
+            model
+                .display_name
+                .as_deref()
+                .unwrap_or(&model.upstream_model_id),
+        )
         .bind(model.free_tier)
         .execute(db)
         .await;

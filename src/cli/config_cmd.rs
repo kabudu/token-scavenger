@@ -304,9 +304,7 @@ fn add_provider(config: &mut Config) -> Result<(), Box<dyn std::error::Error>> {
 
     let id: String = if choice == available_providers.len() - 1 {
         // "Custom" entry
-        Input::new()
-            .with_prompt("  Provider ID")
-            .interact_text()?
+        Input::new().with_prompt("  Provider ID").interact_text()?
     } else {
         provider_id_from_label(available_providers[choice]).to_string()
     };

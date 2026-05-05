@@ -4,7 +4,7 @@
 //!
 //! Measures:
 //! - Route plan building latency
-//! - Alias resolution throughput
+//! - Model group resolution throughput
 //! - Circuit breaker transitions
 //! - Secret redaction throughput
 //! - Config loading/validation latency
@@ -302,9 +302,9 @@ api_key = "csk_test123"
     }
 }
 
-// ---------- Alias Resolution Benchmark ----------
+// ---------- Model Group Resolution Benchmark ----------
 
-mod aliases {
+mod model_groups {
     use super::*;
 
     pub fn bench(c: &mut Criterion) {
@@ -316,8 +316,8 @@ mod aliases {
                 .run(&pool)
                 .await
                 .unwrap();
-            sqlx::query("INSERT INTO aliases (alias, target_json) VALUES (?, ?)")
-                .bind("test-alias")
+            sqlx::query("INSERT INTO model_groups (name, target_json) VALUES (?, ?)")
+                .bind("test-group")
                 .bind("\"llama3-70b-8192\"")
                 .execute(&pool)
                 .await
@@ -332,22 +332,22 @@ mod aliases {
             tokio::sync::broadcast::channel(1).0,
         );
 
-        c.bench_function("alias_resolve_hit", |b| {
+        c.bench_function("model_group_resolve_hit", |b| {
             b.to_async(&rt).iter(|| async {
-                let result = tokenscavenger::router::aliases::resolve_alias(
+                let result = tokenscavenger::router::model_groups::resolve_model_group(
                     black_box(&state),
-                    black_box("test-alias"),
+                    black_box("test-group"),
                 )
                 .await;
                 black_box(result);
             });
         });
 
-        c.bench_function("alias_resolve_miss", |b| {
+        c.bench_function("model_group_resolve_miss", |b| {
             b.to_async(&rt).iter(|| async {
-                let result = tokenscavenger::router::aliases::resolve_alias(
+                let result = tokenscavenger::router::model_groups::resolve_model_group(
                     black_box(&state),
-                    black_box("no-such-alias"),
+                    black_box("no-such-group"),
                 )
                 .await;
                 black_box(result);
@@ -442,7 +442,7 @@ criterion_group!(
     breaker::bench,
     redaction::bench,
     config_load::bench,
-    aliases::bench,
+    model_groups::bench,
     sqlite_write::bench,
     health::bench,
 );

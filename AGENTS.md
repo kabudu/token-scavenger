@@ -31,7 +31,7 @@ If starting the codebase from scratch, a single crate is acceptable for MVP, but
 
 - Each upstream belongs behind a `ProviderAdapter`-style abstraction with discovery, request translation, response normalization, auth, and quota/rate-limit parsing.
 - Provider adapters should not know global routing order or fallback policy.
-- The routing engine should produce an explainable attempt plan using model aliases, operator priority, health, breaker state, quota hints, and endpoint capabilities.
+- The routing engine should produce an explainable attempt plan using model groups, operator priority, health, breaker state, quota hints, and endpoint capabilities.
 - Mid-stream fallback for chat completions is not allowed after bytes have been sent to the caller.
 - `GET /v1/models` should return the merged public catalog, not raw provider payloads.
 
@@ -39,7 +39,7 @@ If starting the codebase from scratch, a single crate is acceptable for MVP, but
 
 - SQLite is the only required durable store. Use migrations, WAL mode, busy timeouts, and indexes for dashboard/retention queries.
 - Avoid storing full request/response bodies by default. Any diagnostic sampling must be redacted and size-limited.
-- The UI is operational, not decorative: providers, models, aliases, usage, health, logs, config, and audit views should help an operator understand and change routing behavior.
+- The UI is operational, not decorative: providers, models, model groups, usage, health, logs, config, and audit views should help an operator understand and change routing behavior.
 - UI assets should be embedded into the binary for release builds.
 
 ## Quality Bar
