@@ -227,7 +227,14 @@ pub async fn admin_logs_stream(
         Event::default().data("Connected to system stream")
     )));
 
-    Ok(Sse::new(initial.chain(log_stream.merge(keepalive))))
+    let mut shutdown_rx = state.shutdown_rx.clone();
+
+    Ok(Sse::new(futures::StreamExt::take_until(
+        initial.chain(log_stream.merge(keepalive)),
+        async move {
+            let _ = shutdown_rx.changed().await;
+        },
+    )))
 }
 
 pub async fn admin_health_events(
