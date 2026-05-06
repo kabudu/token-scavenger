@@ -49,22 +49,22 @@ docker run -p 8000:8000 -v $(pwd)/config:/config tokenscavenger -c /config/token
 
 Sign up for accounts at these providers and generate an API key:
 
-| Provider | URL | Free Tier Limit |
-|----------|-----|----------------|
-| **Groq** | https://console.groq.com/ | Rate-limited free tier |
-| **Google Gemini** | https://aistudio.google.com/ | 60 requests/minute |
-| **OpenRouter** | https://openrouter.ai/keys | Free models via `:free` suffix |
-| **Cerebras** | https://cloud.cerebras.ai/ | 30 RPM per model |
-| **Mistral AI** | https://console.mistral.ai/ | Experiment plan, reduced rates |
-| **NVIDIA NIM** | https://build.nvidia.com/ | Rate-limited free tier |
-| **GitHub Models** | https://github.com/settings/tokens | 15 req/min, 150/day |
-| **HuggingFace** | https://huggingface.co/settings/tokens | 1,000 requests/day |
-| **SiliconFlow** | https://cloud.siliconflow.cn/ | 1,000 RPM free models |
-| **Zhipu AI** | https://open.bigmodel.cn/ | Free flash models |
-| **Cohere** | https://dashboard.cohere.com/ | 1,000 calls/month trial |
-| **Cloudflare** | https://dash.cloudflare.com/ | 10,000 neurons/day |
-| **DeepSeek** | https://platform.deepseek.com/ | Paid fallback |
-| **xAI Grok** | https://console.x.ai/ | Paid fallback |
+| Provider          | URL                                    | Free Tier Limit                |
+| ----------------- | -------------------------------------- | ------------------------------ |
+| **Groq**          | https://console.groq.com/              | Rate-limited free tier         |
+| **Google Gemini** | https://aistudio.google.com/           | 60 requests/minute             |
+| **OpenRouter**    | https://openrouter.ai/keys             | Free models via `:free` suffix |
+| **Cerebras**      | https://cloud.cerebras.ai/             | 30 RPM per model               |
+| **Mistral AI**    | https://console.mistral.ai/            | Experiment plan, reduced rates |
+| **NVIDIA NIM**    | https://build.nvidia.com/              | Rate-limited free tier         |
+| **GitHub Models** | https://github.com/settings/tokens     | 15 req/min, 150/day            |
+| **HuggingFace**   | https://huggingface.co/settings/tokens | 1,000 requests/day             |
+| **SiliconFlow**   | https://cloud.siliconflow.cn/          | 1,000 RPM free models          |
+| **Zhipu AI**      | https://open.bigmodel.cn/              | Free flash models              |
+| **Cohere**        | https://dashboard.cohere.com/          | 1,000 calls/month trial        |
+| **Cloudflare**    | https://dash.cloudflare.com/           | 10,000 neurons/day             |
+| **DeepSeek**      | https://platform.deepseek.com/         | Paid fallback                  |
+| **xAI Grok**      | https://console.x.ai/                  | Paid fallback                  |
 
 Set them as environment variables:
 
@@ -155,7 +155,7 @@ You should see:
  INFO tokenscavenger: Config loaded from tokenscavenger.toml: server.bind=0.0.0.0:8000, providers=3
  INFO tokenscavenger: Database initialized at tokenscavenger.db
  INFO tokenscavenger: AppState created
- INFO tokenscavenger: TokenScavenger v0.1.0 starting on 0.0.0.0:8000
+ INFO tokenscavenger: TokenScavenger v0.1.2 starting on 0.0.0.0:8000
 ```
 
 ## Step 5: Test
@@ -244,20 +244,20 @@ for chunk in stream:
 ### Node.js
 
 ```javascript
-import OpenAI from 'openai';
+import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: 'http://localhost:8000/v1',
-  apiKey: 'optional-master-key'
+  baseURL: "http://localhost:8000/v1",
+  apiKey: "optional-master-key",
 });
 
 const stream = await client.chat.completions.create({
-  model: 'llama3-70b-8192',
-  messages: [{ role: 'user', content: 'Hello!' }],
+  model: "llama3-70b-8192",
+  messages: [{ role: "user", content: "Hello!" }],
   stream: true,
 });
 for await (const chunk of stream) {
-  process.stdout.write(chunk.choices[0]?.delta?.content || '');
+  process.stdout.write(chunk.choices[0]?.delta?.content || "");
 }
 ```
 
@@ -282,10 +282,13 @@ Then use the group name in your request:
 ```
 
 ### Mastering Model Groups
+
 Model groups are powerful tools for creating stable, provider-agnostic endpoints for your applications. Unlike core provider settings, model groups are stored in the database and are best managed via the **Admin UI (Config > Model Group Editor)**.
 
 #### Scenario: High-Availability Failover
+
 If you want to ensure your "smart chat" always works even if a specific provider is down:
+
 1. Create a model group named `smart-chat`.
 2. Add multiple target models in order of preference:
    - `groq/llama3-70b-8192` (Fastest)
@@ -295,9 +298,11 @@ If you want to ensure your "smart chat" always works even if a specific provider
 4. TokenScavenger will try them in the exact order you defined. If Groq is unhealthy or rate-limited, it automatically fails over to Cerebras, then Gemini.
 
 ### The "Default Model" Pattern
+
 You can create a model group literally named `default`. This allows you to point legacy scripts or simple integrations to TokenScavenger without specifying any model at all. If a request comes in with a missing or unrecognized model, TokenScavenger can be configured to use this `default` mapping.
 
 ### Hot-Reloading Configuration
+
 Most settings—including model groups, model priority, and provider status—can be changed via the **Admin UI** while the service is running. Changes are applied immediately to new requests without needing a restart.
 
 ## Next Steps
