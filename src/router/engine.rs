@@ -246,10 +246,8 @@ pub async fn route_chat_request(
                             {
                                 Ok(response) => {
                                     info!(provider = %provider_id, "Retry succeeded");
-                                    let usage_ref = response
-                                        .usage
-                                        .as_ref()
-                                        .map(|u| provider_usage_to_openai_usage(u));
+                                    let usage_ref =
+                                        response.usage.as_ref().map(provider_usage_to_openai_usage);
                                     let _ = crate::usage::accounting::record_usage(
                                         &state,
                                         crate::usage::accounting::UsageRecord {
@@ -307,10 +305,8 @@ pub async fn route_chat_request(
                         {
                             Ok(response) => {
                                 info!(provider = %provider_id, "Retry after delay succeeded");
-                                let usage_ref = response
-                                    .usage
-                                    .as_ref()
-                                    .map(|u| provider_usage_to_openai_usage(u));
+                                let usage_ref =
+                                    response.usage.as_ref().map(provider_usage_to_openai_usage);
                                 let _ = crate::usage::accounting::record_usage(
                                     &state,
                                     crate::usage::accounting::UsageRecord {

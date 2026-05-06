@@ -391,7 +391,10 @@ pub async fn render_dashboard(state: &AppState) -> String {
           <div class="glass-card p-5 metric-glow-emerald">
             <div class="flex justify-between items-start mb-2"><span class="text-xs font-bold text-slate-500 uppercase">Estimated Spend</span><i class="fas fa-piggy-bank text-emerald-400"></i></div>
             <div class="text-3xl font-bold"><span id="stat-spend">{}</span></div>
-            <div class="text-[10px] text-slate-500 font-mono mt-1" id="stat-spend-confidence">PRICING CONFIDENCE: CHECKED</div>
+            <div class="text-[10px] text-slate-500 font-mono mt-1 flex items-center gap-1" id="stat-spend-confidence-wrapper">
+                <span class="cursor-pointer text-slate-500 hover:text-cyan-400 transition-colors" id="pricing-info-icon" onclick="togglePricingInfo()" title="Pricing source details">&#9432;</span>
+                <span id="pricing-info-tooltip" class="hidden absolute z-50 bg-slate-800 border border-slate-600 rounded-lg p-3 text-xs text-slate-300 max-w-xs shadow-xl leading-relaxed" style="margin-top: 6rem;"></span>
+            </div>
           </div>
         </div>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -503,13 +506,72 @@ pub async fn render_dashboard(state: &AppState) -> String {
               document.getElementById('stat-requests').innerText = (metrics.request_count || 0).toLocaleString();
               document.getElementById('stat-tokens').innerText = totalTokens.toLocaleString();
               document.getElementById('stat-latency').innerText = metrics.avg_latency || 0;
-              document.getElementById('stat-spend').innerText = new Intl.NumberFormat('en-US', {{ style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }}).format(totalCost);
-              document.getElementById('stat-spend-confidence').innerText = confidences.size ? 'PRICING: ' + Array.from(confidences).join(', ').toUpperCase() : 'PRICING: NO USAGE';
+              document.getElementById('stat-spend').innerText = new Intl.NumberFormat('en-US', {{ style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }}).format(totalCost);
+              updatePricingConfidence(confidences);
           }} catch (error) {{
               console.warn("Dashboard analytics refresh failed", error);
           }} finally {{
               analyticsRefreshInFlight = false;
           }}
+      }}
+
+      const PRICING_CONFIDENCE_LABELS = {{
+          'free_tier': 'Free provider \u2014 no cost',
+          'provider_published': 'Official provider pricing',
+          'scraped': 'Scraped from provider website',
+          'builtin': 'Built-in estimate',
+          'fallback_estimate': 'Estimated from public sources \u2014 may differ from actual rates',
+          'operator_override': 'Operator override',
+          'unknown_price': 'Unknown pricing \u2014 cost not estimated',
+          'unknown': 'Unknown pricing source',
+      }};
+
+      function humanizeConfidence(raw) {{
+          if (!raw) return 'Unknown';
+          // Handle compound codes like backfilled_current_rate:provider_published
+          if (raw.startsWith('backfilled_current_rate:')) {{
+              const inner = raw.slice('backfilled_current_rate:'.length);
+              const label = PRICING_CONFIDENCE_LABELS[inner] || inner;
+              return 'Backfilled using current rate \u2014 ' + label;
+          }}
+          return PRICING_CONFIDENCE_LABELS[raw] || raw;
+      }}
+
+      function updatePricingConfidence(confidences) {{
+          const icon = document.getElementById('pricing-info-icon');
+          const tooltip = document.getElementById('pricing-info-tooltip');
+          if (!confidences.size) {{
+              icon.style.display = 'none';
+              return;
+          }}
+          icon.style.display = '';
+          const parts = Array.from(confidences).filter(Boolean);
+          const lines = parts.map(c => '<div>' + humanizeConfidence(c) + '</div>').join('');
+          tooltip.innerHTML = '<div class=\'font-bold text-cyan-400 mb-1\'>Pricing Sources</div>' + lines;
+      }}
+
+      function togglePricingInfo() {{
+          const tooltip = document.getElementById('pricing-info-tooltip');
+          const isHidden = tooltip.classList.contains('hidden');
+          // Close tooltip if it was open
+          if (!isHidden) {{ tooltip.classList.add('hidden'); return; }}
+          // Position and show tooltip
+          const icon = document.getElementById('pricing-info-icon');
+          const rect = icon.getBoundingClientRect();
+          tooltip.style.position = 'fixed';
+          tooltip.style.left = rect.right + 8 + 'px';
+          tooltip.style.top = rect.top + 'px';
+          tooltip.style.marginTop = '0';
+          tooltip.classList.remove('hidden');
+          // Dismiss on outside click
+          setTimeout(() => {{
+              document.addEventListener('click', function dismiss(e) {{
+                  if (!tooltip.contains(e.target) && e.target !== icon) {{
+                      tooltip.classList.add('hidden');
+                      document.removeEventListener('click', dismiss);
+                  }}
+              }});
+          }}, 0);
       }}
 
       async function changePeriod(period) {{
@@ -853,7 +915,7 @@ pub async fn render_usage(state: &AppState) -> String {
             let output = rate.get("output_per_1m").and_then(|v| v.as_f64()).map(|v| format!("${:.4}", v)).unwrap_or_else(|| "-".into());
             let confidence = rate.get("confidence").and_then(|v| v.as_str()).unwrap_or("unknown");
             let source = rate.get("source_kind").and_then(|v| v.as_str()).unwrap_or("unknown");
-            format!(r#"<tr><td class="font-bold">{}</td><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td><span class="px-2 py-0.5 rounded bg-white/5 text-[10px] uppercase">{}</span></td><td class="text-xs text-slate-400">{}</td></tr>"#, provider, model, input, cached, output, confidence, source)
+            format!(r#"<tr class="pricing-row" data-provider="{}" data-model="{}"><td class="font-bold">{}</td><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td class="font-mono">{}</td><td><span class="px-2 py-0.5 rounded bg-white/5 text-[10px] uppercase">{}</span></td><td class="text-xs text-slate-400">{}</td></tr>"#, provider, model, provider, model, input, cached, output, confidence, source)
         }).collect::<Vec<_>>().join("\n"),
         _ => "<tr><td colspan=\"7\" class=\"px-6 py-4 text-center text-slate-500\">No pricing data</td></tr>".into(),
     };
@@ -878,12 +940,24 @@ pub async fn render_usage(state: &AppState) -> String {
             </div>
         </div>
         <div class="glass-card overflow-hidden">
-            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4 flex-wrap">
                 <h3 class="font-bold">Pricing Catalog</h3>
-                <button class="btn" onclick="refreshPricing()">Refresh Pricing</button>
+                <div class="flex items-center gap-3">
+                    <input type="text" id="pricing-search" placeholder="Filter provider or model..." class="bg-white/5 border border-white/10 rounded px-3 py-1 text-sm w-48 focus:outline-none focus:border-cyan-400/50" oninput="filterPricing()">
+                    <button class="btn" onclick="refreshPricing()">Refresh Pricing</button>
+                </div>
             </div>
             <div class="p-0 overflow-x-auto">
-                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>Model</th><th>Input / 1M</th><th>Cached / 1M</th><th>Output / 1M</th><th>Confidence</th><th>Source</th></tr></thead><tbody class="divide-y divide-white/5">{}</tbody></table>
+                <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Provider</th><th>Model</th><th>Input / 1M</th><th>Cached / 1M</th><th>Output / 1M</th><th>Confidence</th><th>Source</th></tr></thead><tbody id="pricing-tbody" class="divide-y divide-white/5">{}</tbody></table>
+                <div id="pricing-empty" class="hidden px-6 py-4 text-center text-slate-500">No pricing rates match this filter</div>
+            </div>
+            <div id="pricing-pagination" class="px-6 py-3 border-t border-white/5 bg-white/[0.01] flex items-center justify-between text-sm text-slate-400">
+                <span id="pricing-count"></span>
+                <div class="flex items-center gap-2">
+                    <button id="pricing-prev" class="btn text-xs" onclick="prevPricingPage()" disabled>&laquo; Prev</button>
+                    <span id="pricing-page-indicator"></span>
+                    <button id="pricing-next" class="btn text-xs" onclick="nextPricingPage()">&raquo; Next</button>
+                </div>
             </div>
         </div>
         <div class="glass-card overflow-hidden">
@@ -896,10 +970,82 @@ pub async fn render_usage(state: &AppState) -> String {
     );
     let scripts = r#"<script>
     async function refreshPricing() {
-        const r = await fetch('/admin/pricing/refresh', { method: 'POST' });
-        if (r.ok) location.reload();
-        else showModal('Error', 'Pricing refresh failed', true);
+        const btn = event.target;
+        const orig = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = 'Refreshing...';
+        try {
+            const r = await fetch('/admin/pricing/refresh', { method: 'POST' });
+            if (r.ok) location.reload();
+            else showModal('Error', 'Pricing refresh failed', true);
+        } finally {
+            btn.disabled = false;
+            btn.innerText = orig;
+        }
     }
+
+    let pricingPage = 0;
+    const PRICING_PAGE_SIZE = 20;
+
+    function allPricingRows() {
+        const tbody = document.getElementById('pricing-tbody');
+        if (!tbody) return [];
+        return [...tbody.querySelectorAll('.pricing-row')];
+    }
+
+    function visiblePricingRows(rows) {
+        const search = document.getElementById('pricing-search');
+        const q = search ? search.value.trim().toLowerCase() : '';
+        return rows.filter(row => {
+            if (!q) return true;
+            const prov = (row.dataset.provider || '').toLowerCase();
+            const model = (row.dataset.model || '').toLowerCase();
+            const text = row.innerText.toLowerCase();
+            return prov.includes(q) || model.includes(q) || text.includes(q);
+        });
+    }
+
+    function renderPricingPage() {
+        try {
+            const rows = allPricingRows();
+            const filtered = visiblePricingRows(rows);
+            const totalPages = Math.max(1, Math.ceil(filtered.length / PRICING_PAGE_SIZE));
+            if (pricingPage >= totalPages) pricingPage = totalPages - 1;
+            rows.forEach(r => { r.style.display = 'none'; });
+            const start = pricingPage * PRICING_PAGE_SIZE;
+            const page = filtered.slice(start, start + PRICING_PAGE_SIZE);
+            page.forEach(r => { r.style.display = ''; });
+            const countEl = document.getElementById('pricing-count');
+            const indicatorEl = document.getElementById('pricing-page-indicator');
+            const prevEl = document.getElementById('pricing-prev');
+            const nextEl = document.getElementById('pricing-next');
+            const paginationEl = document.getElementById('pricing-pagination');
+            const emptyEl = document.getElementById('pricing-empty');
+            if (countEl) countEl.innerText = filtered.length + ' rate' + (filtered.length !== 1 ? 's' : '');
+            if (indicatorEl) indicatorEl.innerText = 'Page ' + (pricingPage + 1) + ' / ' + totalPages;
+            if (prevEl) prevEl.disabled = pricingPage === 0;
+            if (nextEl) nextEl.disabled = pricingPage >= totalPages - 1;
+            if (paginationEl) paginationEl.style.display = filtered.length <= PRICING_PAGE_SIZE ? 'none' : '';
+            if (emptyEl) emptyEl.classList.toggle('hidden', filtered.length !== 0);
+        } catch(e) {
+            console.error('renderPricingPage error:', e);
+        }
+    }
+
+    function filterPricing() {
+        pricingPage = 0;
+        renderPricingPage();
+    }
+    function prevPricingPage() { if (pricingPage > 0) { pricingPage--; renderPricingPage(); } }
+    function nextPricingPage() {
+        const totalPages = Math.max(1, Math.ceil(visiblePricingRows(allPricingRows()).length / PRICING_PAGE_SIZE));
+        if (pricingPage < totalPages - 1) {
+            pricingPage++;
+            renderPricingPage();
+        }
+    }
+
+    renderPricingPage();
     </script>"#;
     render_shell("Usage", "usage", &content, scripts, state)
 }

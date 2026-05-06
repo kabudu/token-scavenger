@@ -342,6 +342,17 @@ fn normalize_html_text(html: &str) -> String {
 
 async fn upsert_scraped_rates(pool: &SqlitePool, rates: &[PricingRate]) -> Result<(), sqlx::Error> {
     for rate in rates {
+        // Compare with the current active row; skip if rates are identical.
+        if let Some(current) = fetch_rate(pool, &rate.provider_id, &rate.model_id).await? {
+            if current.input_per_1m == rate.input_per_1m
+                && current.cached_input_per_1m == rate.cached_input_per_1m
+                && current.output_per_1m == rate.output_per_1m
+                && current.reasoning_per_1m == rate.reasoning_per_1m
+            {
+                continue;
+            }
+        }
+
         sqlx::query(
             "UPDATE model_pricing
              SET effective_until = datetime('now')
@@ -503,8 +514,20 @@ async fn mark_pricing_source_error(
 pub async fn get_pricing_state(pool: &SqlitePool) -> serde_json::Value {
     let rows = sqlx::query_as::<_, (i64, String, String, Option<f64>, Option<f64>, Option<f64>, Option<f64>, String, String, Option<String>, Option<String>)>(
         "SELECT id, provider_id, model_id, input_per_1m, cached_input_per_1m, output_per_1m, reasoning_per_1m, confidence, source_kind, source_url, fetched_at
-         FROM model_pricing
-         WHERE effective_until IS NULL
+         FROM (
+             SELECT *, ROW_NUMBER() OVER (
+                 PARTITION BY provider_id, model_id
+                 ORDER BY CASE source_kind
+                     WHEN 'operator_override' THEN 0
+                     WHEN 'fetched_structured' THEN 1
+                     WHEN 'scraped_html' THEN 2
+                     ELSE 3
+                 END, id DESC
+             ) AS rn
+             FROM model_pricing
+             WHERE effective_until IS NULL
+         )
+         WHERE rn = 1
          ORDER BY provider_id, model_id",
     )
     .fetch_all(pool)

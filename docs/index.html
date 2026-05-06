@@ -42,7 +42,9 @@
       class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-slate-800 focus:px-4 focus:py-2 focus:rounded"
       >Skip to main content</a
     >
-    <header class="border-b border-white/10 bg-slate-950/95 backdrop-blur-xl">
+    <header
+      class="sticky top-0 z-40 border-b border-white/10 bg-slate-950/95 backdrop-blur-xl"
+    >
       <div
         class="mx-auto flex max-w-7xl items-center justify-between px-6 py-5"
       >
@@ -82,7 +84,7 @@
         >
           <a href="#features" class="hover:text-white">Features</a>
           <a href="#providers" class="hover:text-white">Providers</a>
-          <a href="#open-source" class="hover:text-white">Open source</a>
+          <a href="#open-source" class="hover:text-white">Open Source</a>
           <a
             href="https://github.com/kabudu/token-scavenger/tree/main/documentation"
             class="hover:text-white"
@@ -108,7 +110,7 @@
             >Providers</a
           >
           <a href="#open-source" data-close-menu class="hover:text-white"
-            >Open source</a
+            >Open Source</a
           >
           <a
             href="https://github.com/kabudu/token-scavenger/tree/main/documentation"
@@ -365,10 +367,12 @@
         id="open-source"
         class="border-t border-white/10 bg-slate-950/70 px-6 py-24 lg:px-8"
       >
-        <div class="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+        <div
+          class="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center"
+        >
           <div>
             <p class="text-sm uppercase tracking-[0.35em] text-orange-500">
-              Open source
+              Open Source
             </p>
             <h2 class="mt-3 text-3xl font-bold text-white sm:text-4xl">
               Built in public for self-hosted operators
@@ -394,28 +398,36 @@
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
             <article class="feature-card rounded-3xl p-6">
-              <h3 class="text-lg font-semibold text-white">Transparent routing</h3>
+              <h3 class="text-lg font-semibold text-white">
+                Transparent routing
+              </h3>
               <p class="mt-3 text-sm leading-6 text-slate-300">
                 Provider selection, fallback policy, and rate-limit behavior are
                 visible in code, docs, logs, metrics, and the admin UI.
               </p>
             </article>
             <article class="feature-card rounded-3xl p-6">
-              <h3 class="text-lg font-semibold text-white">Self-hosted by default</h3>
+              <h3 class="text-lg font-semibold text-white">
+                Self-hosted by default
+              </h3>
               <p class="mt-3 text-sm leading-6 text-slate-300">
                 The core runtime is one Rust binary with SQLite storage and no
                 required managed control plane.
               </p>
             </article>
             <article class="feature-card rounded-3xl p-6">
-              <h3 class="text-lg font-semibold text-white">Contributor-friendly</h3>
+              <h3 class="text-lg font-semibold text-white">
+                Contributor-friendly
+              </h3>
               <p class="mt-3 text-sm leading-6 text-slate-300">
                 Provider adapters follow a shared abstraction, making new
                 upstream integrations easier to review and maintain.
               </p>
             </article>
             <article class="feature-card rounded-3xl p-6">
-              <h3 class="text-lg font-semibold text-white">Release artifacts</h3>
+              <h3 class="text-lg font-semibold text-white">
+                Release artifacts
+              </h3>
               <p class="mt-3 text-sm leading-6 text-slate-300">
                 Cross-platform release builds include checksums so operators can
                 verify the binary they deploy.

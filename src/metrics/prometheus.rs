@@ -1,4 +1,3 @@
-use metrics::{counter, gauge, histogram};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -24,14 +23,6 @@ struct MetricsRegistry {
 
 /// Register a request metric.
 pub fn record_request(provider: &str, model: &str, endpoint: &str, status: &str) {
-    counter!(
-        "tokenscavenger_requests_total",
-        "provider" => provider.to_string(),
-        "model" => model.to_string(),
-        "endpoint" => endpoint.to_string(),
-        "status" => status.to_string(),
-    )
-    .increment(1);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .requests
@@ -47,13 +38,6 @@ pub fn record_request(provider: &str, model: &str, endpoint: &str, status: &str)
 
 /// Register token usage.
 pub fn record_tokens(provider: &str, model: &str, token_type: &str, count: u32) {
-    counter!(
-        "tokenscavenger_tokens_total",
-        "provider" => provider.to_string(),
-        "model" => model.to_string(),
-        "type" => token_type.to_string(),
-    )
-    .increment(count as u64);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .tokens
@@ -64,12 +48,6 @@ pub fn record_tokens(provider: &str, model: &str, token_type: &str, count: u32) 
 
 /// Record request latency.
 pub fn record_latency(provider: &str, endpoint: &str, latency_ms: f64) {
-    histogram!(
-        "tokenscavenger_request_latency_seconds",
-        "provider" => provider.to_string(),
-        "endpoint" => endpoint.to_string(),
-    )
-    .record(latency_ms / 1000.0);
     if let Ok(mut metrics) = METRICS.lock() {
         metrics
             .latencies
@@ -81,13 +59,6 @@ pub fn record_latency(provider: &str, endpoint: &str, latency_ms: f64) {
 
 /// Record a route attempt outcome.
 pub fn record_route_attempt(provider: &str, model: &str, outcome: &str) {
-    counter!(
-        "tokenscavenger_route_attempts_total",
-        "provider" => provider.to_string(),
-        "model" => model.to_string(),
-        "outcome" => outcome.to_string(),
-    )
-    .increment(1);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .route_attempts
@@ -98,12 +69,6 @@ pub fn record_route_attempt(provider: &str, model: &str, outcome: &str) {
 
 /// Record provider health state.
 pub fn record_provider_health(provider: &str, state: &str) {
-    gauge!(
-        "tokenscavenger_provider_health_state",
-        "provider" => provider.to_string(),
-        "state" => state.to_string(),
-    )
-    .set(1.0);
     if let Ok(mut metrics) = METRICS.lock() {
         metrics
             .provider_health
@@ -113,12 +78,6 @@ pub fn record_provider_health(provider: &str, state: &str) {
 
 /// Record circuit breaker state.
 pub fn record_breaker_state(provider: &str, state: &str) {
-    gauge!(
-        "tokenscavenger_provider_breaker_state",
-        "provider" => provider.to_string(),
-        "state" => state.to_string(),
-    )
-    .set(1.0);
     if let Ok(mut metrics) = METRICS.lock() {
         metrics
             .breaker_states
@@ -128,11 +87,6 @@ pub fn record_breaker_state(provider: &str, state: &str) {
 
 /// Record quota remaining for a provider.
 pub fn record_quota_remaining(provider: &str, remaining: f64) {
-    gauge!(
-        "tokenscavenger_quota_remaining",
-        "provider" => provider.to_string(),
-    )
-    .set(remaining);
     if let Ok(mut metrics) = METRICS.lock() {
         metrics.quota_remaining.insert(provider.into(), remaining);
     }
@@ -140,12 +94,6 @@ pub fn record_quota_remaining(provider: &str, remaining: f64) {
 
 /// Record a discovery run for a provider.
 pub fn record_discovery_run(provider: &str, status: &str) {
-    counter!(
-        "tokenscavenger_discovery_runs_total",
-        "provider" => provider.to_string(),
-        "status" => status.to_string(),
-    )
-    .increment(1);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .discovery_runs
@@ -156,13 +104,6 @@ pub fn record_discovery_run(provider: &str, status: &str) {
 
 /// Record estimated spend for a completed request.
 pub fn record_estimated_cost(provider: &str, model: &str, confidence: &str, amount_usd: f64) {
-    counter!(
-        "tokenscavenger_estimated_cost_usd_total",
-        "provider" => provider.to_string(),
-        "model" => model.to_string(),
-        "confidence" => confidence.to_string(),
-    )
-    .increment((amount_usd.max(0.0) * 1_000_000.0).round() as u64);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .estimated_cost
@@ -173,12 +114,6 @@ pub fn record_estimated_cost(provider: &str, model: &str, confidence: &str, amou
 
 /// Record a pricing refresh attempt.
 pub fn record_pricing_refresh(provider: &str, status: &str) {
-    counter!(
-        "tokenscavenger_pricing_refresh_total",
-        "provider" => provider.to_string(),
-        "status" => status.to_string(),
-    )
-    .increment(1);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .pricing_refresh
@@ -189,11 +124,6 @@ pub fn record_pricing_refresh(provider: &str, status: &str) {
 
 /// Record the age of a provider pricing source.
 pub fn record_pricing_age(provider: &str, age_seconds: f64) {
-    gauge!(
-        "tokenscavenger_pricing_age_seconds",
-        "provider" => provider.to_string(),
-    )
-    .set(age_seconds);
     if let Ok(mut metrics) = METRICS.lock() {
         metrics
             .pricing_age_seconds
@@ -203,12 +133,6 @@ pub fn record_pricing_age(provider: &str, age_seconds: f64) {
 
 /// Record paid usage where no price is known.
 pub fn record_unknown_price(provider: &str, model: &str) {
-    counter!(
-        "tokenscavenger_usage_unknown_price_total",
-        "provider" => provider.to_string(),
-        "model" => model.to_string(),
-    )
-    .increment(1);
     if let Ok(mut metrics) = METRICS.lock() {
         *metrics
             .unknown_price

@@ -109,13 +109,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
-    // Initialize metrics global recorder. If the recorder cannot bind the metrics
-    // listener (for example because the port is already in use), log a warning and
-    // continue starting the server without Prometheus scraping.
-    if let Err(err) = metrics_exporter_prometheus::PrometheusBuilder::new().install() {
-        tracing::warn!("Failed to install metrics recorder: {}", err);
-    }
-
     // Bootstrap startup
     let startup_result = app::startup::startup(&config_path).await?;
 

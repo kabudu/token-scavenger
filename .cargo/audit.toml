@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # sqlx declares optional MySQL support that pulls rsa into Cargo.lock, but
+    # TokenScavenger builds sqlx with default features disabled and SQLite-only
+    # features enabled. `cargo tree -i sqlx-mysql --target all` confirms the
+    # vulnerable optional backend is not active in this crate's feature graph.
+    # RustSec currently lists no fixed rsa upgrade for this advisory.
+    "RUSTSEC-2023-0071",
+]
