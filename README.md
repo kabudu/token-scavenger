@@ -80,6 +80,15 @@ chmod +x tokenscavenger-*
 ./tokenscavenger-*
 ```
 
+macOS may block unsigned open-source binaries with “Apple could not verify…”.
+After verifying the release checksum, remove the quarantine attribute:
+
+```bash
+shasum -a 256 tokenscavenger-v*-aarch64-apple-darwin
+xattr -d com.apple.quarantine tokenscavenger-v*-aarch64-apple-darwin
+./tokenscavenger-v*-aarch64-apple-darwin
+```
+
 On first run, TokenScavenger detects the absence of a config file and offers to
 run the interactive setup wizard. Follow the prompts to configure your server,
 providers, and API keys. The wizard writes a configuration to

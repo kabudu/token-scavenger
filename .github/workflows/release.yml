@@ -95,13 +95,53 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Import Apple Developer ID certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+        run: |
+          if [ -z "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" ] || [ -z "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_CODESIGN_IDENTITY" ]; then
+            echo "Apple signing secrets are required for the macOS release build."
+            exit 1
+          fi
+
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer_id_application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/tokenscavenger-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          echo "$APPLE_DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Sign macOS binary
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+        run: |
+          BINARY="target/${{ matrix.target }}/release/tokenscavenger"
+          codesign --force --timestamp --options runtime --sign "$APPLE_CODESIGN_IDENTITY" "$BINARY"
+          codesign --verify --strict --verbose=2 "$BINARY"
+          codesign --display --verbose=2 "$BINARY"
+
       - name: Archive binary
         shell: bash
         run: |
           TARGET_DIR="target/${{ matrix.target }}/release"
           BINARY="$TARGET_DIR/tokenscavenger${{ matrix.suffix }}"
           ARCHIVE_NAME="tokenscavenger-v${{ needs.prepare.outputs.new_version }}-${{ matrix.target }}${{ matrix.suffix }}"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp "$BINARY" "tokenscavenger"
+            chmod +x "tokenscavenger"
+            ditto -c -k --keepParent "tokenscavenger" "$ARCHIVE_NAME.zip"
+            ARCHIVE_NAME="$ARCHIVE_NAME.zip"
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp "$BINARY" "$ARCHIVE_NAME"
           else
             cp "$BINARY" "$ARCHIVE_NAME"
@@ -109,6 +149,24 @@ jobs:
           fi
           echo "archive=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
         id: archive
+
+      - name: Notarize macOS archive
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+            echo "Apple notarization secrets are required for the macOS release build."
+            exit 1
+          fi
+
+          xcrun notarytool submit "${{ steps.archive.outputs.archive }}" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -152,7 +210,7 @@ jobs:
             | Platform | Binary |
             |----------|--------|
             | Linux (x86_64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-x86_64-unknown-linux-gnu` |
-            | macOS (ARM64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin` |
+            | macOS (ARM64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin.zip` |
             | Windows (x86_64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-x86_64-pc-windows-msvc.exe` |
 
             ### Checksums (SHA256)
@@ -161,7 +219,11 @@ jobs:
 
             ### First Run
 
+            The macOS archive is signed with Developer ID and notarized by Apple.
+            Unzip it, then run the binary:
+
             ```bash
+            unzip tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin.zip
             ./tokenscavenger
             ```
 
