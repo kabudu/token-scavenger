@@ -1,31 +1,12 @@
 use crate::app::state::AppState;
 use std::time::Duration;
-use tokio::signal;
 use tracing::{info, warn};
 
 /// Graceful shutdown handler. Waits for SIGINT/SIGTERM, signals background
 /// tasks to stop, waits for them to drain (with timeout), then closes the
 /// database and returns so `axum::serve` can finish.
 pub async fn shutdown(state: AppState) {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
-        info!("Received SIGINT (Ctrl+C)");
-    };
-
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install SIGTERM handler")
-            .recv()
-            .await;
-        info!("Received SIGTERM");
-    };
-
-    tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
-    }
+    wait_for_shutdown_signal().await;
 
     info!("Starting graceful shutdown...");
 
@@ -69,6 +50,39 @@ pub async fn shutdown(state: AppState) {
     info!("Closing database pool...");
     state.db.close().await;
     info!("Shutdown complete");
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal;
+
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+        info!("Received SIGINT (Ctrl+C)");
+    };
+
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+        info!("Received SIGTERM");
+    };
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to install Ctrl+C handler");
+    info!("Received Ctrl+C");
 }
 
 /// Await all join handles sequentially (tasks are already running concurrently).

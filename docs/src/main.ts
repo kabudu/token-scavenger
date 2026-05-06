@@ -22,6 +22,32 @@ closeMenuLinks.forEach((link) => {
   });
 });
 
+const installTabs =
+  document.querySelectorAll<HTMLButtonElement>("[data-install-tab]");
+const installPanels =
+  document.querySelectorAll<HTMLElement>("[data-install-panel]");
+
+const activeInstallTabClass =
+  "min-w-24 flex-1 rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-slate-950 transition";
+const inactiveInstallTabClass =
+  "min-w-24 flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-slate-300 transition hover:bg-white/5 hover:text-white";
+
+installTabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    const selected = tab.dataset.installTab;
+    installTabs.forEach((candidate) => {
+      const isSelected = candidate.dataset.installTab === selected;
+      candidate.setAttribute("aria-selected", String(isSelected));
+      candidate.className = isSelected
+        ? activeInstallTabClass
+        : inactiveInstallTabClass;
+    });
+    installPanels.forEach((panel) => {
+      panel.classList.toggle("hidden", panel.dataset.installPanel !== selected);
+    });
+  });
+});
+
 // Update copyright year dynamically
 const copyrightElement = document.querySelector<HTMLElement>("#copyright-year");
 if (copyrightElement) {
