@@ -67,7 +67,31 @@ Error responses use the OpenAI-style `{"error": ...}` envelope. Upstream rate-li
 
 ## Quick Start
 
-### 1. Get API keys
+### 1. Download the latest release
+
+The simplest way to run TokenScavenger is to download the prebuilt binary for
+your platform from the [latest GitHub release](https://github.com/kabudu/token-scavenger/releases/latest).
+
+Each release includes self-contained binaries and SHA256 checksums. Download the
+matching artifact, make it executable on Linux/macOS, and start it:
+
+```bash
+chmod +x tokenscavenger-*
+./tokenscavenger-*
+```
+
+On first run, TokenScavenger detects the absence of a config file and offers to
+run the interactive setup wizard. Follow the prompts to configure your server,
+providers, and API keys. The wizard writes a configuration to
+`~/.config/tokenscavenger/tokenscavenger.toml`.
+
+To use an existing config file:
+
+```bash
+./tokenscavenger-* -c tokenscavenger.toml
+```
+
+### 2. Get API keys
 
 Sign up for API keys from your preferred providers:
 
@@ -83,7 +107,7 @@ Sign up for API keys from your preferred providers:
 | DeepSeek      | https://platform.deepseek.com/                |
 | xAI Grok      | https://console.x.ai/                         |
 
-### 2. Configure
+### 3. Configure manually, if preferred
 
 Create `tokenscavenger.toml`:
 
@@ -123,32 +147,19 @@ discover_models = true
 
 Environment variables are expanded automatically (`${VAR_NAME}` syntax).
 
-### 3. Run
+### 4. Other installation methods
 
-On first run, `tokenscavenger` detects the absence of a config file and offers to
-run the interactive setup wizard:
-
-```bash
-./tokenscavenger
-```
-
-Follow the prompts to configure your server, providers, and API keys. The wizard
-writes a configuration to `~/.config/tokenscavenger/tokenscavenger.toml`.
-
-To use an existing config file:
-
-```bash
-./tokenscavenger -c tokenscavenger.toml
-```
-
-Or build a static binary:
+You can also build from source:
 
 ```bash
 cargo build --release
 ./target/release/tokenscavenger -c tokenscavenger.toml
 ```
 
-### 4. Use it
+See [documentation/deployment.md](documentation/deployment.md) for Docker,
+systemd, reverse proxy, and cross-compilation options.
+
+### 5. Use it
 
 ```python
 from openai import OpenAI
