@@ -287,6 +287,8 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 - Config — view and edit current effective configuration
 - Audit — configuration change history
 
+![Management Console](resources/ConsoleScreenshot.png)
+
 Config changes made through the web UI take effect immediately without restarting
 the application. Server bind address, routing policy, resilience settings, and
 provider credentials can all be modified at runtime. Changes are persisted to a
