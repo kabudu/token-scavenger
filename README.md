@@ -73,20 +73,18 @@ The simplest way to run TokenScavenger is to download the prebuilt binary for
 your platform from the [latest GitHub release](https://github.com/kabudu/token-scavenger/releases/latest).
 
 Each release includes self-contained binaries and SHA256 checksums. Download the
-matching artifact, make it executable on Linux/macOS, and start it:
+matching artifact and start it:
 
 ```bash
 chmod +x tokenscavenger-*
 ./tokenscavenger-*
 ```
 
-macOS may block unsigned open-source binaries with “Apple could not verify…”.
-After verifying the release checksum, remove the quarantine attribute:
+macOS releases are distributed as signed and notarized archives:
 
 ```bash
-shasum -a 256 tokenscavenger-v*-aarch64-apple-darwin
-xattr -d com.apple.quarantine tokenscavenger-v*-aarch64-apple-darwin
-./tokenscavenger-v*-aarch64-apple-darwin
+unzip tokenscavenger-v*-aarch64-apple-darwin.zip
+./tokenscavenger
 ```
 
 On first run, TokenScavenger detects the absence of a config file and offers to
@@ -317,9 +315,14 @@ New releases are created from the GitHub Actions workflow dispatch menu:
 The workflow:
 
 - Uses the current `Cargo.toml` version or bumps it, then creates a git tag (`vX.Y.Z`)
-- Cross-compiles binaries for Linux (x86_64), macOS (ARM64), and Windows (x86_64)
+- Builds binaries for Linux (x86_64), signed/notarized macOS (ARM64), and Windows (x86_64)
 - Creates a GitHub release with all binaries and checksums attached
 - Generates release notes from commit history
+
+macOS signing and notarization require these GitHub repository secrets:
+`APPLE_DEVELOPER_ID_CERTIFICATE_BASE64`,
+`APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD`, `APPLE_CODESIGN_IDENTITY`,
+`APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`.
 
 Each release binary is self-contained — download the one for your platform and run
 it. On first execution the built-in setup wizard guides you through configuration.

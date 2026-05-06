@@ -11,8 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Documented the macOS Gatekeeper quarantine step for unsigned release
-  binaries in the README, marketing site, and release notes.
+### Fixed
+
+## [0.1.2] - 2026-05-06
+
+### Added
+
+### Changed
+
+- Updated the release workflow to sign and notarize the macOS ARM64 binary
+  using Apple Developer ID credentials, distributed as a notarized zip archive.
+- Updated README, marketing site, and generated release notes for the notarized
+  macOS archive install flow.
 
 ### Fixed
 

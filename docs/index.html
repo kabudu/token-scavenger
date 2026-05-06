@@ -328,17 +328,15 @@
                 Apple Silicon binary
               </h3>
               <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
-                Download, verify the checksum, clear macOS quarantine for this
-                unsigned binary, then launch the setup wizard.
+                Download the signed and notarized archive, unzip it, then
+                launch the setup wizard.
               </p>
               <pre
                 class="mt-6 min-w-0 overflow-x-auto rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
               ><code>VERSION=v0.1.0
-curl -LO https://github.com/kabudu/token-scavenger/releases/download/$VERSION/tokenscavenger-$VERSION-aarch64-apple-darwin
-shasum -a 256 tokenscavenger-$VERSION-aarch64-apple-darwin
-chmod +x tokenscavenger-$VERSION-aarch64-apple-darwin
-xattr -d com.apple.quarantine tokenscavenger-$VERSION-aarch64-apple-darwin
-./tokenscavenger-$VERSION-aarch64-apple-darwin</code></pre>
+curl -LO https://github.com/kabudu/token-scavenger/releases/download/$VERSION/tokenscavenger-$VERSION-aarch64-apple-darwin.zip
+unzip tokenscavenger-$VERSION-aarch64-apple-darwin.zip
+./tokenscavenger</code></pre>
             </article>
 
             <article
