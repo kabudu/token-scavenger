@@ -8,10 +8,12 @@
 
 use tokenscavenger::app;
 use tokenscavenger::cli::{config_cmd, setup};
+use tokenscavenger::config::schema::Config;
 
 use clap::Parser;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::info;
 
 /// TokenScavenger CLI arguments.
@@ -84,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Resolve config path: explicit --config flag, or auto-detect, or run setup.
+    let mut setup_config = None;
     let config_path = match &cli.config {
         Some(path) => path.clone(),
         None => match tokenscavenger::cli::find_existing_config() {
@@ -97,7 +100,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .default(true)
                     .interact()?;
                 if run_setup {
-                    setup::run_setup_wizard(&target)?;
+                    let generated_config = setup::run_setup_wizard(&target)?;
+                    setup_config = Some(generated_config);
                     target
                 } else {
                     println!(
@@ -116,16 +120,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => {
             if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
                 if io_error.kind() == ErrorKind::AddrInUse {
+                    if let Some(config) = setup_config.as_ref() {
+                        match apply_config_to_running_instance(config).await {
+                            Ok(base_url) => {
+                                println!();
+                                println!("TokenScavenger is already running at {}.", base_url);
+                                println!(
+                                    "Applied your setup changes to the running server without a restart."
+                                );
+                                println!("Open {}/ui to continue.", base_url);
+                                return Ok(());
+                            }
+                            Err(reload_error) => {
+                                eprintln!();
+                                eprintln!(
+                                    "Setup was saved to {}, but TokenScavenger could not apply it to the running server: {}",
+                                    config_path.display(),
+                                    reload_error
+                                );
+                            }
+                        }
+                    }
                     eprintln!();
                     eprintln!(
-                        "TokenScavenger could not start because the configured bind address is already in use."
-                    );
-                    eprintln!(
-                        "Another TokenScavenger process may already be running, or another service is using this port."
-                    );
-                    eprintln!(
-                        "Stop the existing process or change [server].bind in {}.",
-                        config_path.display()
+                        "The configured address is already in use. If TokenScavenger is already running, open its admin UI and use the config page to apply changes."
                     );
                     return Ok(());
                 }
@@ -165,4 +183,108 @@ fn resolve_config_path(explicit: Option<&PathBuf>) -> PathBuf {
         .cloned()
         .or_else(tokenscavenger::cli::find_existing_config)
         .unwrap_or_else(|| PathBuf::from("tokenscavenger.toml"))
+}
+
+async fn apply_config_to_running_instance(
+    config: &Config,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let base_url = local_base_url(&config.server.bind);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let health = client
+        .get(format!("{base_url}/healthz"))
+        .send()
+        .await
+        .map_err(|error| {
+            std::io::Error::new(
+                ErrorKind::ConnectionRefused,
+                format!("could not reach {base_url}: {error}"),
+            )
+        })?;
+    if !health.status().is_success() {
+        return Err(std::io::Error::other(format!(
+            "{base_url}/healthz returned HTTP {}",
+            health.status()
+        ))
+        .into());
+    }
+
+    let mut request = client
+        .put(format!("{base_url}/admin/config"))
+        .json(&build_reload_payload(config));
+    if !config.server.master_api_key.is_empty() {
+        request = request.header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", config.server.master_api_key),
+        );
+    }
+
+    let response = request.send().await?;
+    if response.status().is_success() {
+        Ok(base_url)
+    } else {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(std::io::Error::other(format!("/admin/config returned HTTP {status}: {body}")).into())
+    }
+}
+
+fn local_base_url(bind: &str) -> String {
+    let (scheme, authority) = if let Some(rest) = bind.strip_prefix("http://") {
+        ("http", rest)
+    } else if let Some(rest) = bind.strip_prefix("https://") {
+        ("https", rest)
+    } else {
+        ("http", bind)
+    };
+    let authority = authority.split('/').next().unwrap_or(authority);
+    let authority = if let Some(port) = authority.strip_prefix("0.0.0.0:") {
+        format!("127.0.0.1:{port}")
+    } else if authority == "0.0.0.0" {
+        "127.0.0.1".to_string()
+    } else if let Some(port) = authority.strip_prefix("[::]:") {
+        format!("127.0.0.1:{port}")
+    } else if authority == "[::]" || authority == "::" {
+        "127.0.0.1".to_string()
+    } else {
+        authority.to_string()
+    };
+    format!("{scheme}://{authority}")
+}
+
+fn build_reload_payload(config: &Config) -> serde_json::Value {
+    serde_json::json!({
+        "server": {
+            "bind": config.server.bind,
+            "master_api_key": config.server.master_api_key,
+            "allowed_cors_origins": config.server.allowed_cors_origins,
+            "allow_query_api_keys": config.server.allow_query_api_keys,
+            "ui_session_auth": config.server.ui_session_auth,
+            "ui_enabled": config.server.ui_enabled,
+            "ui_path": config.server.ui_path,
+            "request_timeout_ms": config.server.request_timeout_ms,
+        },
+        "routing": {
+            "free_first": config.routing.free_first,
+            "allow_paid_fallback": config.routing.allow_paid_fallback,
+            "provider_order": config.routing.provider_order,
+        },
+        "resilience": {
+            "max_retries_per_provider": config.resilience.max_retries_per_provider,
+            "breaker_failure_threshold": config.resilience.breaker_failure_threshold,
+            "breaker_cooldown_secs": config.resilience.breaker_cooldown_secs,
+            "health_probe_interval_secs": config.resilience.health_probe_interval_secs,
+        },
+        "providers": config.providers.iter().map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "enabled": p.enabled,
+                "api_key": p.api_key.as_deref().unwrap_or(""),
+                "base_url": p.base_url.as_deref().unwrap_or(""),
+                "free_only": p.free_only,
+            })
+        }).collect::<Vec<_>>(),
+    })
 }

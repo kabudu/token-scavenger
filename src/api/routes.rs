@@ -444,6 +444,25 @@ pub async fn admin_config_save(
             config.server.ui_enabled = ui;
             changed = true;
         }
+        if let Some(ui_session_auth) = server.get("ui_session_auth").and_then(|v| v.as_bool()) {
+            config.server.ui_session_auth = ui_session_auth;
+            changed = true;
+        }
+        if let Some(allow_query_api_keys) =
+            server.get("allow_query_api_keys").and_then(|v| v.as_bool())
+        {
+            config.server.allow_query_api_keys = allow_query_api_keys;
+            changed = true;
+        }
+        if let Some(ui_path) = server.get("ui_path").and_then(|v| v.as_str()) {
+            config.server.ui_path = ui_path.to_string();
+            changed = true;
+        }
+        if let Some(request_timeout_ms) = server.get("request_timeout_ms").and_then(|v| v.as_u64())
+        {
+            config.server.request_timeout_ms = request_timeout_ms;
+            changed = true;
+        }
     }
 
     // --- Routing settings ---

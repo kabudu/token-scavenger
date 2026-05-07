@@ -503,7 +503,11 @@ fn build_reload_payload(config: &Config) -> serde_json::Value {
             "bind": config.server.bind,
             "master_api_key": config.server.master_api_key,
             "allowed_cors_origins": config.server.allowed_cors_origins,
+            "allow_query_api_keys": config.server.allow_query_api_keys,
+            "ui_session_auth": config.server.ui_session_auth,
             "ui_enabled": config.server.ui_enabled,
+            "ui_path": config.server.ui_path,
+            "request_timeout_ms": config.server.request_timeout_ms,
         },
         "routing": {
             "free_first": config.routing.free_first,

@@ -270,6 +270,56 @@ async fn test_admin_config_save_persists_model_priority() {
 }
 
 #[tokio::test]
+async fn test_admin_config_save_hot_reloads_server_auth_fields() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    let app = axum::Router::new()
+        .route(
+            "/admin/config",
+            axum::routing::put(routes::admin_config_save),
+        )
+        .with_state(state.clone());
+
+    let update_body = serde_json::json!({
+        "server": {
+            "allow_query_api_keys": true,
+            "ui_session_auth": true,
+            "ui_path": "/ui",
+            "request_timeout_ms": 42_000
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/config")
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let config = state.config();
+    assert!(config.server.allow_query_api_keys);
+    assert!(config.server.ui_session_auth);
+    assert_eq!(config.server.ui_path, "/ui");
+    assert_eq!(config.server.request_timeout_ms, 42_000);
+}
+
+#[tokio::test]
 async fn test_startup_router_enforces_auth_on_protected_routes() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
