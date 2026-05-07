@@ -106,6 +106,7 @@ async fn test_readyz_returns_json() {
     assert!(json.get("status").is_some());
     assert!(json.get("providers_configured").is_some());
     assert!(json.get("uptime_secs").is_some());
+    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
 }
 
 #[tokio::test]
@@ -317,6 +318,62 @@ async fn test_admin_config_save_hot_reloads_server_auth_fields() {
     assert!(config.server.ui_session_auth);
     assert_eq!(config.server.ui_path, "/ui");
     assert_eq!(config.server.request_timeout_ms, 42_000);
+}
+
+#[tokio::test]
+async fn test_admin_config_save_persists_provider_runtime_fields() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    let app = axum::Router::new()
+        .route(
+            "/admin/config",
+            axum::routing::put(routes::admin_config_save),
+        )
+        .with_state(state.clone());
+
+    let update_body = serde_json::json!({
+        "providers": [{
+            "id": "custom-runtime",
+            "enabled": true,
+            "base_url": "https://example.invalid/v1",
+            "free_only": false
+        }]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/config")
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let row = sqlx::query_as::<_, (String, bool, Option<String>, bool)>(
+        "SELECT provider_id, enabled, base_url, free_only FROM providers WHERE provider_id = 'custom-runtime'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, "custom-runtime");
+    assert!(row.1);
+    assert_eq!(row.2.as_deref(), Some("https://example.invalid/v1"));
+    assert!(!row.3);
 }
 
 #[tokio::test]
@@ -604,6 +661,64 @@ async fn test_admin_models_falls_back_to_curated_catalog() {
 }
 
 #[tokio::test]
+async fn test_startup_seeds_configured_providers_for_discovery_persistence() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("tokenscavenger-startup-{unique}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db_path = dir.join("tokenscavenger.db");
+    let config_path = dir.join("tokenscavenger.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+[server]
+bind = "127.0.0.1:0"
+
+[database]
+path = "{}"
+
+[[providers]]
+id = "groq"
+enabled = false
+api_key = "test-key"
+free_only = true
+discover_models = false
+"#,
+            db_path.display()
+        ),
+    )
+    .unwrap();
+
+    let startup = tokenscavenger::app::startup::startup(&config_path)
+        .await
+        .unwrap();
+
+    let row = sqlx::query_as::<_, (String, bool, bool)>(
+        "SELECT provider_id, enabled, free_only FROM providers WHERE provider_id = 'groq'",
+    )
+    .fetch_one(&startup.state.db)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, "groq");
+    assert!(!row.1);
+    assert!(row.2);
+
+    let _ = startup.state.shutdown_tx.send(true);
+    let handles = {
+        let mut guard = startup.state.background_handles.lock().unwrap();
+        guard.drain(..).collect::<Vec<_>>()
+    };
+    for handle in handles {
+        handle.abort();
+    }
+    startup.state.db.close().await;
+}
+
+#[tokio::test]
 async fn test_chat_completions_no_config_returns_error() {
     let (app, _state) = build_test_app().await;
 
@@ -812,7 +927,7 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         Default::default(),
         tokio::sync::broadcast::channel(1).0,
     ));
-    for path in ["/ui", "/ui/routing", "/ui/config", "/ui/logs"] {
+    for path in ["/ui", "/ui/routing", "/ui/models", "/ui/config", "/ui/logs"] {
         let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -829,6 +944,10 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         }
         if path == "/ui/config" {
             assert!(html.contains("Rollback"));
+        }
+        if path == "/ui/models" {
+            assert!(html.contains("Model Catalog"));
+            assert!(html.contains("fetch('/admin/models'"));
         }
         if path == "/ui/logs" {
             assert!(html.contains("aria-live"));

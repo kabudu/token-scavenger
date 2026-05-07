@@ -1,6 +1,7 @@
 use crate::api::error::ApiError;
 use crate::api::openai::chat::NormalizedChatRequest;
 use crate::api::openai::chat::StreamDelta;
+use crate::api::openai::chat::UsageResponse;
 use crate::app::state::AppState;
 use crate::providers::traits::{EndpointKind, ProviderContext};
 use crate::router::policy::RoutePolicy;
@@ -8,6 +9,9 @@ use crate::router::selection::{build_attempt_plan, filter_by_health, filter_by_p
 use axum::response::sse::Event;
 use futures::stream::Stream;
 use std::convert::Infallible;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 /// Streaming SSE event types for chat completions.
@@ -45,6 +49,13 @@ pub enum StreamEvent {
 }
 
 use serde::Serialize;
+
+#[derive(Debug, Clone)]
+struct StreamUsageContext {
+    provider_id: String,
+    free_tier: bool,
+    started_at: Instant,
+}
 
 /// Format a stream event as an OpenAI-compatible SSE data payload.
 pub fn format_sse_payload(event: &StreamEvent) -> String {
@@ -141,6 +152,7 @@ pub fn format_sse_payload(event: &StreamEvent) -> String {
 pub async fn create_chat_stream(
     state: AppState,
     request: NormalizedChatRequest,
+    request_id: String,
 ) -> Result<impl Stream<Item = Result<Event, Infallible>>, ApiError> {
     let config = state.config();
     let registry = &state.provider_registry;
@@ -189,6 +201,9 @@ pub async fn create_chat_stream(
     let config_clone = config.clone();
     let registry_clone = state.provider_registry.clone();
     let request_clone = request.clone();
+    let usage_context: Arc<Mutex<Option<StreamUsageContext>>> = Arc::new(Mutex::new(None));
+    let task_usage_context = usage_context.clone();
+    let usage_state = state.clone();
 
     tokio::spawn(async move {
         // Per spec: no mid-stream fallback. Only try the first healthy provider.
@@ -216,9 +231,17 @@ pub async fn create_chat_stream(
             let ctx = ProviderContext {
                 base_url: adapter.base_url(&provider_cfg),
                 api_key: provider_cfg.api_key.clone(),
-                config: std::sync::Arc::new(provider_cfg),
+                config: std::sync::Arc::new(provider_cfg.clone()),
                 client: state.http_client.clone(),
             };
+            {
+                let mut guard = task_usage_context.lock().await;
+                *guard = Some(StreamUsageContext {
+                    provider_id: provider_id.clone(),
+                    free_tier: provider_cfg.free_only,
+                    started_at: Instant::now(),
+                });
+            }
 
             match adapter
                 .stream_chat_completions(
@@ -248,12 +271,62 @@ pub async fn create_chat_stream(
     });
 
     // Convert channel receiver into an SSE stream
+    let mut usage_recorded = false;
     let stream = async_stream::stream! {
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Done => {
                     yield Ok(Event::default().data("[DONE]"));
                     break;
+                }
+                StreamEvent::Usage {
+                    id,
+                    created,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                } => {
+                    if !usage_recorded {
+                        usage_recorded = true;
+                        if let Some(ctx) = usage_context.lock().await.clone() {
+                            let usage = UsageResponse {
+                                prompt_tokens,
+                                completion_tokens,
+                                total_tokens,
+                                prompt_cache_hit_tokens: None,
+                                prompt_cache_miss_tokens: None,
+                                reasoning_tokens: None,
+                            };
+                            if let Err(error) = crate::usage::accounting::record_usage(
+                                &usage_state,
+                                crate::usage::accounting::UsageRecord {
+                                    provider_id: &ctx.provider_id,
+                                    model_id: &model,
+                                    usage: Some(&usage),
+                                    latency_ms: ctx.started_at.elapsed().as_millis() as i64,
+                                    free_tier: ctx.free_tier,
+                                    request_id: &request_id,
+                                    endpoint_kind: "chat",
+                                    streaming: true,
+                                },
+                            )
+                            .await
+                            {
+                                warn!(%error, "Failed to record streaming usage");
+                            }
+                        } else {
+                            warn!("Streaming usage event received before provider context was set");
+                        }
+                    }
+                    yield Ok(Event::default().data(format_sse_payload(&StreamEvent::Usage {
+                        id,
+                        created,
+                        model,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                    })));
                 }
                 _ => {
                     yield Ok(Event::default().data(format_sse_payload(&event)));

@@ -393,7 +393,7 @@ async fn e2e_models_endpoint() {
 
 #[tokio::test]
 async fn e2e_streaming_response_is_wire_level_sse() {
-    let (app, _state) = build_e2e_app(0).await;
+    let (app, state) = build_e2e_app(0).await;
 
     let resp = app
         .oneshot(
@@ -401,6 +401,7 @@ async fn e2e_streaming_response_is_wire_level_sse() {
                 .uri("/v1/chat/completions")
                 .method("POST")
                 .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-streaming-usage")
                 .body(Body::from(
                     serde_json::to_string(&serde_json::json!({
                         "model": "test-model",
@@ -420,6 +421,19 @@ async fn e2e_streaming_response_is_wire_level_sse() {
     assert!(text.contains("data: {"));
     assert!(text.contains("data: [DONE]"));
     assert!(!text.contains("data: data:"));
+
+    let row: (i64, i64, bool) = sqlx::query_as(
+        "SELECT input_tokens, output_tokens, streaming FROM usage_events
+         JOIN request_log USING (request_id)
+         WHERE usage_events.request_id = ?",
+    )
+    .bind("req-e2e-streaming-usage")
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(row.0, 10);
+    assert_eq!(row.1, 5);
+    assert!(row.2);
 }
 
 #[tokio::test]

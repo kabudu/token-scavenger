@@ -72,7 +72,12 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
     // 5. Load DB-persisted config overrides before building runtime registries.
     load_db_config_overrides(&state).await;
 
-    // 5b. Seed curated model catalog so routing can find baseline models
+    // 5b. Seed provider rows from the effective config so discovered models can
+    //     satisfy the models.provider_id foreign key on a fresh database.
+    seed_configured_providers(&state.db, &state.config().providers).await;
+    info!("Configured providers seeded");
+
+    // 5c. Seed curated model catalog so routing can find baseline models
     //     before the first discovery cycle completes.
     crate::discovery::curated::seed_curated_models(&state.db).await;
     info!("Curated models seeded");
@@ -151,6 +156,37 @@ async fn load_db_config_overrides(state: &AppState) {
     }
 
     info!("DB config overrides applied");
+}
+
+async fn seed_configured_providers(
+    db: &SqlitePool,
+    providers: &[crate::config::schema::ProviderConfig],
+) {
+    for provider in providers {
+        if let Err(error) = sqlx::query(
+            "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(provider_id) DO UPDATE SET
+                 display_name = excluded.display_name,
+                 enabled = excluded.enabled,
+                 base_url = excluded.base_url,
+                 free_only = excluded.free_only",
+        )
+        .bind(&provider.id)
+        .bind(&provider.id)
+        .bind(provider.enabled)
+        .bind(provider.base_url.as_deref())
+        .bind(provider.free_only)
+        .execute(db)
+        .await
+        {
+            tracing::warn!(
+                provider = %provider.id,
+                %error,
+                "Failed to seed configured provider"
+            );
+        }
+    }
 }
 
 /// Spawn background task loops.

@@ -786,7 +786,9 @@ pub async fn render_providers(state: &AppState) -> String {
 pub async fn render_models(state: &AppState) -> String {
     let models = crate::discovery::merge::get_all_models(state).await;
     let models_json = serde_json::to_string(&models).unwrap_or("{}".into());
-    let content = r#"
+    let initial_rows = render_initial_model_rows(&models);
+    let content = format!(
+        r#"
         <div class="glass-card overflow-hidden">
             <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4">
                 <h3 class="font-bold">Model Catalog</h3>
@@ -802,7 +804,7 @@ pub async fn render_models(state: &AppState) -> String {
                     <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
                         <tr><th>Model ID</th><th>Provider</th><th>Status</th><th>Priority</th><th>Actions</th></tr>
                     </thead>
-                    <tbody id="modelsTableBody" class="divide-y divide-white/5"></tbody>
+                    <tbody id="modelsTableBody" class="divide-y divide-white/5">{}</tbody>
                 </table>
             </div>
             <div class="px-6 py-3 border-t border-white/5 bg-white/[0.01] flex items-center justify-between">
@@ -812,19 +814,51 @@ pub async fn render_models(state: &AppState) -> String {
                     <button class="btn" style="background:#334155;" onclick="nextPage()">Next</button>
                 </div>
             </div>
-        </div>"#.to_string();
+        </div>"#,
+        initial_rows
+    );
     let scripts = format!(
         r#"<script>
-    const modelsData = {};
-    const modelsArr = modelsData.models || [];
+    let modelsData = {};
+    let modelsArr = modelsData.models || [];
     let currentPage = 1;
     const pageSize = 10;
     
-    const providers = [...new Set(modelsArr.map(m => m.provider_id))];
-    const select = document.getElementById('providerFilter');
-    providers.forEach(p => {{
-        if (p) select.innerHTML += `<option value="${{p}}">${{p}}</option>`;
-    }});
+    function syncProviderFilter() {{
+        const select = document.getElementById('providerFilter');
+        const current = select.value;
+        const providers = [...new Set(modelsArr.map(m => m.provider_id).filter(Boolean))].sort();
+        select.innerHTML = '<option value="">All Providers</option>';
+        providers.forEach(p => {{
+            select.innerHTML += `<option value="${{p}}">${{p}}</option>`;
+        }});
+        if (providers.includes(current)) select.value = current;
+    }}
+
+    function setModelStatus(message) {{
+        document.getElementById('modelsTableBody').innerHTML = `<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">${{message}}</td></tr>`;
+        document.getElementById('pageInfo').innerText = '';
+    }}
+
+    async function loadModels() {{
+        try {{
+            const response = await fetch('/admin/models', {{headers: {{'Accept': 'application/json'}}}});
+            if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
+            modelsData = await response.json();
+            modelsArr = modelsData.models || [];
+            currentPage = 1;
+            syncProviderFilter();
+            renderTable();
+        }} catch (error) {{
+            console.error('Failed to load model catalog', error);
+            if (modelsArr.length > 0) {{
+                syncProviderFilter();
+                renderTable();
+            }} else {{
+                setModelStatus('Failed to load models');
+            }}
+        }}
+    }}
 
     function renderTable() {{
         const search = document.getElementById('modelSearch').value.toLowerCase();
@@ -841,7 +875,7 @@ pub async fn render_models(state: &AppState) -> String {
 
         let html = '';
         if (slice.length === 0) {{
-            html = `<tr><td colspan="4" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>`;
+            html = `<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>`;
         }} else {{
             slice.forEach(m => {{
                 const u = m.upstream_model_id || '?';
@@ -864,14 +898,71 @@ pub async fn render_models(state: &AppState) -> String {
     function prevPage() {{ if (currentPage > 1) {{ currentPage--; renderTable(); }} }}
     function nextPage() {{ const search = document.getElementById('modelSearch').value.toLowerCase(); const prov = document.getElementById('providerFilter').value; const totalPages = Math.ceil(modelsArr.filter(m => (m.upstream_model_id || '').toLowerCase().includes(search) && (prov ? m.provider_id === prov : true)).length / pageSize); if (currentPage < totalPages) {{ currentPage++; renderTable(); }} }}
 
-    async function toggleModel(provider_id, model_id, enabled) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, enabled}}]}})}}); if (r.ok) location.reload(); else showModal('Error', 'Model update failed', true); }}
-    async function updateModelPriority(provider_id, model_id, priority) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, priority: parseInt(priority)}}]}})}}); if (r.ok) location.reload(); else showModal('Error', 'Priority update failed', true); }}
+    async function toggleModel(provider_id, model_id, enabled) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, enabled}}]}})}}); if (r.ok) loadModels(); else showModal('Error', 'Model update failed', true); }}
+    async function updateModelPriority(provider_id, model_id, priority) {{ const r = await fetch('/admin/config', {{method:'PUT', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{models:[{{provider_id, model_id, priority: parseInt(priority)}}]}})}}); if (r.ok) loadModels(); else showModal('Error', 'Priority update failed', true); }}
     
+    syncProviderFilter();
     renderTable();
+    loadModels();
     </script>"#,
         models_json
     );
     render_shell("Models", "models", &content, &scripts, state)
+}
+
+fn render_initial_model_rows(models: &serde_json::Value) -> String {
+    let Some(models) = models.get("models").and_then(|value| value.as_array()) else {
+        return r#"<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>"#.to_string();
+    };
+    if models.is_empty() {
+        return r#"<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>"#.to_string();
+    }
+
+    models
+        .iter()
+        .take(10)
+        .map(|model| {
+            let upstream = escape_html(
+                model
+                    .get("upstream_model_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("?"),
+            );
+            let provider = escape_html(
+                model
+                    .get("provider_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("?"),
+            );
+            let enabled = model
+                .get("enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            let priority = model
+                .get("priority")
+                .and_then(|value| value.as_i64())
+                .unwrap_or(100);
+            let status = if enabled {
+                r#"<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Enabled</span>"#
+            } else {
+                r#"<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Disabled</span>"#
+            };
+            format!(
+                r#"<tr><td class="font-mono text-sm text-cyan-400">{}</td><td class="text-sm">{}</td><td>{}</td><td class="text-sm">{}</td><td class="text-xs text-slate-500">Loading...</td></tr>"#,
+                upstream, provider, status, priority
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// Render the routing view.

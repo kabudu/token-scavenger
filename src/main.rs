@@ -193,8 +193,8 @@ async fn apply_config_to_running_instance(
         .timeout(Duration::from_secs(5))
         .build()?;
 
-    let health = client
-        .get(format!("{base_url}/healthz"))
+    let ready = client
+        .get(format!("{base_url}/readyz"))
         .send()
         .await
         .map_err(|error| {
@@ -203,10 +203,26 @@ async fn apply_config_to_running_instance(
                 format!("could not reach {base_url}: {error}"),
             )
         })?;
-    if !health.status().is_success() {
+    if !ready.status().is_success() {
         return Err(std::io::Error::other(format!(
-            "{base_url}/healthz returned HTTP {}",
-            health.status()
+            "{base_url}/readyz returned HTTP {}",
+            ready.status()
+        ))
+        .into());
+    }
+    let ready_json = ready.json::<serde_json::Value>().await.map_err(|error| {
+        std::io::Error::other(format!(
+            "running server at {base_url} did not return compatible readiness JSON: {error}"
+        ))
+    })?;
+    let running_version = ready_json
+        .get("version")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    if running_version != env!("CARGO_PKG_VERSION") {
+        return Err(std::io::Error::other(format!(
+            "running server version is {running_version}, but this setup was run by version {}; start the new binary after stopping the older running process",
+            env!("CARGO_PKG_VERSION")
         ))
         .into());
     }

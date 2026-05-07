@@ -27,6 +27,7 @@ pub async fn readyz(State(state): State<AppState>) -> Result<Json<serde_json::Va
         "status": if providers_ready { "ready" } else { "not_ready" },
         "providers_configured": config.providers.len(),
         "uptime_secs": state.start_time.elapsed().as_secs(),
+        "version": env!("CARGO_PKG_VERSION"),
     })))
 }
 
@@ -47,7 +48,8 @@ pub async fn chat_completions(
 
     if normalized.stream {
         // Streaming path
-        let stream = crate::api::openai::stream::create_chat_stream(state, normalized).await?;
+        let stream =
+            crate::api::openai::stream::create_chat_stream(state, normalized, request_id).await?;
         Ok(Sse::new(stream).into_response())
     } else {
         // Non-streaming path
@@ -517,6 +519,7 @@ pub async fn admin_config_save(
     }
 
     // --- Providers (toggle, add, update) ---
+    let mut providers_changed = false;
     if let Some(providers) = body.get("providers").and_then(|p| p.as_array()) {
         for provider_update in providers {
             if let Some(id) = provider_update.get("id").and_then(|v| v.as_str()) {
@@ -543,6 +546,7 @@ pub async fn admin_config_save(
                         .execute(&state.db)
                         .await;
                     changed = true;
+                    providers_changed = true;
                 } else if let Some(provider) = config.providers.iter_mut().find(|p| p.id == id) {
                     // Update existing
                     if let Some(e) = enabled.and_then(|v| v.as_bool()) {
@@ -560,14 +564,23 @@ pub async fn admin_config_save(
                     // Persist provider state to DB
                     let display_name = &provider.id;
                     let _ = sqlx::query(
-                        "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled) VALUES (?, ?, ?)"
+                        "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(provider_id) DO UPDATE SET
+                             display_name = excluded.display_name,
+                             enabled = excluded.enabled,
+                             base_url = excluded.base_url,
+                             free_only = excluded.free_only"
                     )
                     .bind(id)
                     .bind(display_name)
                     .bind(provider.enabled)
+                    .bind(provider.base_url.as_deref())
+                    .bind(provider.free_only)
                     .execute(&state.db)
                     .await;
                     changed = true;
+                    providers_changed = true;
                 } else if let Some(e) = enabled.and_then(|v| v.as_bool()).or(Some(true)) {
                     // New provider (add)
                     let new_provider = crate::config::schema::ProviderConfig {
@@ -580,14 +593,23 @@ pub async fn admin_config_save(
                     };
                     config.providers.push(new_provider);
                     let _ = sqlx::query(
-                        "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled) VALUES (?, ?, ?)"
+                        "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(provider_id) DO UPDATE SET
+                             display_name = excluded.display_name,
+                             enabled = excluded.enabled,
+                             base_url = excluded.base_url,
+                             free_only = excluded.free_only"
                     )
                     .bind(id)
                     .bind(id)
                     .bind(e)
+                    .bind(base_url)
+                    .bind(free_only.unwrap_or(true))
                     .execute(&state.db)
                     .await;
                     changed = true;
+                    providers_changed = true;
                 }
             }
         }
@@ -713,6 +735,10 @@ pub async fn admin_config_save(
         // Update the route engine
         if let Ok(mut engine) = state.route_engine.write() {
             engine.update_config(config.clone());
+        }
+
+        if providers_changed {
+            crate::discovery::refresh::refresh_all(&state).await;
         }
 
         // Persist runtime overrides to disk

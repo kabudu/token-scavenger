@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.1.5] - 2026-05-07
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed model discovery persistence for file-configured providers by seeding
+  provider rows before discovery and recording only persisted model counts.
+- Fixed provider hot-reload persistence so base URLs and free-only mode are
+  stored with provider rows before model discovery refreshes.
+- Fixed first-run provider saves so model discovery runs immediately after
+  providers are added and the Models page has server-rendered fallback rows.
+- Fixed the admin Models page to request `/admin/models` on load instead of
+  relying only on model JSON embedded in the page HTML.
+- Fixed streaming chat completions so usage chunks are recorded in token usage
+  metrics and cost accounting, including requests sent from the Chat Tester.
+- Added the running binary version to `/readyz` so setup does not silently apply
+  configuration to an older incompatible process.
+
 ## [0.1.4] - 2026-05-07
 
 ### Added
