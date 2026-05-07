@@ -1,5 +1,61 @@
 use crate::app::state::AppState;
 
+pub async fn render_login(_state: &AppState) -> String {
+    format!(
+        r##"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Login // TokenScavenger</title>
+<link rel="icon" type="image/png" href="/favicon.ico" />
+<style>{}</style>
+</head>
+<body class="admin-shell">
+<main class="min-h-screen w-full flex items-center justify-center p-6">
+    <div class="glass-card w-full max-w-md p-8">
+        <div class="flex items-center gap-3 mb-6">
+            <img src="/ui/logo.png" alt="TokenScavenger Logo" class="w-10 h-10" />
+            <div>
+                <h1 class="text-xl font-bold">Token<span class="text-[#D35400]">Scavenger</span></h1>
+                <p class="text-xs text-slate-500">Admin login</p>
+            </div>
+        </div>
+        <form id="login-form" class="space-y-4">
+            <label class="block">
+                <span class="text-xs font-bold text-slate-500 uppercase">Master API Key</span>
+                <input id="api-key" type="password" autocomplete="current-password" class="mt-2 w-full" autofocus required>
+            </label>
+            <button class="btn w-full" type="submit">Unlock Admin UI</button>
+            <p id="login-error" class="hidden text-sm text-red-400"></p>
+        </form>
+    </div>
+</main>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (event) => {{
+    event.preventDefault();
+    const error = document.getElementById('login-error');
+    error.classList.add('hidden');
+    const apiKey = document.getElementById('api-key').value;
+    const response = await fetch('/admin/session', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{api_key: apiKey}})
+    }});
+    if (response.ok) {{
+        window.location.href = '/ui';
+    }} else {{
+        error.innerText = 'Invalid API key';
+        error.classList.remove('hidden');
+    }}
+}});
+</script>
+</body>
+</html>"##,
+        include_str!("styles.css")
+    )
+}
+
 pub fn render_shell(
     title: &str,
     active_nav: &str,

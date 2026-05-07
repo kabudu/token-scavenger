@@ -92,6 +92,12 @@ pub async fn ui_index(State(state): State<AppState>) -> Result<Html<String>, Api
     Ok(Html(html))
 }
 
+/// GET /ui/login — browser login page for UI session auth.
+pub async fn ui_login(State(state): State<AppState>) -> Result<Html<String>, ApiError> {
+    let html = crate::ui::routes::render_login(&state).await;
+    Ok(Html(html))
+}
+
 /// GET /ui/*path — web UI static assets and views.
 pub async fn ui_static(
     axum::extract::Path(path): axum::extract::Path<String>,

@@ -165,7 +165,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
             master_api_key,
             allowed_cors_origins: vec![],
             allow_query_api_keys: false,
-            ui_session_auth: false,
+            ui_session_auth: use_master_key,
             ui_enabled: true,
             ui_path: "/ui".into(),
             request_timeout_ms: 120_000,

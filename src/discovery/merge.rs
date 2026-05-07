@@ -64,28 +64,54 @@ pub async fn build_model_list(state: &AppState) -> ModelListResponse {
 
 /// Get all models as JSON for the admin API.
 pub async fn get_all_models(state: &AppState) -> serde_json::Value {
-    let result = sqlx::query_as::<_, (String, String, String, bool)>(
-        "SELECT provider_id, upstream_model_id, public_model_id, enabled FROM models ORDER BY provider_id",
+    let mut models_map: std::collections::BTreeMap<(String, String), serde_json::Value> =
+        std::collections::BTreeMap::new();
+
+    for model in crate::discovery::curated::curated_catalog() {
+        models_map.insert(
+            (model.provider_id.clone(), model.upstream_model_id.clone()),
+            serde_json::json!({
+                "provider_id": model.provider_id,
+                "upstream_model_id": model.upstream_model_id,
+                "public_model_id": model.display_name.unwrap_or_default(),
+                "enabled": true,
+                "free_tier": model.free_tier,
+                "priority": 100,
+                "source": "curated",
+            }),
+        );
+    }
+
+    let result = sqlx::query_as::<_, (String, String, String, bool, bool, i64)>(
+        "SELECT provider_id, upstream_model_id, public_model_id, enabled, free_tier, priority FROM models ORDER BY provider_id, upstream_model_id",
     )
     .fetch_all(&state.db)
     .await;
 
     match result {
         Ok(rows) => {
-            let models: Vec<serde_json::Value> = rows
-                .into_iter()
-                .map(|(p, m, public_id, e)| {
+            for (provider_id, upstream_model_id, public_model_id, enabled, free_tier, priority) in
+                rows
+            {
+                models_map.insert(
+                    (provider_id.clone(), upstream_model_id.clone()),
                     serde_json::json!({
-                        "provider_id": p,
-                        "upstream_model_id": m,
-                        "public_model_id": public_id,
-                        "enabled": e,
-                    })
-                })
-                .collect();
-            serde_json::json!({"models": models})
+                        "provider_id": provider_id,
+                        "upstream_model_id": upstream_model_id,
+                        "public_model_id": public_model_id,
+                        "enabled": enabled,
+                        "free_tier": free_tier,
+                        "priority": priority,
+                        "source": "database",
+                    }),
+                );
+            }
+            serde_json::json!({"models": models_map.into_values().collect::<Vec<_>>()})
         }
-        Err(_) => serde_json::json!({"models": []}),
+        Err(error) => {
+            tracing::warn!(%error, "Failed to load DB model catalog; returning curated catalog");
+            serde_json::json!({"models": models_map.into_values().collect::<Vec<_>>()})
+        }
     }
 }
 

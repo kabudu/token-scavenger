@@ -293,6 +293,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/admin/session",
             axum::routing::post(crate::api::routes::admin_session),
+        )
+        .route(
+            "/ui/login",
+            axum::routing::get(crate::api::routes::ui_login),
         );
 
     let protected = Router::new()

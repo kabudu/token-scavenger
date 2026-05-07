@@ -10,6 +10,7 @@ use tokenscavenger::app;
 use tokenscavenger::cli::{config_cmd, setup};
 
 use clap::Parser;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -110,7 +111,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Bootstrap startup
-    let startup_result = app::startup::startup(&config_path).await?;
+    let startup_result = match app::startup::startup(&config_path).await {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
+                if io_error.kind() == ErrorKind::AddrInUse {
+                    eprintln!();
+                    eprintln!(
+                        "TokenScavenger could not start because the configured bind address is already in use."
+                    );
+                    eprintln!(
+                        "Another TokenScavenger process may already be running, or another service is using this port."
+                    );
+                    eprintln!(
+                        "Stop the existing process or change [server].bind in {}.",
+                        config_path.display()
+                    );
+                    return Ok(());
+                }
+            }
+            return Err(error);
+        }
+    };
 
     let state = startup_result.state;
     let router = startup_result.router;

@@ -2,9 +2,9 @@ use crate::app::state::AppState;
 use axum::{
     body::Body,
     extract::State,
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use tracing::warn;
 
@@ -71,6 +71,14 @@ pub async fn auth_middleware(
         }
     }
 
+    if config.server.ui_session_auth && is_ui_request(req.uri().path()) {
+        return Ok((StatusCode::SEE_OTHER, [(header::LOCATION, "/ui/login")]).into_response());
+    }
+
     warn!("Authentication failed: invalid or missing API key");
     Err(StatusCode::UNAUTHORIZED)
+}
+
+fn is_ui_request(path: &str) -> bool {
+    path == "/ui" || path.starts_with("/ui/")
 }

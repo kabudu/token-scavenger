@@ -448,6 +448,48 @@ async fn test_optional_ui_session_cookie_authenticates_browser_requests() {
 }
 
 #[tokio::test]
+async fn test_ui_redirects_to_login_when_session_auth_required() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let config = Config {
+        server: ServerConfig {
+            master_api_key: "secret".into(),
+            ui_session_auth: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let response = router
+        .clone()
+        .oneshot(Request::builder().uri("/ui").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers().get("location").unwrap(), "/ui/login");
+
+    let login = router
+        .oneshot(
+            Request::builder()
+                .uri("/ui/login")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_configured_cors_origin_is_allowed() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
@@ -489,6 +531,26 @@ async fn test_configured_cors_origin_is_allowed() {
             .unwrap(),
         "https://ops.example"
     );
+}
+
+#[tokio::test]
+async fn test_admin_models_falls_back_to_curated_catalog() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+
+    let models = tokenscavenger::discovery::merge::get_all_models(&state).await;
+    let arr = models["models"].as_array().unwrap();
+    assert!(!arr.is_empty());
+    assert!(arr.iter().any(|model| model["source"] == "curated"));
 }
 
 #[tokio::test]

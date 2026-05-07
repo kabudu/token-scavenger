@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.1.3] - 2026-05-07
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Improved first-run startup behavior when the configured bind address is
+  already in use, replacing the raw OS error with an actionable message.
+- Fixed admin UI access when a master API key is configured by enabling browser
+  session auth during setup and adding a `/ui/login` flow.
+- Fixed empty admin model catalogs by returning the curated model catalog and
+  overlaying discovered database rows instead of relying on DB rows only.
+
 ## [0.1.2] - 2026-05-06
 
 ### Added
