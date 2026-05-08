@@ -13,6 +13,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.1.6] - 2026-05-08
+
+### Added
+
+### Changed
+
+- Improved streaming route diagnostics with selected model IDs so fallback
+  attempts are explainable when model groups span multiple providers.
+
+### Fixed
+
+- Fixed streaming chat routing so disabled or undiscovered provider/model pairs
+  are filtered before upstream calls, matching non-streaming routing behavior.
+- Fixed empty streaming attempts being treated as successful completions before
+  any content or tool-call delta was forwarded, allowing fallback to continue to
+  the next planned attempt.
+- Fixed OpenAI-compatible streamed tool calls by forwarding `delta.tool_calls`
+  chunks instead of treating tool-call-only streams as empty responses.
+- Fixed OpenAI-compatible tool continuation requests by preserving
+  `assistant.tool_calls` and `tool.tool_call_id` fields when forwarding message
+  history to upstream providers.
+- Improved authentication failure logs with method, path, and header-presence
+  metadata while continuing to avoid logging API key material.
+
 ## [0.1.5] - 2026-05-07
 
 ### Added

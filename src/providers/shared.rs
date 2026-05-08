@@ -20,6 +20,30 @@ pub fn with_trailing_slash(url: &Url) -> Url {
     }
 }
 
+fn serialize_chat_messages(
+    messages: &[crate::api::openai::chat::ChatMessage],
+) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|message| {
+            let mut serialized = serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            });
+            if let Some(name) = message.name.as_ref() {
+                serialized["name"] = serde_json::Value::String(name.clone());
+            }
+            if let Some(tool_call_id) = message.tool_call_id.as_ref() {
+                serialized["tool_call_id"] = serde_json::Value::String(tool_call_id.clone());
+            }
+            if let Some(tool_calls) = message.tool_calls.as_ref() {
+                serialized["tool_calls"] = serde_json::to_value(tool_calls).unwrap_or_default();
+            }
+            serialized
+        })
+        .collect()
+}
+
 pub fn provider_base_url(
     provider_id: &str,
     config: &ProviderConfig,
@@ -67,16 +91,7 @@ pub async fn openai_chat_completions(
     // Build the OpenAI-compatible request body
     let mut body = serde_json::json!({
         "model": request.model,
-        "messages": request.messages.iter().map(|m| {
-            let mut msg = serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-            });
-            if let Some(ref name) = m.name {
-                msg["name"] = serde_json::Value::String(name.clone());
-            }
-            msg
-        }).collect::<Vec<_>>(),
+        "messages": serialize_chat_messages(&request.messages),
         "temperature": request.temperature,
         "top_p": request.top_p,
         "max_tokens": request.max_tokens,
@@ -307,16 +322,7 @@ pub async fn openai_stream_completions(
 
     let mut body = serde_json::json!({
         "model": request.model,
-        "messages": request.messages.iter().map(|m| {
-            let mut msg = serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-            });
-            if let Some(ref name) = m.name {
-                msg["name"] = serde_json::Value::String(name.clone());
-            }
-            msg
-        }).collect::<Vec<_>>(),
+        "messages": serialize_chat_messages(&request.messages),
         "stream": true,
         "stream_options": { "include_usage": true },
         "temperature": request.temperature,
@@ -427,6 +433,52 @@ pub async fn openai_stream_completions(
                                                 finish_reason: finish,
                                             })
                                             .await;
+                                    }
+
+                                    if let Some(tool_calls) = delta
+                                        .and_then(|d| d.get("tool_calls"))
+                                        .and_then(|v| v.as_array())
+                                    {
+                                        for tool_call in tool_calls {
+                                            let index = tool_call
+                                                .get("index")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32;
+                                            let tool_call_id = tool_call
+                                                .get("id")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string());
+                                            let function = tool_call.get("function");
+                                            let function_name = function
+                                                .and_then(|f| f.get("name"))
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string());
+                                            let function_arguments = function
+                                                .and_then(|f| f.get("arguments"))
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+
+                                            if tool_call_id.is_some()
+                                                || function_name.is_some()
+                                                || !function_arguments.is_empty()
+                                            {
+                                                let _ = tx
+                                                    .send(
+                                                        crate::api::openai::stream::StreamEvent::ToolCallChunk {
+                                                            id: id.clone(),
+                                                            created,
+                                                            model: model.clone(),
+                                                            index,
+                                                            tool_call_id,
+                                                            function_name,
+                                                            function_arguments,
+                                                        },
+                                                    )
+                                                    .await;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -559,4 +611,45 @@ macro_rules! openai_compat_adapter {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serialize_chat_messages;
+    use crate::api::openai::chat::{ChatMessage, ToolCall, ToolCallFunction};
+
+    #[test]
+    fn serialize_chat_messages_preserves_tool_call_context() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".into(),
+                content: None,
+                name: None,
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_1".into(),
+                    call_type: "function".into(),
+                    function: ToolCallFunction {
+                        name: "pwd".into(),
+                        arguments: "{}".into(),
+                    },
+                }]),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".into(),
+                content: Some(serde_json::Value::String(
+                    "/Users/kabudu/repositories/token-scavenger".into(),
+                )),
+                name: None,
+                tool_calls: None,
+                tool_call_id: Some("call_1".into()),
+            },
+        ];
+
+        let serialized = serialize_chat_messages(&messages);
+
+        assert_eq!(serialized[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(serialized[0]["tool_calls"][0]["function"]["name"], "pwd");
+        assert_eq!(serialized[1]["tool_call_id"], "call_1");
+    }
 }

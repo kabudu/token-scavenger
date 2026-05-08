@@ -469,3 +469,39 @@ async fn e2e_disabled_model_is_not_routed() {
 
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn e2e_disabled_model_is_not_routed_for_streaming() {
+    let (app, state) = build_e2e_app(0).await;
+    sqlx::query(
+        "INSERT OR REPLACE INTO models (provider_id, upstream_model_id, public_model_id, enabled)
+         VALUES (?, ?, ?, 0)",
+    )
+    .bind("mock")
+    .bind("test-model")
+    .bind("test-model")
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model",
+                        "stream": true,
+                        "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

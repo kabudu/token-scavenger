@@ -5,7 +5,9 @@ use crate::api::openai::chat::UsageResponse;
 use crate::app::state::AppState;
 use crate::providers::traits::{EndpointKind, ProviderContext};
 use crate::router::policy::RoutePolicy;
-use crate::router::selection::{build_attempt_plan, filter_by_health, filter_by_paid_policy};
+use crate::router::selection::{
+    build_attempt_plan, filter_by_health, filter_by_model_enabled, filter_by_paid_policy,
+};
 use axum::response::sse::Event;
 use futures::stream::Stream;
 use std::convert::Infallible;
@@ -147,6 +149,28 @@ pub fn format_sse_payload(event: &StreamEvent) -> String {
     }
 }
 
+fn stream_event_has_content(event: &StreamEvent) -> bool {
+    match event {
+        StreamEvent::Chunk { delta, .. } => delta
+            .content
+            .as_ref()
+            .is_some_and(|content| !content.is_empty()),
+        StreamEvent::ToolCallChunk {
+            tool_call_id,
+            function_name,
+            function_arguments,
+            ..
+        } => {
+            tool_call_id.as_ref().is_some_and(|value| !value.is_empty())
+                || function_name
+                    .as_ref()
+                    .is_some_and(|value| !value.is_empty())
+                || !function_arguments.is_empty()
+        }
+        StreamEvent::Usage { .. } | StreamEvent::Done => false,
+    }
+}
+
 /// Create a streaming SSE response for a chat completion request.
 /// Uses the routing engine to find a provider, then streams from it.
 pub async fn create_chat_stream(
@@ -178,11 +202,15 @@ pub async fn create_chat_stream(
         )));
     }
 
-    let plan = filter_by_paid_policy(filter_by_health(plan, &state), &state);
+    let plan = filter_by_model_enabled(
+        filter_by_paid_policy(filter_by_health(plan, &state), &state),
+        &state,
+    )
+    .await;
 
     if plan.is_empty() {
         return Err(ApiError::RouteExhausted(format!(
-            "All providers for streaming model(s) '{:?}' are unavailable or paid fallback is disabled",
+            "All providers for streaming model(s) '{:?}' are unavailable, disabled, or paid fallback is disabled",
             resolved_models
         )));
     }
@@ -206,14 +234,17 @@ pub async fn create_chat_stream(
     let usage_state = state.clone();
 
     tokio::spawn(async move {
-        // Per spec: no mid-stream fallback. Only try the first healthy provider.
-        // If streaming fails, send Done and stop — don't try next provider.
         for attempt in &plan {
             let provider_id = &attempt.provider_id;
+            let model_id = &attempt.model_id;
 
             if let Some(breaker) = state.breaker_states.get(provider_id) {
                 if breaker.is_open() {
-                    warn!(provider = %provider_id, "Skipping streaming: circuit breaker open");
+                    warn!(
+                        provider = %provider_id,
+                        model = %model_id,
+                        "Skipping streaming: circuit breaker open"
+                    );
                     continue;
                 }
             }
@@ -243,25 +274,115 @@ pub async fn create_chat_stream(
                 });
             }
 
-            match adapter
-                .stream_chat_completions(
-                    &ctx,
-                    NormalizedChatRequest {
-                        model: attempt.model_id.clone(),
-                        ..request_clone.clone()
-                    },
-                    tx.clone(),
-                )
-                .await
-            {
-                Ok(()) => {
-                    info!(provider = %provider_id, "Streaming completed");
-                    return;
-                }
-                Err(e) => {
-                    warn!(provider = %provider_id, error = %e, "Stream failed, no fallback per spec");
-                    crate::resilience::health::record_failure(&state, provider_id).await;
-                    // Don't try next provider — mid-stream fallback prohibited
+            let (attempt_tx, mut attempt_rx) = tokio::sync::mpsc::channel::<StreamEvent>(256);
+            let attempt_request = NormalizedChatRequest {
+                model: attempt.model_id.clone(),
+                ..request_clone.clone()
+            };
+            let attempt_ctx = ctx.clone();
+            let attempt_adapter = adapter.clone();
+            let mut attempt_task = tokio::spawn(async move {
+                attempt_adapter
+                    .stream_chat_completions(&attempt_ctx, attempt_request, attempt_tx)
+                    .await
+            });
+            let mut buffered = Vec::new();
+            let mut forwarded_meaningful_event = false;
+
+            loop {
+                tokio::select! {
+                    biased;
+                    event = attempt_rx.recv() => {
+                        let Some(event) = event else {
+                            if forwarded_meaningful_event {
+                                info!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    "Streaming completed"
+                                );
+                                let _ = tx.send(StreamEvent::Done).await;
+                                return;
+                            }
+                            warn!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming attempt closed without content; trying next planned attempt"
+                            );
+                            attempt_task.abort();
+                            break;
+                        };
+
+                        if forwarded_meaningful_event {
+                            let done = matches!(event, StreamEvent::Done);
+                            let _ = tx.send(event).await;
+                            if done {
+                                info!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    "Streaming completed"
+                                );
+                                return;
+                            }
+                            continue;
+                        }
+
+                        if stream_event_has_content(&event) {
+                            forwarded_meaningful_event = true;
+                            for buffered_event in buffered.drain(..) {
+                                let _ = tx.send(buffered_event).await;
+                            }
+                            let _ = tx.send(event).await;
+                        } else if matches!(event, StreamEvent::Done) {
+                            warn!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming attempt ended without content; trying next planned attempt"
+                            );
+                            attempt_task.abort();
+                            break;
+                        } else {
+                            buffered.push(event);
+                        }
+                    }
+                    result = &mut attempt_task => {
+                        match result {
+                            Ok(Ok(())) if forwarded_meaningful_event => {
+                                info!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    "Streaming completed"
+                                );
+                                let _ = tx.send(StreamEvent::Done).await;
+                                return;
+                            }
+                            Ok(Ok(())) => {
+                                warn!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    "Streaming attempt completed without content; trying next planned attempt"
+                                );
+                            }
+                            Ok(Err(e)) => {
+                                warn!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    error = %e,
+                                    "Streaming attempt failed before content; trying next planned attempt"
+                                );
+                                crate::resilience::health::record_failure(&state, provider_id).await;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    error = %e,
+                                    "Streaming attempt task failed before content; trying next planned attempt"
+                                );
+                                crate::resilience::health::record_failure(&state, provider_id).await;
+                            }
+                        }
+                        break;
+                    }
                 }
             }
         }

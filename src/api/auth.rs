@@ -19,6 +19,8 @@ pub async fn auth_middleware(
 ) -> Result<Response, StatusCode> {
     let config = state.config();
     let master_key = &config.server.master_api_key;
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
 
     if master_key.is_empty() {
         // Auth disabled
@@ -31,6 +33,7 @@ pub async fn auth_middleware(
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+    let has_authorization_header = !auth_header.is_empty();
 
     if let Some(token) = auth_header.strip_prefix("Bearer ") {
         if token == master_key {
@@ -71,11 +74,16 @@ pub async fn auth_middleware(
         }
     }
 
-    if config.server.ui_session_auth && is_ui_request(req.uri().path()) {
+    if config.server.ui_session_auth && is_ui_request(&path) {
         return Ok((StatusCode::SEE_OTHER, [(header::LOCATION, "/ui/login")]).into_response());
     }
 
-    warn!("Authentication failed: invalid or missing API key");
+    warn!(
+        method = %method,
+        path = %path,
+        has_authorization_header,
+        "Authentication failed: invalid or missing API key"
+    );
     Err(StatusCode::UNAUTHORIZED)
 }
 
