@@ -1,9 +1,79 @@
 use crate::app::state::AppState;
 
-/// Resolve a model group to its target model IDs.
+/// A model-group target can either be an upstream model ID that may be served
+/// by any eligible provider, or a provider-qualified provider/model pair.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ModelTarget {
+    pub provider_id: Option<String>,
+    pub model_id: String,
+}
+
+impl ModelTarget {
+    pub fn any_provider(model_id: impl Into<String>) -> Self {
+        Self {
+            provider_id: None,
+            model_id: model_id.into(),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match &self.provider_id {
+            Some(provider_id) => format!("{provider_id}/{}", self.model_id),
+            None => self.model_id.clone(),
+        }
+    }
+}
+
+fn parse_model_target(value: &serde_json::Value) -> Option<ModelTarget> {
+    if let Some(model_id) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(ModelTarget::any_provider(model_id));
+    }
+
+    let object = value.as_object()?;
+    let model_id = object
+        .get("model")
+        .or_else(|| object.get("model_id"))
+        .or_else(|| object.get("upstream_model_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let provider_id = object
+        .get("provider")
+        .or_else(|| object.get("provider_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+
+    Some(ModelTarget {
+        provider_id,
+        model_id: model_id.to_owned(),
+    })
+}
+
+fn parse_model_targets(target_json: &str) -> Vec<ModelTarget> {
+    match serde_json::from_str::<serde_json::Value>(target_json) {
+        Ok(serde_json::Value::Array(values)) => {
+            values.iter().filter_map(parse_model_target).collect()
+        }
+        Ok(value) => parse_model_target(&value).into_iter().collect(),
+        Err(_) => {
+            let model_id = target_json.trim();
+            if model_id.is_empty() {
+                Vec::new()
+            } else {
+                vec![ModelTarget::any_provider(model_id)]
+            }
+        }
+    }
+}
+
+/// Resolve a model group to its normalized targets.
 /// Returns `None` if no model group matches (use the model ID directly).
-pub async fn resolve_model_group(state: &AppState, model: &str) -> Option<Vec<String>> {
-    // Check DB model groups
+pub async fn resolve_model_group_targets(
+    state: &AppState,
+    model: &str,
+) -> Option<Vec<ModelTarget>> {
     let result = sqlx::query_as::<_, (String,)>(
         "SELECT target_json FROM model_groups WHERE name = ? AND enabled = 1",
     )
@@ -12,25 +82,20 @@ pub async fn resolve_model_group(state: &AppState, model: &str) -> Option<Vec<St
     .await
     .ok()??;
 
-    let target_json: String = result.0;
-
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&target_json) {
-        if let Some(s) = v.as_str() {
-            return Some(vec![s.to_string()]);
-        }
-        if let Some(arr) = v.as_array() {
-            let models: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect();
-            if !models.is_empty() {
-                return Some(models);
-            }
-        }
+    let targets = parse_model_targets(&result.0);
+    if targets.is_empty() {
+        None
+    } else {
+        Some(targets)
     }
+}
 
-    // Fallback: return the target as a single-element list if it's not JSON
-    Some(vec![target_json])
+/// Resolve a model group to its target model IDs.
+/// Returns `None` if no model group matches (use the model ID directly).
+pub async fn resolve_model_group(state: &AppState, model: &str) -> Option<Vec<String>> {
+    resolve_model_group_targets(state, model)
+        .await
+        .map(|targets| targets.into_iter().map(|target| target.model_id).collect())
 }
 
 /// Get all model groups from the database.

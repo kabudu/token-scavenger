@@ -288,17 +288,14 @@ pub async fn openai_discover_models(
 }
 
 /// Parse a single SSE data line and extract the JSON payload.
-/// Returns None for non-data lines or [DONE] sentinel.
+/// Returns None for non-data lines.
 fn parse_sse_line(line: &str) -> Option<String> {
-    if let Some(data) = line.strip_prefix("data: ") {
-        let trimmed = data.trim();
-        if trimmed == "[DONE]" {
-            // Done sentinel
-            return Some(String::new());
-        }
-        return Some(trimmed.to_string());
+    let data = line.strip_prefix("data:")?;
+    let trimmed = data.trim_start().trim_end();
+    if trimmed == "[DONE]" {
+        return Some(String::new());
     }
-    None
+    Some(trimmed.to_string())
 }
 
 /// Stream OpenAI-compatible SSE chat completions through a channel.
@@ -403,110 +400,121 @@ pub async fn openai_stream_completions(
                         }
 
                         // Parse the SSE data as streaming chunk
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                            if let Some(choices) = data.get("choices").and_then(|c| c.as_array()) {
-                                for choice in choices {
-                                    let delta = choice.get("delta");
-                                    let content = delta
-                                        .and_then(|d| d.get("content"))
-                                        .and_then(|c| c.as_str())
-                                        .map(|s| s.to_string());
-                                    let role = delta
-                                        .and_then(|d| d.get("role"))
-                                        .and_then(|r| r.as_str())
-                                        .map(|s| s.to_string());
-                                    let finish = choice
-                                        .get("finish_reason")
-                                        .and_then(|f| f.as_str())
-                                        .map(|s| s.to_string());
+                        match serde_json::from_str::<serde_json::Value>(&json_str) {
+                            Ok(data) => {
+                                if let Some(choices) =
+                                    data.get("choices").and_then(|c| c.as_array())
+                                {
+                                    for choice in choices {
+                                        let delta = choice.get("delta");
+                                        let content = delta
+                                            .and_then(|d| d.get("content"))
+                                            .and_then(|c| c.as_str())
+                                            .map(|s| s.to_string());
+                                        let role = delta
+                                            .and_then(|d| d.get("role"))
+                                            .and_then(|r| r.as_str())
+                                            .map(|s| s.to_string());
+                                        let finish = choice
+                                            .get("finish_reason")
+                                            .and_then(|f| f.as_str())
+                                            .map(|s| s.to_string());
 
-                                    if content.is_some() || finish.is_some() {
-                                        let _ = tx
-                                            .send(crate::api::openai::stream::StreamEvent::Chunk {
-                                                id: id.clone(),
-                                                created,
-                                                model: model.clone(),
-                                                delta: crate::api::openai::chat::StreamDelta {
-                                                    role,
-                                                    content,
-                                                },
-                                                finish_reason: finish,
-                                            })
-                                            .await;
-                                    }
+                                        if content.is_some() || finish.is_some() {
+                                            let _ = tx
+                                                .send(crate::api::openai::stream::StreamEvent::Chunk {
+                                                    id: id.clone(),
+                                                    created,
+                                                    model: model.clone(),
+                                                    delta: crate::api::openai::chat::StreamDelta {
+                                                        role,
+                                                        content,
+                                                    },
+                                                    finish_reason: finish,
+                                                })
+                                                .await;
+                                        }
 
-                                    if let Some(tool_calls) = delta
-                                        .and_then(|d| d.get("tool_calls"))
-                                        .and_then(|v| v.as_array())
-                                    {
-                                        for tool_call in tool_calls {
-                                            let index = tool_call
-                                                .get("index")
-                                                .and_then(|v| v.as_u64())
-                                                .unwrap_or(0)
-                                                as u32;
-                                            let tool_call_id = tool_call
-                                                .get("id")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string());
-                                            let function = tool_call.get("function");
-                                            let function_name = function
-                                                .and_then(|f| f.get("name"))
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string());
-                                            let function_arguments = function
-                                                .and_then(|f| f.get("arguments"))
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("")
-                                                .to_string();
+                                        if let Some(tool_calls) = delta
+                                            .and_then(|d| d.get("tool_calls"))
+                                            .and_then(|v| v.as_array())
+                                        {
+                                            for tool_call in tool_calls {
+                                                let index = tool_call
+                                                    .get("index")
+                                                    .and_then(|v| v.as_u64())
+                                                    .unwrap_or(0)
+                                                    as u32;
+                                                let tool_call_id = tool_call
+                                                    .get("id")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+                                                let function = tool_call.get("function");
+                                                let function_name = function
+                                                    .and_then(|f| f.get("name"))
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+                                                let function_arguments = function
+                                                    .and_then(|f| f.get("arguments"))
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string();
 
-                                            if tool_call_id.is_some()
-                                                || function_name.is_some()
-                                                || !function_arguments.is_empty()
-                                            {
-                                                let _ = tx
-                                                    .send(
-                                                        crate::api::openai::stream::StreamEvent::ToolCallChunk {
-                                                            id: id.clone(),
-                                                            created,
-                                                            model: model.clone(),
-                                                            index,
-                                                            tool_call_id,
-                                                            function_name,
-                                                            function_arguments,
-                                                        },
-                                                    )
-                                                    .await;
+                                                if tool_call_id.is_some()
+                                                    || function_name.is_some()
+                                                    || !function_arguments.is_empty()
+                                                {
+                                                    let _ = tx
+                                                        .send(
+                                                            crate::api::openai::stream::StreamEvent::ToolCallChunk {
+                                                                id: id.clone(),
+                                                                created,
+                                                                model: model.clone(),
+                                                                index,
+                                                                tool_call_id,
+                                                                function_name,
+                                                                function_arguments,
+                                                            },
+                                                        )
+                                                        .await;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            // Check for usage metadata
-                            if let Some(usage) = data.get("usage") {
-                                let _ = tx
-                                    .send(crate::api::openai::stream::StreamEvent::Usage {
-                                        id: id.clone(),
-                                        created,
-                                        model: model.clone(),
-                                        prompt_tokens: usage
-                                            .get("prompt_tokens")
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0)
-                                            as u32,
-                                        completion_tokens: usage
-                                            .get("completion_tokens")
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0)
-                                            as u32,
-                                        total_tokens: usage
-                                            .get("total_tokens")
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0)
-                                            as u32,
-                                    })
-                                    .await;
+                                // Check for usage metadata
+                                if let Some(usage) = data.get("usage") {
+                                    let _ = tx
+                                        .send(crate::api::openai::stream::StreamEvent::Usage {
+                                            id: id.clone(),
+                                            created,
+                                            model: model.clone(),
+                                            prompt_tokens: usage
+                                                .get("prompt_tokens")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32,
+                                            completion_tokens: usage
+                                                .get("completion_tokens")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32,
+                                            total_tokens: usage
+                                                .get("total_tokens")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0)
+                                                as u32,
+                                        })
+                                        .await;
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    provider = %provider_id,
+                                    %error,
+                                    "Ignoring malformed upstream SSE data frame"
+                                );
                             }
                         }
                     }
@@ -534,10 +542,21 @@ pub fn classify_error_with_rate_limits(
     message: &str,
     rate_limits: &crate::providers::normalization::RateLimitInfo,
 ) -> ProviderError {
+    let message_lower = message.to_ascii_lowercase();
     match status {
         429 => ProviderError::RateLimited {
             retry_after: rate_limits.retry_after,
+            details: message.to_string(),
         },
+        413 if message_lower.contains("rate_limit_exceeded")
+            || message_lower.contains("tokens per minute")
+            || message_lower.contains("tpm") =>
+        {
+            ProviderError::RateLimited {
+                retry_after: rate_limits.retry_after,
+                details: message.to_string(),
+            }
+        }
         401 | 403 => ProviderError::Auth(message.to_string()),
         400 => ProviderError::Other(format!("Bad request: {}", message)),
         s if s >= 500 => ProviderError::Other(format!("Upstream {}: {}", s, message)),
@@ -615,7 +634,7 @@ macro_rules! openai_compat_adapter {
 
 #[cfg(test)]
 mod tests {
-    use super::serialize_chat_messages;
+    use super::{parse_sse_line, serialize_chat_messages};
     use crate::api::openai::chat::{ChatMessage, ToolCall, ToolCallFunction};
 
     #[test]
@@ -651,5 +670,19 @@ mod tests {
         assert_eq!(serialized[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(serialized[0]["tool_calls"][0]["function"]["name"], "pwd");
         assert_eq!(serialized[1]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn parse_sse_line_accepts_compact_and_spaced_data_prefixes() {
+        assert_eq!(
+            parse_sse_line("data:{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"),
+            Some("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}".into())
+        );
+        assert_eq!(
+            parse_sse_line("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"),
+            Some("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}".into())
+        );
+        assert_eq!(parse_sse_line("data: [DONE]"), Some(String::new()));
+        assert_eq!(parse_sse_line("event: message"), None);
     }
 }

@@ -67,7 +67,7 @@ async fn build_e2e_app_with_failure(
     .unwrap();
 
     // Seed a model row so filter_by_model_enabled finds it.
-    // Without this, unwrap_or(false) excludes the mock provider.
+    // Missing rows represent models not present in a provider catalog.
     sqlx::query(
         "INSERT OR IGNORE INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, discovered_at, updated_at)
          VALUES (?, ?, ?, 1, 1, 1, datetime('now'), datetime('now'))",
@@ -144,6 +144,7 @@ async fn build_e2e_app_with_failure(
                 if self.state.rate_limited {
                     return Err(ProviderError::RateLimited {
                         retry_after: Some(7),
+                        details: "mock rate limited".into(),
                     });
                 }
                 return Err(ProviderError::Other("mock unavailable".into()));

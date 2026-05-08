@@ -61,7 +61,10 @@ fn classify_http_error(e: reqwest::Error) -> crate::providers::traits::ProviderE
         crate::providers::traits::ProviderError::Timeout
     } else if let Some(status) = e.status() {
         match status.as_u16() {
-            429 => crate::providers::traits::ProviderError::RateLimited { retry_after: None },
+            429 => crate::providers::traits::ProviderError::RateLimited {
+                retry_after: None,
+                details: e.to_string(),
+            },
             401 | 403 => crate::providers::traits::ProviderError::Auth(e.to_string()),
             s if s >= 500 => {
                 crate::providers::traits::ProviderError::Other(format!("Upstream {}: {}", s, e))

@@ -13,6 +13,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.1.7] - 2026-05-08
+
+### Added
+
+- Added model-group targets that can mix portable model IDs with
+  provider-qualified `{ provider, model }` entries, preserving ordered fallback
+  while allowing explicit upstream pinning.
+- Added admin UI support for model-group target modes, with separate
+  "Any provider" and "Specific provider" selection flows.
+
+### Changed
+
+- Updated route-plan and streaming diagnostics to log full provider/model
+  attempt labels, making provider-qualified and cross-provider model-group
+  routing easier to audit.
+- Updated tool-request routing to preserve operator/model-group order among
+  tool-capable attempts instead of reshuffling by provider reliability rank.
+- Updated streaming failure handling to surface upstream errors that occur
+  before any response content is emitted, including provider rate-limit details.
+- Treat upstream token-per-minute/request-size `413 rate_limit_exceeded` errors
+  as rate limits so they drive request fallback and preserve the upstream
+  diagnostic body.
+- Rate-limit and quota errors no longer poison provider health for later
+  attempts; they remain per-request fallback signals.
+- Updated model-group documentation with both portable model ID and
+  provider-qualified target examples.
+
+### Fixed
+
+- Fixed admin "Deploy Configuration" so redacted provider API keys are treated
+  as display masks and the existing stored secret is preserved.
+- Fixed Google Gemini tool-call requests by translating OpenAI tool definitions
+  to Gemini `functionDeclarations` and `toolConfig` instead of forwarding the
+  OpenAI `type/function` shape.
+- Fixed Google Gemini tool-result continuation requests by translating OpenAI
+  `role: "tool"` messages into Gemini `functionResponse` parts.
+- Fixed SSE parsing to accept compact `data:{...}` frames as well as
+  `data: {...}` frames.
+- Fixed route-plan and streaming model-group expansion so provider-qualified
+  targets are routed only through their configured provider.
+
 ## [0.1.6] - 2026-05-08
 
 ### Added

@@ -268,11 +268,14 @@ TokenScavenger supports configurable model groups for simplified routing:
 ```toml
 [[model_groups]]
 name = "free:llama-70b"
-target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
+target = [
+  { provider = "groq", model = "llama3-70b-8192" },
+  "gemini-2.0-flash",
+]
 
 [[model_groups]]
 name = "fast-chat"
-target = ["cerebras/llama3.1-8b"]
+target = ["llama3.1-8b"]
 ```
 
 Then use the group name in your request:

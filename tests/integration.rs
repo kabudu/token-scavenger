@@ -377,6 +377,74 @@ async fn test_admin_config_save_persists_provider_runtime_fields() {
 }
 
 #[tokio::test]
+async fn test_admin_config_save_preserves_redacted_provider_api_key() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let config = Config {
+        providers: vec![tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            enabled: true,
+            base_url: None,
+            api_key: Some("gsk_super_secret_key".into()),
+            free_only: true,
+            discover_models: true,
+        }],
+        ..Default::default()
+    };
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    let app = axum::Router::new()
+        .route(
+            "/admin/config",
+            axum::routing::get(routes::admin_config).put(routes::admin_config_save),
+        )
+        .with_state(state.clone());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let redacted_config: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(redacted_config["providers"][0]["api_key"], "****_key");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/config")
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&redacted_config).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let config = state.config();
+    assert_eq!(
+        config.providers[0].api_key.as_deref(),
+        Some("gsk_super_secret_key")
+    );
+}
+
+#[tokio::test]
 async fn test_startup_router_enforces_auth_on_protected_routes() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
@@ -888,7 +956,7 @@ fn test_runtime_overrides_restore_all_hot_reload_sections() {
 }
 
 #[tokio::test]
-async fn test_rate_limited_health_state_is_enforced_by_route_filter() {
+async fn test_rate_limited_health_state_does_not_globally_block_route_filter() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     let mut config = Config::default();
     config.routing.provider_order = vec!["groq".into()];
@@ -911,7 +979,10 @@ async fn test_rate_limited_health_state_is_enforced_by_route_filter() {
         model_id: "llama".into(),
         priority: 0,
     }];
-    assert!(tokenscavenger::router::selection::filter_by_health(plan, &state).is_empty());
+    assert_eq!(
+        tokenscavenger::router::selection::filter_by_health(plan, &state).len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -1013,6 +1084,13 @@ async fn test_provider_contract_matrix_and_failure_classification() {
     use tokenscavenger::providers::traits::ProviderError;
     assert!(matches!(
         tokenscavenger::providers::shared::classify_error(429, "slow down"),
+        ProviderError::RateLimited { .. }
+    ));
+    assert!(matches!(
+        tokenscavenger::providers::shared::classify_error(
+            413,
+            r#"{"error":{"message":"Request too large on tokens per minute (TPM): Limit 12000, Requested 20092","type":"tokens","code":"rate_limit_exceeded"}}"#
+        ),
         ProviderError::RateLimited { .. }
     ));
     assert!(matches!(
@@ -1305,6 +1383,77 @@ async fn test_multi_model_group_resolution() {
 }
 
 #[tokio::test]
+async fn test_provider_qualified_model_group_resolution() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO model_groups (name, target_json, enabled) VALUES ('agentic', '[{\"provider\":\"nvidia\",\"model\":\"google/gemma-4-31b-it\"}, \"gemini-2.5-flash\"]', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut config = Config::default();
+    config.routing.provider_order = vec!["google".into(), "nvidia".into()];
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "google".into(),
+            enabled: true,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "nvidia".into(),
+            enabled: true,
+            ..Default::default()
+        },
+    ];
+
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    state.provider_registry.init_from_config(&state).await;
+
+    let targets =
+        tokenscavenger::router::model_groups::resolve_model_group_targets(&state, "agentic")
+            .await
+            .unwrap();
+    assert_eq!(targets[0].provider_id.as_deref(), Some("nvidia"));
+    assert_eq!(targets[0].model_id, "google/gemma-4-31b-it");
+    assert_eq!(targets[1].provider_id, None);
+    assert_eq!(targets[1].model_id, "gemini-2.5-flash");
+
+    let registry = &state.provider_registry;
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let mut plan = Vec::new();
+    for target in &targets {
+        let model_plan = tokenscavenger::router::selection::build_attempt_plan_for_target(
+            &policy,
+            registry,
+            target,
+            tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        )
+        .await;
+        plan.extend(model_plan);
+    }
+    tokenscavenger::router::selection::assign_attempt_priorities(&mut plan);
+
+    assert_eq!(plan[0].provider_id, "nvidia");
+    assert_eq!(plan[0].model_id, "google/gemma-4-31b-it");
+    assert!(
+        plan.iter().any(
+            |attempt| attempt.provider_id == "google" && attempt.model_id == "gemini-2.5-flash"
+        )
+    );
+}
+
+#[tokio::test]
 async fn test_model_group_fallback_logic() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
@@ -1364,7 +1513,7 @@ async fn test_model_group_fallback_logic() {
 }
 
 #[tokio::test]
-async fn test_tool_requests_prioritize_tool_reliable_attempts() {
+async fn test_tool_requests_keep_operator_order_for_tool_capable_attempts() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
@@ -1427,10 +1576,10 @@ async fn test_tool_requests_prioritize_tool_reliable_attempts() {
     let prioritized =
         tokenscavenger::router::selection::prioritize_for_tool_use(plan, &state).await;
 
-    assert_eq!(prioritized[0].provider_id, "groq");
-    assert_eq!(prioritized[0].model_id, "llama-3.3-70b-versatile");
-    assert_eq!(prioritized[1].model_id, "mistral-medium-3.5");
-    assert_eq!(prioritized[2].model_id, "devstral-latest");
+    assert_eq!(prioritized[0].provider_id, "mistral");
+    assert_eq!(prioritized[0].model_id, "mistral-medium-3.5");
+    assert_eq!(prioritized[1].model_id, "devstral-latest");
+    assert_eq!(prioritized[2].provider_id, "groq");
 }
 
 #[tokio::test]

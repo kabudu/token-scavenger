@@ -40,8 +40,11 @@ pub enum ProviderError {
     Http(String),
     #[error("Timeout")]
     Timeout,
-    #[error("Rate limited: retry after {retry_after:?}")]
-    RateLimited { retry_after: Option<u64> },
+    #[error("Rate limited: retry after {retry_after:?}: {details}")]
+    RateLimited {
+        retry_after: Option<u64>,
+        details: String,
+    },
     #[error("Quota exhausted: {details}")]
     QuotaExhausted {
         details: String,

@@ -8,6 +8,21 @@ pub fn redact_secret(secret: &str) -> String {
     format!("****{}", visible)
 }
 
+/// Return true when a submitted value looks like a display-only redaction mask.
+///
+/// Admin UI saves should preserve the existing secret for these values instead
+/// of writing the mask back to durable config.
+pub fn is_redacted_secret(value: &str) -> bool {
+    if value == "********" {
+        return true;
+    }
+
+    value.len() >= 8
+        && value.starts_with("****")
+        && value.chars().filter(|ch| *ch == '*').count() >= 4
+        && value.chars().any(|ch| ch != '*')
+}
+
 /// Redact sensitive values from a JSON value tree in-place.
 pub fn redact_json_value(mut value: serde_json::Value) -> serde_json::Value {
     match &mut value {
@@ -48,6 +63,14 @@ mod tests {
     fn test_redact_secret_long() {
         let result = redact_secret("sk-abc123def456");
         assert_eq!(result, "****f456");
+    }
+
+    #[test]
+    fn test_is_redacted_secret() {
+        assert!(is_redacted_secret("********"));
+        assert!(is_redacted_secret("****f456"));
+        assert!(!is_redacted_secret("sk-real-secret"));
+        assert!(!is_redacted_secret(""));
     }
 
     #[test]

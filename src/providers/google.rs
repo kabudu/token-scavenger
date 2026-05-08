@@ -1,4 +1,6 @@
-use crate::api::openai::chat::{NormalizedChatRequest, ProviderChatResponse, ProviderUsage};
+use crate::api::openai::chat::{
+    ChatMessage, NormalizedChatRequest, ProviderChatResponse, ProviderUsage, ToolDefinition,
+};
 use crate::api::openai::embeddings::{
     EmbeddingData, NormalizedEmbeddingsRequest, ProviderEmbeddingsResponse,
 };
@@ -37,23 +39,7 @@ fn google_api_key_auth(config: &ProviderConfig) -> HeaderMap {
 }
 
 fn google_generate_content_body(request: &NormalizedChatRequest) -> serde_json::Value {
-    let contents: Vec<serde_json::Value> = request
-        .messages
-        .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| {
-            let text = m
-                .content
-                .as_ref()
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .to_string();
-            serde_json::json!({
-                "role": if m.role == "assistant" { "model" } else { m.role.as_str() },
-                "parts": [{"text": text}]
-            })
-        })
-        .collect();
+    let contents = google_contents(&request.messages);
 
     let mut generation_config = serde_json::json!({
         "temperature": request.temperature,
@@ -79,15 +65,154 @@ fn google_generate_content_body(request: &NormalizedChatRequest) -> serde_json::
         }
     }
 
-    if let Some(tools) = &request.tools {
-        body["tools"] = serde_json::to_value(tools).unwrap_or_else(|_| serde_json::json!([]));
+    if let Some(tools) = google_tools(&request.tools) {
+        body["tools"] = tools;
     }
 
-    if let Some(tool_choice) = &request.tool_choice {
-        body["toolConfig"] = serde_json::json!({"functionCallingConfig": tool_choice});
+    if let Some(tool_config) = google_tool_config(&request.tool_choice) {
+        body["toolConfig"] = tool_config;
     }
 
     body
+}
+
+fn google_contents(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
+    let mut contents = Vec::new();
+    let mut tool_call_names = std::collections::HashMap::new();
+
+    for message in messages.iter().filter(|m| m.role != "system") {
+        match message.role.as_str() {
+            "assistant" => {
+                let mut parts = Vec::new();
+                if let Some(text) = message.content.as_ref().and_then(|c| c.as_str()) {
+                    if !text.is_empty() {
+                        parts.push(serde_json::json!({ "text": text }));
+                    }
+                }
+                if let Some(tool_calls) = message.tool_calls.as_ref() {
+                    for tool_call in tool_calls {
+                        tool_call_names
+                            .insert(tool_call.id.clone(), tool_call.function.name.clone());
+                        let args = serde_json::from_str::<serde_json::Value>(
+                            &tool_call.function.arguments,
+                        )
+                        .unwrap_or_else(
+                            |_| serde_json::json!({ "arguments": tool_call.function.arguments }),
+                        );
+                        parts.push(serde_json::json!({
+                            "functionCall": {
+                                "name": tool_call.function.name,
+                                "args": args
+                            }
+                        }));
+                    }
+                }
+                if !parts.is_empty() {
+                    contents.push(serde_json::json!({
+                        "role": "model",
+                        "parts": parts
+                    }));
+                }
+            }
+            "tool" => {
+                let name = message
+                    .tool_call_id
+                    .as_ref()
+                    .and_then(|id| tool_call_names.get(id))
+                    .cloned()
+                    .or_else(|| message.tool_call_id.clone())
+                    .unwrap_or_else(|| "tool_result".to_string());
+                let response = message
+                    .content
+                    .as_ref()
+                    .and_then(|content| {
+                        content
+                            .as_str()
+                            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                            .or_else(|| Some(content.clone()))
+                    })
+                    .unwrap_or_else(|| serde_json::json!({}));
+                contents.push(serde_json::json!({
+                    "role": "user",
+                    "parts": [{
+                        "functionResponse": {
+                            "name": name,
+                            "response": { "content": response }
+                        }
+                    }]
+                }));
+            }
+            _ => {
+                let text = message
+                    .content
+                    .as_ref()
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                contents.push(serde_json::json!({
+                    "role": "user",
+                    "parts": [{"text": text}]
+                }));
+            }
+        }
+    }
+
+    contents
+}
+
+fn google_tools(tools: &Option<Vec<ToolDefinition>>) -> Option<serde_json::Value> {
+    let declarations = tools
+        .as_ref()?
+        .iter()
+        .filter(|tool| tool.tool_type == "function")
+        .map(|tool| {
+            let mut declaration = serde_json::json!({
+                "name": tool.function.name,
+            });
+            if let Some(description) = tool.function.description.as_ref() {
+                declaration["description"] = serde_json::json!(description);
+            }
+            if let Some(parameters) = tool.function.parameters.as_ref() {
+                declaration["parameters"] = parameters.clone();
+            }
+            declaration
+        })
+        .collect::<Vec<_>>();
+
+    (!declarations.is_empty()).then(|| {
+        serde_json::json!([{
+            "functionDeclarations": declarations
+        }])
+    })
+}
+
+fn google_tool_config(tool_choice: &Option<serde_json::Value>) -> Option<serde_json::Value> {
+    let choice = tool_choice.as_ref()?;
+    let config = if let Some(choice) = choice.as_str() {
+        match choice {
+            "auto" => serde_json::json!({ "mode": "AUTO" }),
+            "required" => serde_json::json!({ "mode": "ANY" }),
+            "none" => serde_json::json!({ "mode": "NONE" }),
+            _ => return None,
+        }
+    } else if choice.get("type").and_then(|value| value.as_str()) == Some("function") {
+        let function_name = choice
+            .get("function")
+            .and_then(|function| function.get("name"))
+            .and_then(|name| name.as_str())?;
+        serde_json::json!({
+            "mode": "ANY",
+            "allowedFunctionNames": [function_name]
+        })
+    } else if choice.get("mode").is_some() || choice.get("allowedFunctionNames").is_some() {
+        choice.clone()
+    } else {
+        return None;
+    };
+
+    Some(serde_json::json!({
+        "functionCallingConfig": config
+    }))
 }
 
 #[async_trait]
@@ -551,10 +676,19 @@ mod tests {
                 function: crate::api::openai::chat::ToolFunction {
                     name: "lookup".into(),
                     description: Some("Lookup".into()),
-                    parameters: None,
+                    parameters: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string" }
+                        },
+                        "required": ["query"]
+                    })),
                 },
             }]),
-            tool_choice: Some(serde_json::json!({"mode": "AUTO"})),
+            tool_choice: Some(serde_json::json!({
+                "type": "function",
+                "function": { "name": "lookup" }
+            })),
             response_format: Some(crate::api::openai::chat::ResponseFormat {
                 format_type: "json_object".into(),
                 json_schema: None,
@@ -571,7 +705,87 @@ mod tests {
             body["generationConfig"]["responseMimeType"],
             "application/json"
         );
-        assert!(body.get("tools").is_some());
-        assert!(body.get("toolConfig").is_some());
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["name"],
+            "lookup"
+        );
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["query"]["type"],
+            "string"
+        );
+        assert!(body["tools"][0].get("type").is_none());
+        assert!(body["tools"][0].get("function").is_none());
+        assert_eq!(
+            body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
+            "lookup"
+        );
+        assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+    }
+
+    #[test]
+    fn google_translation_converts_tool_messages_to_function_responses() {
+        let req = NormalizedChatRequest {
+            model: "gemini-test".into(),
+            messages: vec![
+                ChatMessage {
+                    role: "user".into(),
+                    content: Some(serde_json::json!("Check pwd")),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "assistant".into(),
+                    content: None,
+                    name: None,
+                    tool_calls: Some(vec![crate::api::openai::chat::ToolCall {
+                        id: "call_1".into(),
+                        call_type: "function".into(),
+                        function: crate::api::openai::chat::ToolCallFunction {
+                            name: "pwd".into(),
+                            arguments: "{}".into(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "tool".into(),
+                    content: Some(serde_json::json!("{\"path\":\"/tmp\"}")),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: Some("call_1".into()),
+                },
+            ],
+            stream: false,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            user: None,
+        };
+
+        let body = google_generate_content_body(&req);
+        assert_eq!(body["contents"][1]["role"], "model");
+        assert_eq!(
+            body["contents"][1]["parts"][0]["functionCall"]["name"],
+            "pwd"
+        );
+        assert_eq!(body["contents"][2]["role"], "user");
+        assert_eq!(
+            body["contents"][2]["parts"][0]["functionResponse"]["name"],
+            "pwd"
+        );
+        assert!(
+            body["contents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|content| content["role"] != "tool")
+        );
     }
 }

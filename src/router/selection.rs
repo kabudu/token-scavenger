@@ -1,6 +1,7 @@
 use crate::app::state::AppState;
 use crate::providers::registry::ProviderRegistry;
 use crate::providers::traits::EndpointKind;
+use crate::router::model_groups::ModelTarget;
 use crate::router::policy::RoutePolicy;
 
 /// A single entry in the attempt plan.
@@ -11,6 +12,12 @@ pub struct RouteAttempt {
     pub priority: i32,
 }
 
+impl RouteAttempt {
+    pub fn label(&self) -> String {
+        format!("{}/{}", self.provider_id, self.model_id)
+    }
+}
+
 /// Build an ordered list of provider-model attempts based on the routing policy.
 /// Filters by endpoint capability, enablement, health hints, and circuit breaker state.
 pub async fn build_attempt_plan(
@@ -19,11 +26,31 @@ pub async fn build_attempt_plan(
     model: &str,
     endpoint_kind: EndpointKind,
 ) -> Vec<RouteAttempt> {
+    build_attempt_plan_for_target(
+        policy,
+        registry,
+        &ModelTarget::any_provider(model),
+        endpoint_kind,
+    )
+    .await
+}
+
+/// Build an ordered list of provider-model attempts for a normalized target.
+pub async fn build_attempt_plan_for_target(
+    policy: &RoutePolicy,
+    registry: &ProviderRegistry,
+    target: &ModelTarget,
+    endpoint_kind: EndpointKind,
+) -> Vec<RouteAttempt> {
     // Get provider health and breaker states for filtering
     // Note: can't access AppState from here, so filtering is done in engine.rs
     let mut plan: Vec<RouteAttempt> = Vec::new();
+    let provider_ids = match &target.provider_id {
+        Some(provider_id) => vec![provider_id.clone()],
+        None => policy.provider_order.clone(),
+    };
 
-    for provider_id in &policy.provider_order {
+    for provider_id in &provider_ids {
         let adapter = match registry.get(provider_id).await {
             Some(a) => a,
             None => continue,
@@ -36,12 +63,19 @@ pub async fn build_attempt_plan(
 
         plan.push(RouteAttempt {
             provider_id: provider_id.clone(),
-            model_id: model.to_string(),
+            model_id: target.model_id.clone(),
             priority: plan.len() as i32,
         });
     }
 
     plan
+}
+
+/// Normalize priorities after several model-group targets are expanded.
+pub fn assign_attempt_priorities(plan: &mut [RouteAttempt]) {
+    for (priority, attempt) in plan.iter_mut().enumerate() {
+        attempt.priority = priority as i32;
+    }
 }
 
 /// Filter an attempt plan by health state and circuit breaker status.
@@ -69,10 +103,6 @@ pub fn filter_by_health(plan: Vec<RouteAttempt>, state: &AppState) -> Vec<RouteA
                 }
                 crate::resilience::health::HealthState::QuotaExhausted if policy_is_free_first(state) => {
                     tracing::info!(provider = %pid, "Filtered out: quota exhausted (free-first mode)");
-                    return false;
-                }
-                crate::resilience::health::HealthState::RateLimited => {
-                    tracing::info!(provider = %pid, "Filtered out: rate limited");
                     return false;
                 }
                 _ => {} // Healthy, Degraded: allow
@@ -131,17 +161,24 @@ pub async fn filter_by_model_enabled(
         .await
         .ok()
         .flatten()
-        .map(|row| row.0)
-        .unwrap_or(false);
+        .map(|row| row.0);
 
-        if enabled {
-            filtered.push(attempt);
-        } else {
-            tracing::info!(
-                provider = %attempt.provider_id,
-                model = %attempt.model_id,
-                "Filtered out: model disabled"
-            );
+        match enabled {
+            Some(true) => filtered.push(attempt),
+            Some(false) => {
+                tracing::info!(
+                    provider = %attempt.provider_id,
+                    model = %attempt.model_id,
+                    "Filtered out: model disabled"
+                );
+            }
+            None => {
+                tracing::debug!(
+                    provider = %attempt.provider_id,
+                    model = %attempt.model_id,
+                    "Filtered out: model not in provider catalog"
+                );
+            }
         }
     }
 
@@ -150,11 +187,10 @@ pub async fn filter_by_model_enabled(
 
 /// Reorder eligible attempts for agentic/tool-call requests.
 ///
-/// Normal chat keeps the operator/model-group order. Tool-bearing requests need
-/// a little more help because a model can answer with plain text like "I'll
-/// inspect that" instead of emitting a real tool call. This pass keeps only the
-/// already-eligible attempts, then prefers catalog entries marked tool-capable
-/// and providers with stronger observed tool-call behavior.
+/// Normal chat keeps the operator/model-group order. Tool-bearing requests only
+/// move catalog entries that are explicitly marked as not tool-capable behind
+/// entries that can handle tools. Among tool-capable attempts, preserve the
+/// operator's order exactly.
 pub async fn prioritize_for_tool_use(
     mut plan: Vec<RouteAttempt>,
     state: &AppState,
@@ -197,8 +233,8 @@ pub async fn prioritize_for_tool_use(
         right_score
             .supports_tools
             .cmp(&left_score.supports_tools)
-            .then_with(|| right_score.provider_rank.cmp(&left_score.provider_rank))
             .then_with(|| left_attempt.priority.cmp(&right_attempt.priority))
+            .then_with(|| right_score.provider_rank.cmp(&left_score.provider_rank))
             .then_with(|| left_score.original_index.cmp(&right_score.original_index))
     });
 

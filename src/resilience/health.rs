@@ -1,4 +1,5 @@
 use crate::app::state::AppState;
+use crate::providers::traits::ProviderError;
 use crate::resilience::breaker::{BreakerState, CircuitBreakerState};
 
 /// Provider health states.
@@ -93,6 +94,18 @@ pub async fn record_failure(state: &AppState, provider_id: &str) {
     .bind(breaker_state_name(state, provider_id))
     .execute(&state.db)
     .await;
+}
+
+/// Return whether an upstream error should affect provider health.
+///
+/// Per-request capacity errors, such as token-per-minute/request-size limits,
+/// should drive fallback for that request without poisoning the whole provider
+/// for subsequent model-group attempts.
+pub fn should_record_provider_failure(error: &ProviderError) -> bool {
+    !matches!(
+        error,
+        ProviderError::RateLimited { .. } | ProviderError::QuotaExhausted { .. }
+    )
 }
 
 /// Probe a provider by running a bounded adapter discovery call.

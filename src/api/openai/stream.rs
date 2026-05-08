@@ -3,11 +3,11 @@ use crate::api::openai::chat::NormalizedChatRequest;
 use crate::api::openai::chat::StreamDelta;
 use crate::api::openai::chat::UsageResponse;
 use crate::app::state::AppState;
-use crate::providers::traits::{EndpointKind, ProviderContext};
+use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
-    build_attempt_plan, filter_by_health, filter_by_model_enabled, filter_by_paid_policy,
-    prioritize_for_tool_use,
+    assign_attempt_priorities, build_attempt_plan_for_target, filter_by_health,
+    filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
 };
 use axum::response::sse::Event;
 use futures::stream::Stream;
@@ -184,17 +184,28 @@ pub async fn create_chat_stream(
     let policy = RoutePolicy::from_config(&config);
 
     // Resolve model group
-    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &request.model)
-        .await
-        .unwrap_or_else(|| vec![request.model.clone()]);
+    let resolved_targets =
+        crate::router::model_groups::resolve_model_group_targets(&state, &request.model)
+            .await
+            .unwrap_or_else(|| {
+                vec![crate::router::model_groups::ModelTarget::any_provider(
+                    request.model.clone(),
+                )]
+            });
+    let resolved_models = resolved_targets
+        .iter()
+        .map(|target| target.label())
+        .collect::<Vec<_>>();
 
     // Build attempt plan
     let mut plan = Vec::new();
-    for model in &resolved_models {
+    for target in &resolved_targets {
         let model_plan =
-            build_attempt_plan(&policy, registry, model, EndpointKind::ChatCompletions).await;
+            build_attempt_plan_for_target(&policy, registry, target, EndpointKind::ChatCompletions)
+                .await;
         plan.extend(model_plan);
     }
+    assign_attempt_priorities(&mut plan);
 
     if plan.is_empty() {
         return Err(ApiError::RouteExhausted(format!(
@@ -222,7 +233,7 @@ pub async fn create_chat_stream(
     info!(
         request_model = %request.model,
         resolved_models = ?resolved_models,
-        plan = ?plan.iter().map(|p| &p.provider_id).collect::<Vec<_>>(),
+        plan = ?plan.iter().map(|p| p.label()).collect::<Vec<_>>(),
         "Stream route plan built"
     );
 
@@ -307,12 +318,42 @@ pub async fn create_chat_stream(
                                 let _ = tx.send(StreamEvent::Done).await;
                                 return;
                             }
-                            warn!(
-                                provider = %provider_id,
-                                model = %model_id,
-                                "Streaming attempt closed without content; trying next planned attempt"
-                            );
-                            attempt_task.abort();
+                            if attempt_task.is_finished() {
+                                match attempt_task.await {
+                                    Ok(Ok(())) => {
+                                        warn!(
+                                            provider = %provider_id,
+                                            model = %model_id,
+                                            "Streaming attempt completed without content; trying next planned attempt"
+                                        );
+                                    }
+                                    Ok(Err(e)) => {
+                                        warn!(
+                                            provider = %provider_id,
+                                            model = %model_id,
+                                            error = %e,
+                                            "Streaming attempt failed before content; trying next planned attempt"
+                                        );
+                                        record_streaming_provider_error(&state, provider_id, &e).await;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            provider = %provider_id,
+                                            model = %model_id,
+                                            error = %e,
+                                            "Streaming attempt task failed before content; trying next planned attempt"
+                                        );
+                                        crate::resilience::health::record_failure(&state, provider_id).await;
+                                    }
+                                }
+                            } else {
+                                warn!(
+                                    provider = %provider_id,
+                                    model = %model_id,
+                                    "Streaming attempt closed without content; trying next planned attempt"
+                                );
+                                attempt_task.abort();
+                            }
                             break;
                         };
 
@@ -373,7 +414,7 @@ pub async fn create_chat_stream(
                                     error = %e,
                                     "Streaming attempt failed before content; trying next planned attempt"
                                 );
-                                crate::resilience::health::record_failure(&state, provider_id).await;
+                                record_streaming_provider_error(&state, provider_id, &e).await;
                             }
                             Err(e) => {
                                 warn!(
@@ -461,4 +502,14 @@ pub async fn create_chat_stream(
     };
 
     Ok(stream)
+}
+
+async fn record_streaming_provider_error(
+    state: &AppState,
+    provider_id: &str,
+    error: &ProviderError,
+) {
+    if crate::resilience::health::should_record_provider_failure(error) {
+        crate::resilience::health::record_failure(state, provider_id).await;
+    }
 }

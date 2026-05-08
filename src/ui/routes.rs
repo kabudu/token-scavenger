@@ -1261,6 +1261,10 @@ pub async fn render_config(state: &AppState) -> String {
                         <input id="model-group-name" placeholder="group name (e.g. 'fast-chat')" aria-label="Model group name" class="w-1/3">
                         <div class="flex-1 relative">
                             <div id="target-tags" class="flex flex-wrap gap-2 p-2 min-h-[42px] bg-black/20 border border-white/10 rounded items-center">
+                                <select id="target-mode" aria-label="Target selection mode" class="bg-black/30 border border-white/10 rounded px-2 py-1 text-xs text-slate-300 focus:ring-1 focus:ring-cyan-500">
+                                    <option value="any">Any provider</option>
+                                    <option value="provider">Specific provider</option>
+                                </select>
                                 <input id="target-search" placeholder="Search and add models..." class="flex-1 bg-transparent border-0 p-0 focus:ring-0 text-sm min-w-[150px]">
                             </div>
                             <div id="target-dropdown" class="absolute left-0 right-0 top-full mt-1 dropdown-opaque border border-white/10 rounded-md shadow-xl z-50 max-h-60 overflow-y-auto hidden">
@@ -1272,7 +1276,7 @@ pub async fn render_config(state: &AppState) -> String {
                         </button>
                         <button id="cancel-edit-btn" class="btn h-[42px] hidden" style="background:#334155;" onclick="cancelEdit()">Cancel</button>
                     </div>
-                    <p class="text-[10px] text-slate-500">Model groups map one public model name to multiple target models. TokenScavenger will try them in order if the first one fails or is unhealthy.</p>
+                    <p class="text-[10px] text-slate-500">Model groups map one public model name to ordered targets. Use Any provider for portable model IDs, or Specific provider to pin a target to one upstream.</p>
                 </div>
             </div>
 
@@ -1309,28 +1313,65 @@ pub async fn render_config(state: &AppState) -> String {
     let selectedModels = [];
 
     const searchInput = document.getElementById('target-search');
+    const targetMode = document.getElementById('target-mode');
     const dropdown = document.getElementById('target-dropdown');
     const tagsContainer = document.getElementById('target-tags');
+
+    function normalizeTarget(target) {{
+        if (typeof target === 'string') return {{ provider_id: null, model_id: target }};
+        return {{
+            provider_id: target.provider_id || target.provider || null,
+            model_id: target.model_id || target.model || target.upstream_model_id || ''
+        }};
+    }}
+
+    function targetKey(target) {{
+        const t = normalizeTarget(target);
+        return `${{t.provider_id || '*'}}::${{t.model_id}}`;
+    }}
+
+    function targetLabel(target) {{
+        const t = normalizeTarget(target);
+        return t.provider_id ? `${{t.provider_id}} / ${{t.model_id}}` : `Any / ${{t.model_id}}`;
+    }}
+
+    function targetPayload(target) {{
+        const t = normalizeTarget(target);
+        return t.provider_id ? {{ provider: t.provider_id, model: t.model_id }} : t.model_id;
+    }}
+
+    function encodeTarget(target) {{
+        return encodeURIComponent(JSON.stringify(targetPayload(target)));
+    }}
+
+    function decodeTarget(encoded) {{
+        return normalizeTarget(JSON.parse(decodeURIComponent(encoded)));
+    }}
 
     function renderTags() {{
         const existingTags = tagsContainer.querySelectorAll('.model-tag');
         existingTags.forEach(t => t.remove());
         selectedModels.forEach(m => {{
+            const target = normalizeTarget(m);
             const tag = document.createElement('span');
-            tag.className = 'model-tag px-2 py-1 bg-cyan-500/10 text-cyan-400 text-xs rounded border border-cyan-500/20 flex items-center gap-2';
-            tag.innerHTML = `${{m}} <i class="fas fa-times cursor-pointer hover:text-white" onclick="removeModel('${{m}}')"></i>`;
-            tagsContainer.insertBefore(tag, searchInput);
+            tag.className = target.provider_id
+                ? 'model-tag px-2 py-1 bg-emerald-500/10 text-emerald-300 text-xs rounded border border-emerald-500/20 flex items-center gap-2'
+                : 'model-tag px-2 py-1 bg-cyan-500/10 text-cyan-400 text-xs rounded border border-cyan-500/20 flex items-center gap-2';
+            tag.innerHTML = `<span class="font-mono">${{targetLabel(target)}}</span> <i class="fas fa-times cursor-pointer hover:text-white" onclick="removeModel('${{targetKey(target)}}')"></i>`;
+            tagsContainer.insertBefore(tag, targetMode);
         }});
     }}
 
-    function removeModel(m) {{
-        selectedModels = selectedModels.filter(x => x !== m);
+    function removeModel(key) {{
+        selectedModels = selectedModels.filter(x => targetKey(x) !== key);
         renderTags();
     }}
 
-    function addModel(m) {{
-        if (!selectedModels.includes(m)) {{
-            selectedModels.push(m);
+    function addModel(encodedTarget) {{
+        const target = decodeTarget(encodedTarget);
+        if (!target.model_id) return;
+        if (!selectedModels.some(m => targetKey(m) === targetKey(target))) {{
+            selectedModels.push(target);
             renderTags();
         }}
         searchInput.value = '';
@@ -1341,15 +1382,16 @@ pub async fn render_config(state: &AppState) -> String {
         document.getElementById('model-group-name').value = '';
         document.getElementById('model-group-name').disabled = false;
         selectedModels = [];
+        targetMode.value = 'any';
         renderTags();
         document.getElementById('save-model-group-btn').querySelector('.btn-text').innerText = 'Save Group';
         document.getElementById('cancel-edit-btn').classList.add('hidden');
     }}
 
-    function editModelGroup(name, targets) {{
+    function editModelGroup(name, encodedTargets) {{
         document.getElementById('model-group-name').value = name;
         document.getElementById('model-group-name').disabled = true;
-        selectedModels = [...targets];
+        selectedModels = JSON.parse(decodeURIComponent(encodedTargets)).map(normalizeTarget).filter(t => t.model_id);
         renderTags();
         document.getElementById('save-model-group-btn').querySelector('.btn-text').innerText = 'Update Group';
         document.getElementById('cancel-edit-btn').classList.remove('hidden');
@@ -1358,6 +1400,7 @@ pub async fn render_config(state: &AppState) -> String {
 
     searchInput.onfocus = () => showDropdown(searchInput.value);
     searchInput.oninput = (e) => showDropdown(e.target.value);
+    targetMode.onchange = () => showDropdown(searchInput.value);
     
     document.addEventListener('click', (e) => {{
         if (!tagsContainer.contains(e.target) && !dropdown.contains(e.target)) {{
@@ -1367,22 +1410,39 @@ pub async fn render_config(state: &AppState) -> String {
 
     function showDropdown(query) {{
         const q = query.toLowerCase();
-        const filtered = allModels.filter(m => 
-            !selectedModels.includes(m.upstream_model_id) && 
+        const mode = targetMode.value;
+        let candidates = allModels.filter(m =>
             (m.upstream_model_id.toLowerCase().includes(q) || m.provider_id.toLowerCase().includes(q))
-        ).slice(0, 50);
+        );
+        if (mode === 'any') {{
+            const seen = new Set();
+            candidates = candidates.filter(m => {{
+                if (seen.has(m.upstream_model_id)) return false;
+                seen.add(m.upstream_model_id);
+                return !selectedModels.some(target => targetKey(target) === targetKey({{ model_id: m.upstream_model_id }}));
+            }});
+        }} else {{
+            candidates = candidates.filter(m =>
+                !selectedModels.some(target => targetKey(target) === targetKey({{ provider_id: m.provider_id, model_id: m.upstream_model_id }}))
+            );
+        }}
+        const filtered = candidates.slice(0, 50);
 
         if (filtered.length === 0) {{
             dropdown.classList.add('hidden');
             return;
         }}
 
-        dropdown.innerHTML = filtered.map(m => `
-            <div class="px-4 py-2 hover:bg-white/5 cursor-pointer flex justify-between items-center group" onclick="addModel('${{m.upstream_model_id}}')">
-                <span class="text-sm text-slate-200">${{m.upstream_model_id}}</span>
-                <span class="text-[10px] text-slate-500 group-hover:text-cyan-400">${{m.provider_id}}</span>
+        dropdown.innerHTML = filtered.map(m => {{
+            const target = mode === 'any'
+                ? {{ model_id: m.upstream_model_id }}
+                : {{ provider_id: m.provider_id, model_id: m.upstream_model_id }};
+            return `
+            <div class="px-4 py-2 hover:bg-white/5 cursor-pointer flex justify-between items-center gap-4 group" onclick="addModel('${{encodeTarget(target)}}')">
+                <span class="text-sm text-slate-200 font-mono truncate">${{m.upstream_model_id}}</span>
+                <span class="text-[10px] text-slate-500 group-hover:text-cyan-400 shrink-0">${{mode === 'any' ? 'Any provider' : m.provider_id}}</span>
             </div>
-        `).join('');
+        `}}).join('');
         dropdown.classList.remove('hidden');
     }}
 
@@ -1400,18 +1460,22 @@ pub async fn render_config(state: &AppState) -> String {
 
             body.innerHTML = modelGroups.map(group => {{
                 const targets = Array.isArray(group.target) ? group.target : [group.target];
-                const targetsJson = JSON.stringify(targets).replace(/"/g, '&quot;');
+                const encodedTargets = encodeURIComponent(JSON.stringify(targets));
                 return `
                 <tr>
                     <td class="px-6 py-4 font-mono text-cyan-400">${{group.name}}</td>
                     <td class="px-6 py-4">
                         <div class="flex flex-wrap gap-1">
-                            ${{targets.map(t => `<span class="text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/10">${{t}}</span>`).join('')}}
+                            ${{targets.map(t => {{
+                                const target = normalizeTarget(t);
+                                const classes = target.provider_id ? 'text-emerald-300 border-emerald-500/20' : 'text-cyan-300 border-cyan-500/20';
+                                return `<span class="text-[10px] bg-white/5 px-2 py-0.5 rounded border ${{classes}} font-mono">${{targetLabel(target)}}</span>`;
+                            }}).join('')}}
                         </div>
                     </td>
                     <td class="px-6 py-4 text-right">
                         <div class="flex justify-end gap-2">
-                            <button onclick="editModelGroup('${{group.name.replace(/'/g, "\\'")}}', ${{targetsJson}})" class="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors" title="Edit">
+                            <button onclick="editModelGroup('${{group.name.replace(/'/g, "\\'")}}', '${{encodedTargets}}')" class="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded transition-colors" title="Edit">
                                 <i class="fas fa-edit"></i>
                             </button>
                             <button onclick="deleteModelGroup('${{group.name.replace(/'/g, "\\'")}}')" class="p-2 text-red-400 hover:bg-red-400/10 rounded transition-colors" title="Delete">
@@ -1454,7 +1518,7 @@ pub async fn render_config(state: &AppState) -> String {
                 body:JSON.stringify({{
                     model_groups:[{{
                         name, 
-                        target: selectedModels.length === 1 ? selectedModels[0] : selectedModels, 
+                        target: selectedModels.length === 1 ? targetPayload(selectedModels[0]) : selectedModels.map(targetPayload), 
                         enabled:true
                     }}]
                 }})

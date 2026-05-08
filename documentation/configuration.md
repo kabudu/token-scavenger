@@ -138,7 +138,7 @@ Supported provider IDs:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `name` | *(required)* | Public model group name used in the `model` field of requests |
-| `target` | *(required)* | Array of provider/model pairs to try in order |
+| `target` | *(required)* | Single target or ordered target array. Strings are model IDs that can route through any eligible provider. Objects pin a model to one provider: `{ provider = "nvidia", model = "google/gemma-4-31b-it" }`. |
 
 ## Example Configurations
 
@@ -186,11 +186,15 @@ api_key = "${MISTRAL_API_KEY}"
 
 [[model_groups]]
 name = "fast"
-target = ["cerebras/llama3.1-8b", "groq/llama3-8b-8192"]
+target = ["llama3.1-8b", { provider = "groq", model = "llama3-8b-8192" }]
 
 [[model_groups]]
 name = "powerful"
-target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash", "openrouter/meta-llama/llama-3.3-70b-instruct:free"]
+target = [
+  { provider = "groq", model = "llama3-70b-8192" },
+  "gemini-2.0-flash",
+  { provider = "openrouter", model = "meta-llama/llama-3.3-70b-instruct:free" },
+]
 ```
 
 ### Free-first with paid fallback

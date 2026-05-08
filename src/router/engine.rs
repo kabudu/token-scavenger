@@ -8,8 +8,8 @@ use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::fallback::{FallbackDecision, should_fallback};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
-    build_attempt_plan, filter_by_health, filter_by_model_enabled, filter_by_paid_policy,
-    prioritize_for_tool_use,
+    assign_attempt_priorities, build_attempt_plan_for_target, filter_by_health,
+    filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -47,17 +47,29 @@ pub async fn route_chat_request(
     let policy = RoutePolicy::from_config(&config);
 
     // Resolve model group
-    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &request.model)
-        .await
-        .unwrap_or_else(|| vec![request.model.clone()]);
+    let resolved_targets =
+        crate::router::model_groups::resolve_model_group_targets(&state, &request.model)
+            .await
+            .unwrap_or_else(|| {
+                vec![crate::router::model_groups::ModelTarget::any_provider(
+                    request.model.clone(),
+                )]
+            });
+    let resolved_models = resolved_targets
+        .iter()
+        .map(|target| target.label())
+        .collect::<Vec<_>>();
+    let resolved_model_label = resolved_models.join(", ");
 
     // Build attempt plan
     let mut plan = Vec::new();
-    for model in &resolved_models {
+    for target in &resolved_targets {
         let model_plan =
-            build_attempt_plan(&policy, registry, model, EndpointKind::ChatCompletions).await;
+            build_attempt_plan_for_target(&policy, registry, target, EndpointKind::ChatCompletions)
+                .await;
         plan.extend(model_plan);
     }
+    assign_attempt_priorities(&mut plan);
 
     if plan.is_empty() {
         record_route_failure(
@@ -99,7 +111,7 @@ pub async fn route_chat_request(
                 endpoint_kind: "chat",
                 requested_model: &request.model,
                 selected_provider_id: None,
-                selected_model_id: Some(&resolved_models.join(", ")),
+                selected_model_id: Some(&resolved_model_label),
                 status: "route_exhausted",
                 http_status: 503,
                 started_at,
@@ -117,7 +129,7 @@ pub async fn route_chat_request(
     info!(
         request_model = %request.model,
         resolved_models = ?resolved_models,
-        plan = ?plan.iter().map(|p| &p.provider_id).collect::<Vec<_>>(),
+        plan = ?plan.iter().map(|p| p.label()).collect::<Vec<_>>(),
         "Route plan built"
     );
 
@@ -225,8 +237,11 @@ pub async fn route_chat_request(
             Err(e) => {
                 warn!(provider = %provider_id, error = %e, "Provider attempt failed");
 
-                // Record failure in health state
-                crate::resilience::health::record_failure(&state, provider_id).await;
+                // Record provider-health failures only for errors that indicate
+                // provider instability rather than request-specific capacity.
+                if crate::resilience::health::should_record_provider_failure(&e) {
+                    crate::resilience::health::record_failure(&state, provider_id).await;
+                }
 
                 // Use fallback engine to decide next action
                 let decision = should_fallback(&state, &e).await;
@@ -415,16 +430,28 @@ pub async fn route_embeddings_request(
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
 
-    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &request.model)
-        .await
-        .unwrap_or_else(|| vec![request.model.clone()]);
+    let resolved_targets =
+        crate::router::model_groups::resolve_model_group_targets(&state, &request.model)
+            .await
+            .unwrap_or_else(|| {
+                vec![crate::router::model_groups::ModelTarget::any_provider(
+                    request.model.clone(),
+                )]
+            });
+    let resolved_models = resolved_targets
+        .iter()
+        .map(|target| target.label())
+        .collect::<Vec<_>>();
+    let resolved_model_label = resolved_models.join(", ");
 
     let mut plan = Vec::new();
-    for model in &resolved_models {
+    for target in &resolved_targets {
         let model_plan =
-            build_attempt_plan(&policy, registry, model, EndpointKind::Embeddings).await;
+            build_attempt_plan_for_target(&policy, registry, target, EndpointKind::Embeddings)
+                .await;
         plan.extend(model_plan);
     }
+    assign_attempt_priorities(&mut plan);
 
     if plan.is_empty() {
         record_route_failure(
@@ -461,7 +488,7 @@ pub async fn route_embeddings_request(
                 endpoint_kind: "embeddings",
                 requested_model: &request.model,
                 selected_provider_id: None,
-                selected_model_id: Some(&resolved_models.join(", ")),
+                selected_model_id: Some(&resolved_model_label),
                 status: "route_exhausted",
                 http_status: 503,
                 started_at,
@@ -546,7 +573,11 @@ pub async fn route_embeddings_request(
             }
             Err(e) => {
                 last_error = Some(e);
-                crate::resilience::health::record_failure(&state, provider_id).await;
+                if let Some(error) = last_error.as_ref() {
+                    if crate::resilience::health::should_record_provider_failure(error) {
+                        crate::resilience::health::record_failure(&state, provider_id).await;
+                    }
+                }
             }
         }
     }
@@ -578,7 +609,7 @@ pub async fn route_embeddings_request(
 
 fn api_error_for_exhausted(message: String, last_error: Option<&ProviderError>) -> ApiError {
     match last_error {
-        Some(ProviderError::RateLimited { retry_after }) => ApiError::RateLimited {
+        Some(ProviderError::RateLimited { retry_after, .. }) => ApiError::RateLimited {
             message,
             retry_after: *retry_after,
         },

@@ -275,14 +275,22 @@ pub async fn admin_route_plan(
     };
 
     let config = state.config();
-    let resolved_models = crate::router::model_groups::resolve_model_group(&state, &model)
+    let resolved_targets = crate::router::model_groups::resolve_model_group_targets(&state, &model)
         .await
-        .unwrap_or_else(|| vec![model.clone()]);
+        .unwrap_or_else(|| {
+            vec![crate::router::model_groups::ModelTarget::any_provider(
+                model.clone(),
+            )]
+        });
+    let resolved_models = resolved_targets
+        .iter()
+        .map(|target| target.label())
+        .collect::<Vec<_>>();
     let policy = crate::router::policy::RoutePolicy::from_config(&config);
 
     let mut raw_plan = Vec::new();
-    for resolved in &resolved_models {
-        let plan = crate::router::selection::build_attempt_plan(
+    for resolved in &resolved_targets {
+        let plan = crate::router::selection::build_attempt_plan_for_target(
             &policy,
             &state.provider_registry,
             resolved,
@@ -291,6 +299,7 @@ pub async fn admin_route_plan(
         .await;
         raw_plan.extend(plan);
     }
+    crate::router::selection::assign_attempt_priorities(&mut raw_plan);
 
     let mut attempts = Vec::new();
     for attempt in raw_plan {
@@ -527,7 +536,13 @@ pub async fn admin_config_save(
                 let api_key = provider_update
                     .get("api_key")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
+                    .and_then(|s| {
+                        if s.is_empty() || crate::util::redact::is_redacted_secret(s) {
+                            None
+                        } else {
+                            Some(s)
+                        }
+                    });
                 let base_url = provider_update
                     .get("base_url")
                     .and_then(|v| v.as_str())
@@ -837,7 +852,7 @@ pub async fn admin_delete_model_group(
 #[derive(serde::Deserialize)]
 pub struct SaveModelGroupRequest {
     pub name: String,
-    pub target: serde_json::Value, // Can be a string or array of strings
+    pub target: serde_json::Value,
     pub enabled: bool,
 }
 
