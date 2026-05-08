@@ -1364,6 +1364,76 @@ async fn test_model_group_fallback_logic() {
 }
 
 #[tokio::test]
+async fn test_tool_requests_prioritize_tool_reliable_attempts() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+
+    for provider in ["mistral", "groq"] {
+        sqlx::query(
+            "INSERT INTO providers (provider_id, display_name, enabled, free_only)
+             VALUES (?, ?, 1, 1)",
+        )
+        .bind(provider)
+        .bind(provider)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+
+    for (provider, model) in [
+        ("mistral", "mistral-medium-3.5"),
+        ("mistral", "devstral-latest"),
+        ("groq", "llama-3.3-70b-versatile"),
+    ] {
+        sqlx::query(
+            "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, supports_tools)
+             VALUES (?, ?, ?, 1, 1)",
+        )
+        .bind(provider)
+        .bind(model)
+        .bind(model)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "mistral".into(),
+            model_id: "mistral-medium-3.5".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "mistral".into(),
+            model_id: "devstral-latest".into(),
+            priority: 1,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "groq".into(),
+            model_id: "llama-3.3-70b-versatile".into(),
+            priority: 2,
+        },
+    ];
+
+    let prioritized =
+        tokenscavenger::router::selection::prioritize_for_tool_use(plan, &state).await;
+
+    assert_eq!(prioritized[0].provider_id, "groq");
+    assert_eq!(prioritized[0].model_id, "llama-3.3-70b-versatile");
+    assert_eq!(prioritized[1].model_id, "mistral-medium-3.5");
+    assert_eq!(prioritized[2].model_id, "devstral-latest");
+}
+
+#[tokio::test]
 async fn test_paid_providers_require_paid_fallback_policy() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     let mut config = Config::default();

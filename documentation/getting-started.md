@@ -297,6 +297,14 @@ If you want to ensure your "smart chat" always works even if a specific provider
 3. Point your code to `model="smart-chat"`.
 4. TokenScavenger will try them in the exact order you defined. If Groq is unhealthy or rate-limited, it automatically fails over to Cerebras, then Gemini.
 
+#### Agentic Tool Calls
+
+When a chat request includes OpenAI `tools`, TokenScavenger keeps the model
+group as the eligibility boundary but automatically reprioritizes the remaining
+attempts toward providers with stronger tool-call behavior. This helps agent
+clients that expect real `tool_calls` and follow-up turns without requiring a
+separate agent-only model group.
+
 ### The "Default Model" Pattern
 
 You can create a model group literally named `default`. This allows you to point legacy scripts or simple integrations to TokenScavenger without specifying any model at all. If a request comes in with a missing or unrecognized model, TokenScavenger can be configured to use this `default` mapping.

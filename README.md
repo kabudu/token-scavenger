@@ -43,6 +43,8 @@
 ## Features
 
 - **Free-tier-first routing** with configurable fallback chains
+- **Tool-aware routing** for agentic clients, preferring stronger tool-call
+  providers automatically when OpenAI `tools` are present
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
 - **14 built-in providers** with automatic model discovery
 - **Circuit breakers, retries & health monitoring**
@@ -267,6 +269,14 @@ See [documentation/configuration.md](documentation/configuration.md) for the ful
 ## API Behavior
 
 See [documentation/api-behavior.md](documentation/api-behavior.md) for endpoint coverage, error response semantics, `429` backoff behavior, `503 route_exhausted`, and streaming fallback rules.
+
+## Agentic Tool Calls
+
+When a chat request includes OpenAI `tools`, TokenScavenger keeps the normal
+model-group eligibility rules but automatically reprioritizes the remaining
+attempts toward providers and models with stronger tool-call behavior. This
+helps agent clients such as Hermes get real `tool_calls` instead of prose like
+"I'll inspect that" without requiring a separate model group.
 
 ## Provider Support Matrix
 

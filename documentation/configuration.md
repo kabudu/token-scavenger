@@ -102,6 +102,12 @@ target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 | `default_model_group_strategy` | `"provider-priority"` | Strategy for resolving model groups with multiple targets. |
 | `provider_order` | `[default list]` | Ordered list defining the fallback chain. First match wins. |
 
+For ordinary chat, eligible attempts follow the model-group and provider order.
+For chat requests that include OpenAI `tools`, TokenScavenger applies a
+tool-aware reprioritization pass after normal filtering so agentic workloads
+prefer providers with stronger tool-call behavior while still respecting
+enabled models, provider health, circuit breakers, and paid-fallback policy.
+
 ### `[resilience]`
 
 | Field | Default | Description |

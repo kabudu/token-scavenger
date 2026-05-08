@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Improved streaming route diagnostics with selected model IDs so fallback
   attempts are explainable when model groups span multiple providers.
+- Added tool-aware route reprioritization for chat requests with OpenAI `tools`
+  so agentic clients prefer providers/models with more reliable tool-call
+  behavior without requiring a separate model group.
 
 ### Fixed
 

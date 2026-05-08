@@ -87,6 +87,19 @@ For streaming chat completions, TokenScavenger may fall back only before any byt
 
 If a provider fails before the first streamed event, the normal status-code rules apply. If a provider fails after streaming has started, the stream terminates according to the SSE behavior of the route, and the failure is recorded in logs and metrics.
 
+## Tool-Aware Routing
+
+For `POST /v1/chat/completions` requests that include OpenAI `tools`,
+TokenScavenger applies an additional routing pass after normal eligibility
+filtering. The request still respects model groups, provider health, circuit
+breakers, model enablement, and paid-fallback policy, but the remaining
+attempts are reprioritized toward catalog entries marked tool-capable and
+providers with stronger observed tool-call behavior.
+
+This is designed for agent clients that need real streamed `tool_calls` and
+correct tool-result continuation turns. Ordinary chat requests without `tools`
+keep the configured model-group and provider order.
+
 ## Auth and Compatibility Notes
 
 When `server.master_api_key` is configured, clients must send:

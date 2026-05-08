@@ -148,6 +148,99 @@ pub async fn filter_by_model_enabled(
     filtered
 }
 
+/// Reorder eligible attempts for agentic/tool-call requests.
+///
+/// Normal chat keeps the operator/model-group order. Tool-bearing requests need
+/// a little more help because a model can answer with plain text like "I'll
+/// inspect that" instead of emitting a real tool call. This pass keeps only the
+/// already-eligible attempts, then prefers catalog entries marked tool-capable
+/// and providers with stronger observed tool-call behavior.
+pub async fn prioritize_for_tool_use(
+    mut plan: Vec<RouteAttempt>,
+    state: &AppState,
+) -> Vec<RouteAttempt> {
+    if plan.len() <= 1 {
+        return plan;
+    }
+
+    let mut scored = Vec::with_capacity(plan.len());
+    for (original_index, attempt) in plan.drain(..).enumerate() {
+        let supports_tools = sqlx::query_as::<_, (bool,)>(
+            "SELECT supports_tools FROM models WHERE provider_id = ? AND upstream_model_id = ?",
+        )
+        .bind(&attempt.provider_id)
+        .bind(&attempt.model_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|row| row.0)
+        .unwrap_or(true);
+
+        let provider_rank = tool_reliability_rank(&attempt.provider_id);
+        scored.push((
+            attempt,
+            ToolAttemptScore {
+                supports_tools,
+                provider_rank,
+                original_index,
+            },
+        ));
+    }
+
+    let before = scored
+        .iter()
+        .map(|(attempt, _)| (attempt.provider_id.clone(), attempt.model_id.clone()))
+        .collect::<Vec<_>>();
+
+    scored.sort_by(|(left_attempt, left_score), (right_attempt, right_score)| {
+        right_score
+            .supports_tools
+            .cmp(&left_score.supports_tools)
+            .then_with(|| right_score.provider_rank.cmp(&left_score.provider_rank))
+            .then_with(|| left_attempt.priority.cmp(&right_attempt.priority))
+            .then_with(|| left_score.original_index.cmp(&right_score.original_index))
+    });
+
+    let after = scored
+        .iter()
+        .map(|(attempt, _)| (attempt.provider_id.clone(), attempt.model_id.clone()))
+        .collect::<Vec<_>>();
+    if before != after {
+        tracing::info!(
+            before = ?before,
+            after = ?after,
+            "Tool request route plan reprioritized"
+        );
+    }
+
+    scored.into_iter().map(|(attempt, _)| attempt).collect()
+}
+
+#[derive(Debug)]
+struct ToolAttemptScore {
+    supports_tools: bool,
+    provider_rank: i32,
+    original_index: usize,
+}
+
+fn tool_reliability_rank(provider_id: &str) -> i32 {
+    match provider_id {
+        // Strong OpenAI-compatible tool-call behavior in Hermes-style testing.
+        "groq" => 100,
+        // Native tool support with provider-specific translation.
+        "google" => 90,
+        // OpenAI-compatible providers commonly used for agentic workflows.
+        "openrouter" | "github-models" => 80,
+        "deepseek" | "xai" | "cerebras" | "nvidia" => 70,
+        // Supports tools, but observed to sometimes produce prose instead of
+        // tool calls in agent turn-taking.
+        "mistral" => 40,
+        // Unknown providers are allowed, just not preferred.
+        _ => 50,
+    }
+}
+
 fn policy_is_free_first(state: &AppState) -> bool {
     state.config().routing.free_first
 }

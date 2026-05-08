@@ -169,8 +169,9 @@
             </h1>
             <p class="mt-6 max-w-xl text-lg leading-8 text-slate-300">
               TokenScavenger is a lightweight Rust router that prefers free-tier
-              providers, falls back automatically, and exposes a single API
-              surface for existing OpenAI clients.
+              providers, falls back automatically, handles agent tool-call
+              routing, and exposes a single API surface for existing OpenAI
+              clients.
             </p>
             <div class="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center">
               <a
@@ -411,7 +412,8 @@ Invoke-WebRequest `
             >
               Built-in adapters for the most important free inference providers
               plus DeepSeek and xAI paid fallback, with per-provider health,
-              rate-limit handling, and model group-aware routing.
+              rate-limit handling, model group-aware routing, and tool-aware
+              routing for agent clients.
             </p>
           </div>
           <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -548,7 +550,8 @@ Invoke-WebRequest `
               </h3>
               <p class="mt-3 text-sm leading-6 text-slate-300">
                 Provider selection, fallback policy, and rate-limit behavior are
-                visible in code, docs, logs, metrics, and the admin UI.
+                visible in code, docs, logs, metrics, and the admin UI,
+                including tool-aware routing for agentic requests.
               </p>
             </article>
             <article class="feature-card rounded-3xl p-6">

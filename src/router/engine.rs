@@ -9,6 +9,7 @@ use crate::router::fallback::{FallbackDecision, should_fallback};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
     build_attempt_plan, filter_by_health, filter_by_model_enabled, filter_by_paid_policy,
+    prioritize_for_tool_use,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -81,11 +82,14 @@ pub async fn route_chat_request(
     }
 
     // Filter by health and breaker state
-    let plan = filter_by_model_enabled(
+    let mut plan = filter_by_model_enabled(
         filter_by_paid_policy(filter_by_health(plan, &state), &state),
         &state,
     )
     .await;
+    if request.tools.is_some() {
+        plan = prioritize_for_tool_use(plan, &state).await;
+    }
 
     if plan.is_empty() {
         record_route_failure(
