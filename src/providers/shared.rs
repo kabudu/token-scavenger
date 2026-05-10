@@ -44,6 +44,66 @@ fn serialize_chat_messages(
         .collect()
 }
 
+fn openai_chat_body(request: &NormalizedChatRequest, stream: bool) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": request.model,
+        "messages": serialize_chat_messages(&request.messages),
+        "stream": stream,
+    });
+    if stream {
+        body["stream_options"] = serde_json::json!({ "include_usage": true });
+    }
+    if let Some(value) = request.temperature {
+        body["temperature"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.top_p {
+        body["top_p"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.max_tokens {
+        body["max_tokens"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.stop.as_ref() {
+        body["stop"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.presence_penalty {
+        body["presence_penalty"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.frequency_penalty {
+        body["frequency_penalty"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.user.as_ref() {
+        body["user"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.response_format.as_ref() {
+        body["response_format"] = serde_json::to_value(value).unwrap_or_default();
+    }
+    if let Some(value) = request.tools.as_ref() {
+        body["tools"] = serde_json::to_value(value).unwrap_or_default();
+    }
+    if let Some(value) = request.tool_choice.as_ref() {
+        body["tool_choice"] = value.clone();
+    }
+    body
+}
+
+fn should_retry_with_min_max_tokens(request: &NormalizedChatRequest, body: &str) -> bool {
+    let body_lower = body.to_ascii_lowercase();
+    request.max_tokens.is_none()
+        && body_lower.contains("max_tokens")
+        && !body_lower.contains("got -")
+        && !body_lower.contains("value=-")
+        && (body_lower.contains("at least 1")
+            || body_lower.contains("greater than or equal to 1")
+            || body_lower.contains("minimum")
+            || body_lower.contains("got 0")
+            || body_lower.contains("value=0"))
+}
+
+fn with_min_max_tokens(mut request: NormalizedChatRequest) -> NormalizedChatRequest {
+    request.max_tokens = Some(1);
+    request
+}
+
 pub fn provider_base_url(
     provider_id: &str,
     config: &ProviderConfig,
@@ -88,45 +148,43 @@ pub async fn openai_chat_completions(
         ..Default::default()
     };
 
-    // Build the OpenAI-compatible request body
-    let mut body = serde_json::json!({
-        "model": request.model,
-        "messages": serialize_chat_messages(&request.messages),
-        "temperature": request.temperature,
-        "top_p": request.top_p,
-        "max_tokens": request.max_tokens,
-        "stream": false,
-        "stop": request.stop,
-    });
-    if let Some(value) = request.presence_penalty {
-        body["presence_penalty"] = serde_json::json!(value);
-    }
-    if let Some(value) = request.frequency_penalty {
-        body["frequency_penalty"] = serde_json::json!(value);
-    }
-    if let Some(value) = request.user.as_ref() {
-        body["user"] = serde_json::json!(value);
-    }
-    if let Some(value) = request.response_format.as_ref() {
-        body["response_format"] = serde_json::to_value(value).unwrap_or_default();
-    }
-    if let Some(value) = request.tools.as_ref() {
-        body["tools"] = serde_json::to_value(value).unwrap_or_default();
-    }
-    if let Some(value) = request.tool_choice.as_ref() {
-        body["tool_choice"] = value.clone();
-    }
-
     let start = std::time::Instant::now();
-    let resp = ProviderHttp::post_json(&ctx.client, url, bearer_auth(&config), &body).await?;
+    let body = openai_chat_body(&request, false);
+    let mut resp =
+        ProviderHttp::post_json(&ctx.client, url.clone(), bearer_auth(&config), &body).await?;
     let latency_ms = start.elapsed().as_millis() as i64;
 
-    let rate_limits = parse_rate_limit_headers(resp.headers());
-    let status = resp.status();
-    let response_body: serde_json::Value = resp
+    let mut rate_limits = parse_rate_limit_headers(resp.headers());
+    let mut status = resp.status();
+    let mut response_body: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| ProviderError::MalformedResponse(e.to_string()))?;
+
+    if !status.is_success() {
+        let msg = response_body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        if should_retry_with_min_max_tokens(&request, msg) {
+            tracing::info!(
+                provider = %provider_id,
+                model = %request.model,
+                "Retrying OpenAI-compatible request with max_tokens=1 after upstream rejected omitted token limit"
+            );
+            let retry_request = with_min_max_tokens(request.clone());
+            let retry_body = openai_chat_body(&retry_request, false);
+            resp = ProviderHttp::post_json(&ctx.client, url, bearer_auth(&config), &retry_body)
+                .await?;
+            rate_limits = parse_rate_limit_headers(resp.headers());
+            status = resp.status();
+            response_body = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse(e.to_string()))?;
+        }
+    }
 
     if !status.is_success() {
         let msg = response_body
@@ -317,38 +375,11 @@ pub async fn openai_stream_completions(
         ..Default::default()
     };
 
-    let mut body = serde_json::json!({
-        "model": request.model,
-        "messages": serialize_chat_messages(&request.messages),
-        "stream": true,
-        "stream_options": { "include_usage": true },
-        "temperature": request.temperature,
-        "top_p": request.top_p,
-        "max_tokens": request.max_tokens,
-        "stop": request.stop,
-    });
-    if let Some(value) = request.presence_penalty {
-        body["presence_penalty"] = serde_json::json!(value);
-    }
-    if let Some(value) = request.frequency_penalty {
-        body["frequency_penalty"] = serde_json::json!(value);
-    }
-    if let Some(value) = request.user.as_ref() {
-        body["user"] = serde_json::json!(value);
-    }
-    if let Some(value) = request.response_format.as_ref() {
-        body["response_format"] = serde_json::to_value(value).unwrap_or_default();
-    }
-    if let Some(value) = request.tools.as_ref() {
-        body["tools"] = serde_json::to_value(value).unwrap_or_default();
-    }
-    if let Some(value) = request.tool_choice.as_ref() {
-        body["tool_choice"] = value.clone();
-    }
+    let body = openai_chat_body(&request, true);
 
-    let resp = ctx
+    let mut resp = ctx
         .client
-        .post(url)
+        .post(url.clone())
         .headers(bearer_auth(&config))
         .json(&body)
         .send()
@@ -363,6 +394,43 @@ pub async fn openai_stream_completions(
 
     let status = resp.status();
     if !status.is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        if should_retry_with_min_max_tokens(&request, &body_text) {
+            tracing::info!(
+                provider = %provider_id,
+                model = %request.model,
+                "Retrying OpenAI-compatible stream with max_tokens=1 after upstream rejected omitted token limit"
+            );
+            let retry_request = with_min_max_tokens(request.clone());
+            let retry_body = openai_chat_body(&retry_request, true);
+            resp = ctx
+                .client
+                .post(url)
+                .headers(bearer_auth(&config))
+                .json(&retry_body)
+                .send()
+                .await
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        ProviderError::Timeout
+                    } else {
+                        ProviderError::Http(e.to_string())
+                    }
+                })?;
+            let retry_status = resp.status();
+            if !retry_status.is_success() {
+                let retry_body_text = resp.text().await.unwrap_or_default();
+                return Err(classify_error(retry_status.as_u16(), &retry_body_text));
+            }
+        } else {
+            return Err(classify_error(status.as_u16(), &body_text));
+        }
+    } else {
+        // keep the successful response
+    }
+
+    if !resp.status().is_success() {
+        let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
         return Err(classify_error(status.as_u16(), &body_text));
     }
@@ -634,7 +702,10 @@ macro_rules! openai_compat_adapter {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sse_line, serialize_chat_messages};
+    use super::{
+        openai_chat_body, parse_sse_line, serialize_chat_messages,
+        should_retry_with_min_max_tokens, with_min_max_tokens,
+    };
     use crate::api::openai::chat::{ChatMessage, ToolCall, ToolCallFunction};
 
     #[test]
@@ -684,5 +755,98 @@ mod tests {
         );
         assert_eq!(parse_sse_line("data: [DONE]"), Some(String::new()));
         assert_eq!(parse_sse_line("event: message"), None);
+    }
+
+    #[test]
+    fn openai_chat_body_omits_absent_max_tokens() {
+        let request = crate::api::openai::chat::NormalizedChatRequest {
+            model: "model-a".into(),
+            messages: vec![crate::api::openai::chat::ChatMessage {
+                role: "user".into(),
+                content: Some(serde_json::json!("hi")),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stream: true,
+            stop: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+        };
+
+        let body = openai_chat_body(&request, true);
+        assert!(body.get("max_tokens").is_none());
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn retries_min_max_tokens_for_zero_limit_error() {
+        let request = crate::api::openai::chat::NormalizedChatRequest {
+            model: "openai/gpt-oss-120b".into(),
+            messages: vec![crate::api::openai::chat::ChatMessage {
+                role: "user".into(),
+                content: Some(serde_json::json!("hi")),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stream: true,
+            stop: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+        };
+
+        assert!(should_retry_with_min_max_tokens(
+            &request,
+            r#"{"error":{"message":"max_tokens must be at least 1, got 0"}}"#
+        ));
+        let retry_request = with_min_max_tokens(request);
+        let body = openai_chat_body(&retry_request, true);
+        assert_eq!(body["max_tokens"], 1);
+    }
+
+    #[test]
+    fn does_not_retry_negative_context_budget_error() {
+        let request = crate::api::openai::chat::NormalizedChatRequest {
+            model: "openai/gpt-oss-120b".into(),
+            messages: vec![crate::api::openai::chat::ChatMessage {
+                role: "user".into(),
+                content: Some(serde_json::json!("hi")),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stream: true,
+            stop: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+        };
+
+        assert!(!should_retry_with_min_max_tokens(
+            &request,
+            r#"{"error":{"message":"max_tokens must be at least 1, got -504"}}"#
+        ));
     }
 }

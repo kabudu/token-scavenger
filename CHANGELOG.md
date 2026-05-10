@@ -9,7 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added release workflow automation that promotes `[Unreleased]` changelog
+  entries into a dated release section and uses that section as the GitHub
+  release notes.
+
 ### Changed
+
+- Non-positive client `max_tokens` values are now normalized to `1` at the API
+  boundary so provider fallbacks never receive invalid negative token limits.
+- OpenAI-compatible and Gemini adapters now omit absent token-limit fields
+  instead of forwarding JSON `null` values to upstream providers.
+- OpenAI-compatible providers now retry once with `max_tokens: 1` when an
+  upstream rejects an omitted token limit as zero or missing, while negative
+  context-budget errors fall through to the next planned model without a
+  doomed same-model retry.
+- Graceful shutdown now signals Axum immediately, then drains background tasks
+  and closes SQLite after the HTTP server stops.
+- HTTP shutdown now has a bounded drain window so open SSE/streaming
+  connections cannot prevent the process from completing shutdown.
+- Streaming fallback now logs each provider/model attempt as it starts and
+  advances to the next planned attempt if no content arrives within a bounded
+  pre-content timeout.
+- Recent negative context-budget failures are remembered per provider/model and
+  prompt size so equal-or-larger prompts skip doomed attempts without blocking
+  shorter fresh sessions.
+- Recent streaming attempts that time out or end before content are remembered
+  per provider/model and prompt size for a short TTL, avoiding repeated silent
+  attempts while preserving routing for smaller fresh sessions.
+- Recent upstream rate limits are remembered per provider/model for a short
+  TTL, using `Retry-After` when available, so repeated requests skip known
+  limited attempts instead of hammering the same route.
 
 ### Fixed
 

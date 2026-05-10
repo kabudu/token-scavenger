@@ -14,7 +14,7 @@ use clap::Parser;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, warn};
 
 /// TokenScavenger CLI arguments.
 #[derive(Parser, Debug)]
@@ -167,12 +167,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Database path overridden by CLI: {}", db_path);
     }
 
-    // Run the server with graceful shutdown
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            app::shutdown::shutdown(state.clone()).await;
-        })
-        .await?;
+    // Run the server with graceful shutdown. Axum waits for open connections
+    // after the shutdown signal; bound that wait so SSE/streaming clients
+    // cannot keep the process alive forever.
+    let (shutdown_observed_tx, mut shutdown_observed_rx) = tokio::sync::watch::channel(false);
+    let shutdown_state = state.clone();
+    let server = async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                app::shutdown::shutdown(shutdown_state).await;
+                let _ = shutdown_observed_tx.send(true);
+            })
+            .await
+    };
+    tokio::pin!(server);
+
+    tokio::select! {
+        result = &mut server => {
+            result?;
+        }
+        _ = async {
+            let _ = shutdown_observed_rx.changed().await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        } => {
+            warn!("Timed out waiting for HTTP connections to drain; forcing server stop");
+        }
+    }
+    app::shutdown::drain_after_server_stop(state).await;
 
     Ok(())
 }

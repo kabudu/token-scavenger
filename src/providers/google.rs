@@ -44,9 +44,11 @@ fn google_generate_content_body(request: &NormalizedChatRequest) -> serde_json::
     let mut generation_config = serde_json::json!({
         "temperature": request.temperature,
         "topP": request.top_p,
-        "maxOutputTokens": request.max_tokens,
         "stopSequences": request.stop,
     });
+    if let Some(max_tokens) = request.max_tokens {
+        generation_config["maxOutputTokens"] = serde_json::json!(max_tokens);
+    }
 
     if request.response_format.is_some() {
         generation_config["responseMimeType"] = serde_json::json!("application/json");

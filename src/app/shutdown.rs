@@ -2,9 +2,9 @@ use crate::app::state::AppState;
 use std::time::Duration;
 use tracing::{info, warn};
 
-/// Graceful shutdown handler. Waits for SIGINT/SIGTERM, signals background
-/// tasks to stop, waits for them to drain (with timeout), then closes the
-/// database and returns so `axum::serve` can finish.
+/// Wait for SIGINT/SIGTERM, signal background tasks, and return immediately so
+/// `axum::serve(...).with_graceful_shutdown(...)` can start draining HTTP
+/// connections.
 pub async fn shutdown(state: AppState) {
     wait_for_shutdown_signal().await;
 
@@ -22,24 +22,36 @@ pub async fn shutdown(state: AppState) {
         let mut guard = state.log_tx.lock().unwrap();
         guard.take(); // drops the inner broadcast::Sender
     }
+}
 
+/// Drain background tasks and close durable resources after Axum has finished
+/// accepting new work and drained in-flight HTTP requests.
+pub async fn drain_after_server_stop(state: AppState) {
     // Drain all background task handles and wait for them to finish.
     // If a task is mid-operation (e.g. discovery network call), it needs
     // time to notice the signal at the top of its next loop iteration.
-    let handles: Vec<tokio::task::JoinHandle<()>> = {
+    let mut handles: Vec<tokio::task::JoinHandle<()>> = {
         let mut guard = state.background_handles.lock().unwrap();
         guard.drain(..).collect()
     };
 
     if !handles.is_empty() {
-        let bg_timeout = Duration::from_secs(30);
-        match tokio::time::timeout(bg_timeout, join_all_handles(handles)).await {
+        let bg_timeout = Duration::from_secs(10);
+        match tokio::time::timeout(bg_timeout, join_all_handles(&mut handles)).await {
             Ok(_) => info!("All background tasks stopped cleanly"),
             Err(_elapsed) => {
                 warn!(
-                    "Timed out after {}s waiting for background tasks — some may have been cancelled",
+                    "Timed out after {}s waiting for background tasks; aborting remaining tasks",
                     bg_timeout.as_secs()
                 );
+                for handle in &handles {
+                    if !handle.is_finished() {
+                        handle.abort();
+                    }
+                }
+                let _ =
+                    tokio::time::timeout(Duration::from_secs(2), join_all_handles(&mut handles))
+                        .await;
             }
         }
     }
@@ -86,8 +98,8 @@ async fn wait_for_shutdown_signal() {
 }
 
 /// Await all join handles sequentially (tasks are already running concurrently).
-async fn join_all_handles(handles: Vec<tokio::task::JoinHandle<()>>) {
+async fn join_all_handles(handles: &mut [tokio::task::JoinHandle<()>]) {
     for handle in handles {
-        let _ = handle.await;
+        let _ = (&mut *handle).await;
     }
 }

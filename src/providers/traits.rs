@@ -62,6 +62,23 @@ pub enum ProviderError {
     UnknownModel(String),
 }
 
+impl ProviderError {
+    pub fn is_negative_context_budget_error(&self) -> bool {
+        let message = match self {
+            ProviderError::Other(message) | ProviderError::MalformedResponse(message) => message,
+            ProviderError::RateLimited { details, .. }
+            | ProviderError::QuotaExhausted { details, .. } => details,
+            ProviderError::Http(message)
+            | ProviderError::Auth(message)
+            | ProviderError::UnsupportedFeature(message)
+            | ProviderError::UnknownModel(message) => message,
+            ProviderError::Timeout => return false,
+        };
+        let message = message.to_ascii_lowercase();
+        message.contains("max_tokens") && (message.contains("got -") || message.contains("value=-"))
+    }
+}
+
 /// The core trait every provider adapter must implement.
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {

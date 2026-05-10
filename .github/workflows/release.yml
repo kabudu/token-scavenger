@@ -48,11 +48,16 @@ jobs:
           echo "new_version=$NEW_VER" >> "$GITHUB_OUTPUT"
           echo "Preparing release v$NEW_VER"
 
+          python3 scripts/changelog_release.py prepare \
+            --file CHANGELOG.md \
+            --version "$NEW_VER" \
+            --date "$(date -u +%F)"
+
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          if [ "${{ github.event.inputs.bump_type }}" != "current" ]; then
-            git add Cargo.toml Cargo.lock 2>/dev/null || git add Cargo.toml
-            git commit -m "chore: bump version to v$NEW_VER" || echo "Nothing to commit"
+          git add Cargo.toml Cargo.lock CHANGELOG.md 2>/dev/null || git add Cargo.toml CHANGELOG.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: prepare release v$NEW_VER"
             git push origin HEAD:${{ github.ref_name }}
           fi
 
@@ -197,48 +202,63 @@ jobs:
           done
           cat checksums.txt
 
+      - name: Build release notes
+        run: |
+          python3 scripts/changelog_release.py extract \
+            --file CHANGELOG.md \
+            --version "${{ needs.prepare.outputs.new_version }}" \
+            > changelog-section.md
+
+          cat > release-notes.md <<'EOF'
+          ## TokenScavenger v${{ needs.prepare.outputs.new_version }}
+
+          ### Changes
+          EOF
+          cat changelog-section.md >> release-notes.md
+          cat >> release-notes.md <<'EOF'
+
+          ### Downloads
+
+          | Platform | Binary |
+          |----------|--------|
+          | Linux (x86_64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-x86_64-unknown-linux-gnu` |
+          | macOS (ARM64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin.zip` |
+          | Windows (x86_64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-x86_64-pc-windows-msvc.exe` |
+
+          ### Checksums (SHA256)
+
+          See `checksums.txt` attached below.
+
+          ### First Run
+
+          The macOS archive is signed with Developer ID and notarized by Apple.
+          Unzip it, then run the binary:
+
+          ```bash
+          unzip tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin.zip
+          ./tokenscavenger
+          ```
+
+          On first run, TokenScavenger detects the absence of a config file and walks
+          you through an interactive setup wizard to create `~/.config/tokenscavenger/tokenscavenger.toml`.
+
+          To reconfigure later:
+
+          ```bash
+          ./tokenscavenger config
+          ```
+
+          Or use the operator web UI at `http://localhost:8000/ui` — changes take effect
+          without restarting the application.
+          EOF
+          cat release-notes.md
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.prepare.outputs.new_version }}
           name: v${{ needs.prepare.outputs.new_version }}
-          body: |
-            ## TokenScavenger v${{ needs.prepare.outputs.new_version }}
-
-            ### Downloads
-
-            | Platform | Binary |
-            |----------|--------|
-            | Linux (x86_64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-x86_64-unknown-linux-gnu` |
-            | macOS (ARM64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin.zip` |
-            | Windows (x86_64) | `tokenscavenger-v${{ needs.prepare.outputs.new_version }}-x86_64-pc-windows-msvc.exe` |
-
-            ### Checksums (SHA256)
-
-            See `checksums.txt` attached below.
-
-            ### First Run
-
-            The macOS archive is signed with Developer ID and notarized by Apple.
-            Unzip it, then run the binary:
-
-            ```bash
-            unzip tokenscavenger-v${{ needs.prepare.outputs.new_version }}-aarch64-apple-darwin.zip
-            ./tokenscavenger
-            ```
-
-            On first run, TokenScavenger detects the absence of a config file and walks
-            you through an interactive setup wizard to create `~/.config/tokenscavenger/tokenscavenger.toml`.
-
-            To reconfigure later:
-
-            ```bash
-            ./tokenscavenger config
-            ```
-
-            Or use the operator web UI at `http://localhost:8000/ui` — changes take effect
-            without restarting the application.
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             dist/**/tokenscavenger-v*
             checksums.txt

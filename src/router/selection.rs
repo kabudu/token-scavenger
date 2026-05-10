@@ -1,4 +1,5 @@
 use crate::app::state::AppState;
+use crate::app::state::ContextFailureHint;
 use crate::providers::registry::ProviderRegistry;
 use crate::providers::traits::EndpointKind;
 use crate::router::model_groups::ModelTarget;
@@ -76,6 +77,156 @@ pub fn assign_attempt_priorities(plan: &mut [RouteAttempt]) {
     for (priority, attempt) in plan.iter_mut().enumerate() {
         attempt.priority = priority as i32;
     }
+}
+
+fn route_hint_key(provider_id: &str, model_id: &str) -> String {
+    format!("{provider_id}\0{model_id}")
+}
+
+pub fn should_skip_for_context_hint(
+    state: &AppState,
+    attempt: &RouteAttempt,
+    prompt_size_hint: usize,
+) -> bool {
+    let key = route_hint_key(&attempt.provider_id, &attempt.model_id);
+    let now = chrono::Utc::now().timestamp();
+    let Some(hint) = state.context_failure_hints.get(&key) else {
+        return false;
+    };
+    if hint.expires_at <= now {
+        drop(hint);
+        state.context_failure_hints.remove(&key);
+        return false;
+    }
+    if prompt_size_hint >= hint.prompt_size_hint {
+        tracing::info!(
+            provider = %attempt.provider_id,
+            model = %attempt.model_id,
+            prompt_size_hint,
+            failed_prompt_size_hint = hint.prompt_size_hint,
+            "Skipping: recent context budget failure for equal-or-larger prompt"
+        );
+        return true;
+    }
+    false
+}
+
+pub fn record_context_failure_hint(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+    prompt_size_hint: usize,
+) {
+    let ttl_seconds = 30 * 60;
+    state.context_failure_hints.insert(
+        route_hint_key(provider_id, model_id),
+        ContextFailureHint {
+            prompt_size_hint,
+            expires_at: chrono::Utc::now().timestamp() + ttl_seconds,
+        },
+    );
+    tracing::info!(
+        provider = %provider_id,
+        model = %model_id,
+        prompt_size_hint,
+        ttl_seconds,
+        "Recorded context budget failure hint"
+    );
+}
+
+pub fn should_skip_for_stream_silence_hint(
+    state: &AppState,
+    attempt: &RouteAttempt,
+    prompt_size_hint: usize,
+) -> bool {
+    let key = route_hint_key(&attempt.provider_id, &attempt.model_id);
+    let now = chrono::Utc::now().timestamp();
+    let Some(hint) = state.stream_silence_hints.get(&key) else {
+        return false;
+    };
+    if hint.expires_at <= now {
+        drop(hint);
+        state.stream_silence_hints.remove(&key);
+        return false;
+    }
+    if prompt_size_hint >= hint.prompt_size_hint {
+        tracing::info!(
+            provider = %attempt.provider_id,
+            model = %attempt.model_id,
+            prompt_size_hint,
+            failed_prompt_size_hint = hint.prompt_size_hint,
+            "Skipping: recent streaming silence for equal-or-larger prompt"
+        );
+        return true;
+    }
+    false
+}
+
+pub fn record_stream_silence_hint(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+    prompt_size_hint: usize,
+) {
+    let ttl_seconds = 10 * 60;
+    state.stream_silence_hints.insert(
+        route_hint_key(provider_id, model_id),
+        ContextFailureHint {
+            prompt_size_hint,
+            expires_at: chrono::Utc::now().timestamp() + ttl_seconds,
+        },
+    );
+    tracing::info!(
+        provider = %provider_id,
+        model = %model_id,
+        prompt_size_hint,
+        ttl_seconds,
+        "Recorded streaming silence route hint"
+    );
+}
+
+pub fn should_skip_for_rate_limit_hint(state: &AppState, attempt: &RouteAttempt) -> bool {
+    let key = route_hint_key(&attempt.provider_id, &attempt.model_id);
+    let now = chrono::Utc::now().timestamp();
+    let Some(hint) = state.route_rate_limit_hints.get(&key) else {
+        return false;
+    };
+    if hint.expires_at <= now {
+        drop(hint);
+        state.route_rate_limit_hints.remove(&key);
+        return false;
+    }
+
+    tracing::info!(
+        provider = %attempt.provider_id,
+        model = %attempt.model_id,
+        ttl_remaining_seconds = hint.expires_at - now,
+        "Skipping: recent provider/model rate limit"
+    );
+    true
+}
+
+pub fn record_rate_limit_hint(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+    retry_after: Option<u64>,
+) {
+    let ttl_seconds = retry_after.unwrap_or(60).clamp(5, 300);
+    state.route_rate_limit_hints.insert(
+        route_hint_key(provider_id, model_id),
+        ContextFailureHint {
+            prompt_size_hint: 0,
+            expires_at: chrono::Utc::now().timestamp() + ttl_seconds as i64,
+        },
+    );
+    tracing::info!(
+        provider = %provider_id,
+        model = %model_id,
+        retry_after_seconds = retry_after,
+        ttl_seconds,
+        "Recorded provider/model rate-limit route hint"
+    );
 }
 
 /// Filter an attempt plan by health state and circuit breaker status.

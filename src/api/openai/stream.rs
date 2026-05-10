@@ -8,12 +8,15 @@ use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
     assign_attempt_priorities, build_attempt_plan_for_target, filter_by_health,
     filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
+    record_context_failure_hint, record_rate_limit_hint, record_stream_silence_hint,
+    should_skip_for_context_hint, should_skip_for_rate_limit_hint,
+    should_skip_for_stream_silence_hint,
 };
 use axum::response::sse::Event;
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -249,9 +252,21 @@ pub async fn create_chat_stream(
     let usage_state = state.clone();
 
     tokio::spawn(async move {
+        let pre_content_timeout =
+            Duration::from_millis(config_clone.server.request_timeout_ms.clamp(1_000, 15_000));
+        let prompt_size_hint = request_clone.prompt_size_hint();
         for attempt in &plan {
             let provider_id = &attempt.provider_id;
             let model_id = &attempt.model_id;
+            if should_skip_for_context_hint(&state, attempt, prompt_size_hint) {
+                continue;
+            }
+            if should_skip_for_stream_silence_hint(&state, attempt, prompt_size_hint) {
+                continue;
+            }
+            if should_skip_for_rate_limit_hint(&state, attempt) {
+                continue;
+            }
 
             if let Some(breaker) = state.breaker_states.get(provider_id) {
                 if breaker.is_open() {
@@ -294,6 +309,12 @@ pub async fn create_chat_stream(
                 model: attempt.model_id.clone(),
                 ..request_clone.clone()
             };
+            info!(
+                provider = %provider_id,
+                model = %model_id,
+                timeout_ms = pre_content_timeout.as_millis(),
+                "Starting streaming attempt"
+            );
             let attempt_ctx = ctx.clone();
             let attempt_adapter = adapter.clone();
             let mut attempt_task = tokio::spawn(async move {
@@ -303,129 +324,185 @@ pub async fn create_chat_stream(
             });
             let mut buffered = Vec::new();
             let mut forwarded_meaningful_event = false;
+            let first_content_timeout = tokio::time::sleep(pre_content_timeout);
+            tokio::pin!(first_content_timeout);
 
             loop {
                 tokio::select! {
-                    biased;
-                    event = attempt_rx.recv() => {
-                        let Some(event) = event else {
-                            if forwarded_meaningful_event {
-                                info!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    "Streaming completed"
-                                );
-                                let _ = tx.send(StreamEvent::Done).await;
-                                return;
-                            }
-                            if attempt_task.is_finished() {
-                                match attempt_task.await {
-                                    Ok(Ok(())) => {
-                                        warn!(
-                                            provider = %provider_id,
-                                            model = %model_id,
-                                            "Streaming attempt completed without content; trying next planned attempt"
-                                        );
-                                    }
-                                    Ok(Err(e)) => {
-                                        warn!(
-                                            provider = %provider_id,
-                                            model = %model_id,
-                                            error = %e,
-                                            "Streaming attempt failed before content; trying next planned attempt"
-                                        );
-                                        record_streaming_provider_error(&state, provider_id, &e).await;
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            provider = %provider_id,
-                                            model = %model_id,
-                                            error = %e,
-                                            "Streaming attempt task failed before content; trying next planned attempt"
-                                        );
-                                        crate::resilience::health::record_failure(&state, provider_id).await;
-                                    }
-                                }
-                            } else {
-                                warn!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    "Streaming attempt closed without content; trying next planned attempt"
-                                );
-                                attempt_task.abort();
-                            }
-                            break;
-                        };
-
+                biased;
+                event = attempt_rx.recv() => {
+                    let Some(event) = event else {
                         if forwarded_meaningful_event {
-                            let done = matches!(event, StreamEvent::Done);
-                            let _ = tx.send(event).await;
-                            if done {
-                                info!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    "Streaming completed"
-                                );
-                                return;
-                            }
-                            continue;
+                            info!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming completed"
+                            );
+                            let _ = tx.send(StreamEvent::Done).await;
+                            return;
                         }
-
-                        if stream_event_has_content(&event) {
-                            forwarded_meaningful_event = true;
-                            for buffered_event in buffered.drain(..) {
-                                let _ = tx.send(buffered_event).await;
+                        if attempt_task.is_finished() {
+                            match attempt_task.await {
+                                Ok(Ok(())) => {
+                                    warn!(
+                                        provider = %provider_id,
+                                        model = %model_id,
+                                        "Streaming attempt completed without content; trying next planned attempt"
+                                    );
+                                }
+                                Ok(Err(e)) => {
+                                    warn!(
+                                        provider = %provider_id,
+                                        model = %model_id,
+                                        error = %e,
+                                        "Streaming attempt failed before content; trying next planned attempt"
+                                    );
+                                    if e.is_negative_context_budget_error() {
+                                        record_context_failure_hint(
+                                            &state,
+                                            provider_id,
+                                            model_id,
+                                            prompt_size_hint,
+                                        );
+                                    }
+                                    if let ProviderError::RateLimited { retry_after, .. } = &e {
+                                        record_rate_limit_hint(
+                                            &state,
+                                            provider_id,
+                                            model_id,
+                                            *retry_after,
+                                        );
+                                    }
+                                    record_streaming_provider_error(&state, provider_id, &e).await;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        provider = %provider_id,
+                                        model = %model_id,
+                                        error = %e,
+                                        "Streaming attempt task failed before content; trying next planned attempt"
+                                    );
+                                    crate::resilience::health::record_failure(&state, provider_id).await;
+                                }
                             }
-                            let _ = tx.send(event).await;
-                        } else if matches!(event, StreamEvent::Done) {
+                        } else {
+                            warn!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming attempt closed without content; trying next planned attempt"
+                            );
+                            attempt_task.abort();
+                        }
+                        break;
+                    };
+
+                    if forwarded_meaningful_event {
+                        let done = matches!(event, StreamEvent::Done);
+                        let _ = tx.send(event).await;
+                        if done {
+                            info!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming completed"
+                            );
+                            return;
+                        }
+                        continue;
+                    }
+
+                    if stream_event_has_content(&event) {
+                        forwarded_meaningful_event = true;
+                        for buffered_event in buffered.drain(..) {
+                            let _ = tx.send(buffered_event).await;
+                        }
+                        let _ = tx.send(event).await;
+                    } else if matches!(event, StreamEvent::Done) {
                             warn!(
                                 provider = %provider_id,
                                 model = %model_id,
                                 "Streaming attempt ended without content; trying next planned attempt"
                             );
+                            record_stream_silence_hint(
+                                &state,
+                                provider_id,
+                                model_id,
+                                prompt_size_hint,
+                            );
                             attempt_task.abort();
                             break;
                         } else {
-                            buffered.push(event);
+                        buffered.push(event);
+                    }
+                }
+                result = &mut attempt_task => {
+                    match result {
+                        Ok(Ok(())) if forwarded_meaningful_event => {
+                            info!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming completed"
+                            );
+                            let _ = tx.send(StreamEvent::Done).await;
+                            return;
+                        }
+                        Ok(Ok(())) => {
+                            warn!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Streaming attempt completed without content; trying next planned attempt"
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            warn!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                error = %e,
+                                "Streaming attempt failed before content; trying next planned attempt"
+                            );
+                            if e.is_negative_context_budget_error() {
+                                record_context_failure_hint(
+                                    &state,
+                                    provider_id,
+                                    model_id,
+                                    prompt_size_hint,
+                                );
+                            }
+                            if let ProviderError::RateLimited { retry_after, .. } = &e {
+                                record_rate_limit_hint(
+                                    &state,
+                                    provider_id,
+                                    model_id,
+                                    *retry_after,
+                                );
+                            }
+                            record_streaming_provider_error(&state, provider_id, &e).await;
+                        }
+                        Err(e) => {
+                            warn!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                error = %e,
+                                "Streaming attempt task failed before content; trying next planned attempt"
+                            );
+                            crate::resilience::health::record_failure(&state, provider_id).await;
                         }
                     }
-                    result = &mut attempt_task => {
-                        match result {
-                            Ok(Ok(())) if forwarded_meaningful_event => {
-                                info!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    "Streaming completed"
-                                );
-                                let _ = tx.send(StreamEvent::Done).await;
-                                return;
-                            }
-                            Ok(Ok(())) => {
-                                warn!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    "Streaming attempt completed without content; trying next planned attempt"
-                                );
-                            }
-                            Ok(Err(e)) => {
-                                warn!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    error = %e,
-                                    "Streaming attempt failed before content; trying next planned attempt"
-                                );
-                                record_streaming_provider_error(&state, provider_id, &e).await;
-                            }
-                            Err(e) => {
-                                warn!(
-                                    provider = %provider_id,
-                                    model = %model_id,
-                                    error = %e,
-                                    "Streaming attempt task failed before content; trying next planned attempt"
-                                );
-                                crate::resilience::health::record_failure(&state, provider_id).await;
-                            }
-                        }
+                    break;
+                }
+                _ = &mut first_content_timeout, if !forwarded_meaningful_event => {
+                        warn!(
+                            provider = %provider_id,
+                            model = %model_id,
+                            timeout_ms = pre_content_timeout.as_millis(),
+                            "Streaming attempt timed out before content; trying next planned attempt"
+                        );
+                        record_stream_silence_hint(
+                            &state,
+                            provider_id,
+                            model_id,
+                            prompt_size_hint,
+                        );
+                        attempt_task.abort();
                         break;
                     }
                 }

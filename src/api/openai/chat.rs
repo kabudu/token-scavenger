@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// OpenAI-compatible chat completion request.
@@ -8,6 +8,7 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_positive_max_tokens")]
     pub max_tokens: Option<u32>,
     pub stream: Option<bool>,
     pub stop: Option<serde_json::Value>,
@@ -160,6 +161,39 @@ impl NormalizedChatRequest {
             tool_choice: req.tool_choice,
         }
     }
+
+    pub fn prompt_size_hint(&self) -> usize {
+        let messages = serde_json::to_vec(&self.messages)
+            .map(|value| value.len())
+            .unwrap_or(0);
+        let tools = self
+            .tools
+            .as_ref()
+            .and_then(|tools| serde_json::to_vec(tools).ok())
+            .map(|value| value.len())
+            .unwrap_or(0);
+        messages + tools
+    }
+}
+
+fn deserialize_positive_max_tokens<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let number = if let Some(number) = value.as_i64() {
+        number
+    } else if let Some(number) = value.as_u64() {
+        number.min(u32::MAX as u64) as i64
+    } else {
+        return Err(serde::de::Error::custom("max_tokens must be a number"));
+    };
+
+    Ok(Some(number.clamp(1, u32::MAX as i64) as u32))
 }
 
 /// Usage struct used by provider adapters.
@@ -183,4 +217,28 @@ pub struct ProviderChatResponse {
     pub finish_reason: Option<String>,
     pub usage: Option<ProviderUsage>,
     pub latency_ms: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChatRequest;
+
+    #[test]
+    fn chat_request_clamps_non_positive_max_tokens() {
+        let request: ChatRequest = serde_json::from_value(serde_json::json!({
+            "model": "agentic",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": -78
+        }))
+        .unwrap();
+        assert_eq!(request.max_tokens, Some(1));
+
+        let request: ChatRequest = serde_json::from_value(serde_json::json!({
+            "model": "agentic",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 0
+        }))
+        .unwrap();
+        assert_eq!(request.max_tokens, Some(1));
+    }
 }

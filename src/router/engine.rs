@@ -10,6 +10,8 @@ use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
     assign_attempt_priorities, build_attempt_plan_for_target, filter_by_health,
     filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
+    record_context_failure_hint, record_rate_limit_hint, should_skip_for_context_hint,
+    should_skip_for_rate_limit_hint,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -135,8 +137,15 @@ pub async fn route_chat_request(
 
     // Execute the plan: try providers in order
     let mut last_error = None;
+    let prompt_size_hint = request.prompt_size_hint();
     for attempt in &plan {
         let provider_id = &attempt.provider_id;
+        if should_skip_for_context_hint(&state, attempt, prompt_size_hint) {
+            continue;
+        }
+        if should_skip_for_rate_limit_hint(&state, attempt) {
+            continue;
+        }
 
         // Skip if provider is unhealthy or breaker is open
         if let Some(breaker) = state.breaker_states.get(provider_id) {
@@ -242,6 +251,17 @@ pub async fn route_chat_request(
                 if crate::resilience::health::should_record_provider_failure(&e) {
                     crate::resilience::health::record_failure(&state, provider_id).await;
                 }
+                if e.is_negative_context_budget_error() {
+                    record_context_failure_hint(
+                        &state,
+                        provider_id,
+                        &attempt.model_id,
+                        prompt_size_hint,
+                    );
+                }
+                if let ProviderError::RateLimited { retry_after, .. } = &e {
+                    record_rate_limit_hint(&state, provider_id, &attempt.model_id, *retry_after);
+                }
 
                 // Use fallback engine to decide next action
                 let decision = should_fallback(&state, &e).await;
@@ -304,6 +324,14 @@ pub async fn route_chat_request(
                                 }
                                 Err(e2) => {
                                     warn!(provider = %provider_id, error = %e2, "Retry failed");
+                                    if let ProviderError::RateLimited { retry_after, .. } = &e2 {
+                                        record_rate_limit_hint(
+                                            &state,
+                                            provider_id,
+                                            &attempt.model_id,
+                                            *retry_after,
+                                        );
+                                    }
                                     last_error = Some(e2);
                                     retries += 1;
                                 }
@@ -362,6 +390,14 @@ pub async fn route_chat_request(
                                 });
                             }
                             Err(e2) => {
+                                if let ProviderError::RateLimited { retry_after, .. } = &e2 {
+                                    record_rate_limit_hint(
+                                        &state,
+                                        provider_id,
+                                        &attempt.model_id,
+                                        *retry_after,
+                                    );
+                                }
                                 last_error = Some(e2);
                                 /* fall through to next provider */
                             }

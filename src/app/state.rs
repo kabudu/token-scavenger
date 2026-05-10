@@ -12,6 +12,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, watch};
 
+#[derive(Debug, Clone)]
+pub struct ContextFailureHint {
+    pub prompt_size_hint: usize,
+    pub expires_at: i64,
+}
+
 /// Shared application state, accessible from all route handlers and background tasks.
 #[derive(Clone)]
 pub struct AppState {
@@ -44,6 +50,17 @@ pub struct AppState {
 
     /// Per-provider circuit breaker state.
     pub breaker_states: Arc<DashMap<String, CircuitBreakerState>>,
+
+    /// Per provider/model hints for request-shape failures that should be
+    /// skipped for equal-or-larger prompts without marking the provider bad.
+    pub context_failure_hints: Arc<DashMap<String, ContextFailureHint>>,
+
+    /// Per provider/model hints for streaming attempts that repeatedly fail to
+    /// produce any content for a prompt shape.
+    pub stream_silence_hints: Arc<DashMap<String, ContextFailureHint>>,
+
+    /// Per provider/model hints for short-lived upstream model capacity limits.
+    pub route_rate_limit_hints: Arc<DashMap<String, ContextFailureHint>>,
 
     /// In-memory UI browser sessions for optional cookie auth.
     pub ui_sessions: Arc<DashMap<String, i64>>,
@@ -110,6 +127,9 @@ impl AppState {
             model_cache: Arc::new(Cache::new(10_000)),
             health_states: Arc::new(DashMap::new()),
             breaker_states: Arc::new(DashMap::new()),
+            context_failure_hints: Arc::new(DashMap::new()),
+            stream_silence_hints: Arc::new(DashMap::new()),
+            route_rate_limit_hints: Arc::new(DashMap::new()),
             ui_sessions: Arc::new(DashMap::new()),
             log_tx: Arc::new(std::sync::Mutex::new(Some(log_tx))),
             health_event_tx,
