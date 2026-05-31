@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Top-level application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -119,6 +120,12 @@ pub struct RoutingConfig {
     pub free_first: bool,
     #[serde(default)]
     pub allow_paid_fallback: bool,
+    #[serde(default)]
+    pub objective: RoutingObjective,
+    #[serde(default)]
+    pub model_group_objectives: HashMap<String, RoutingObjective>,
+    #[serde(default)]
+    pub budgets: RoutingBudgetConfig,
     #[serde(
         default = "default_model_group_strategy",
         alias = "default_alias_strategy"
@@ -133,10 +140,38 @@ impl Default for RoutingConfig {
         Self {
             free_first: true,
             allow_paid_fallback: false,
+            objective: RoutingObjective::default(),
+            model_group_objectives: HashMap::new(),
+            budgets: RoutingBudgetConfig::default(),
             default_model_group_strategy: default_model_group_strategy(),
             provider_order: Vec::new(),
         }
     }
+}
+
+/// Policy objective used to score otherwise eligible provider/model attempts.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingObjective {
+    MinCost,
+    MinLatency,
+    #[default]
+    Balanced,
+    QualityFirst,
+    LocalOnly,
+}
+
+/// Hard budget limits. All values are USD.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RoutingBudgetConfig {
+    #[serde(default)]
+    pub max_cost_per_request_usd: Option<f64>,
+    #[serde(default)]
+    pub max_cost_per_day_usd: Option<f64>,
+    #[serde(default)]
+    pub max_cost_per_provider_per_day_usd: HashMap<String, f64>,
+    #[serde(default)]
+    pub max_cost_per_model_group_per_day_usd: HashMap<String, f64>,
 }
 
 /// Resilience and circuit-breaker settings.

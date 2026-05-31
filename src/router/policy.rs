@@ -1,4 +1,5 @@
-use crate::config::schema::Config;
+use crate::config::schema::{Config, RoutingBudgetConfig, RoutingObjective};
+use std::collections::HashMap;
 
 /// Routing policy derived from config.
 #[derive(Debug, Clone)]
@@ -7,6 +8,12 @@ pub struct RoutePolicy {
     pub free_first: bool,
     /// Whether paid fallback is allowed.
     pub allow_paid_fallback: bool,
+    /// Default policy objective for scoring eligible attempts.
+    pub objective: RoutingObjective,
+    /// Per-model-group policy objective overrides.
+    pub model_group_objectives: HashMap<String, RoutingObjective>,
+    /// Hard budget limits.
+    pub budgets: RoutingBudgetConfig,
     /// Explicit provider order (from config or default).
     pub provider_order: Vec<String>,
 }
@@ -22,8 +29,18 @@ impl RoutePolicy {
         Self {
             free_first: config.routing.free_first,
             allow_paid_fallback: config.routing.allow_paid_fallback,
+            objective: config.routing.objective,
+            model_group_objectives: config.routing.model_group_objectives.clone(),
+            budgets: config.routing.budgets.clone(),
             provider_order: order,
         }
+    }
+
+    pub fn objective_for_model_group(&self, requested_model: &str) -> RoutingObjective {
+        self.model_group_objectives
+            .get(requested_model)
+            .copied()
+            .unwrap_or(self.objective)
     }
 
     /// Default provider order from the spec.

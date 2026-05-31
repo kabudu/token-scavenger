@@ -68,13 +68,14 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
             let mut stored_count = 0_i64;
             for m in &models_to_store {
                 match sqlx::query(
-                    "INSERT OR REPLACE INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, discovered_at, updated_at)
-                     VALUES (?, ?, ?, 1, ?, 1, datetime('now'), datetime('now'))"
+                    "INSERT OR REPLACE INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, metadata_json, discovered_at, updated_at)
+                     VALUES (?, ?, ?, 1, ?, 1, ?, datetime('now'), datetime('now'))"
                 )
                 .bind(&m.provider_id)
                 .bind(&m.upstream_model_id)
                 .bind(m.display_name.as_deref().unwrap_or(&m.upstream_model_id))
                 .bind(m.free_tier)
+                .bind(serde_json::json!({"context_window": m.context_window}).to_string())
                 .execute(&state.db)
                 .await
                 {

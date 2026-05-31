@@ -9,6 +9,7 @@ use tracing::{info, warn};
 pub struct UsageRecord<'a> {
     pub provider_id: &'a str,
     pub model_id: &'a str,
+    pub requested_model: &'a str,
     pub usage: Option<&'a UsageResponse>,
     pub latency_ms: i64,
     pub free_tier: bool,
@@ -75,7 +76,7 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
     )
     .bind(record.request_id)
     .bind(record.endpoint_kind)
-    .bind(record.model_id)
+    .bind(record.requested_model)
     .bind(record.provider_id)
     .bind(record.model_id)
     .bind(record.latency_ms)

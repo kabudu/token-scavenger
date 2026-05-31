@@ -1204,6 +1204,7 @@ async fn test_paid_deepseek_usage_records_nonzero_cost() {
         tokenscavenger::usage::accounting::UsageRecord {
             provider_id: "deepseek",
             model_id: "deepseek-chat",
+            requested_model: "deepseek-chat",
             usage: Some(&tokenscavenger::api::openai::chat::UsageResponse {
                 prompt_tokens: 1_000,
                 completion_tokens: 500,
@@ -1580,6 +1581,703 @@ async fn test_tool_requests_keep_operator_order_for_tool_capable_attempts() {
     assert_eq!(prioritized[0].model_id, "mistral-medium-3.5");
     assert_eq!(prioritized[1].model_id, "devstral-latest");
     assert_eq!(prioritized[2].provider_id, "groq");
+}
+
+#[tokio::test]
+async fn test_policy_min_cost_prefers_free_route_over_paid_latency() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.objective = tokenscavenger::config::schema::RoutingObjective::MinCost;
+    config.routing.allow_paid_fallback = true;
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "deepseek".into(),
+            free_only: false,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            free_only: true,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "deepseek", "deepseek-chat", false, 1, true, true).await;
+    seed_policy_provider_model(
+        &state,
+        "groq",
+        "llama-3.3-70b-versatile",
+        true,
+        100,
+        true,
+        true,
+    )
+    .await;
+    seed_policy_rate(&state, "deepseek", "deepseek-chat", 1.0, 3.0).await;
+    seed_request_log(
+        &state,
+        "fast-paid",
+        "deepseek",
+        "deepseek-chat",
+        "success",
+        25,
+    )
+    .await;
+    seed_request_log(
+        &state,
+        "slow-free",
+        "groq",
+        "llama-3.3-70b-versatile",
+        "success",
+        900,
+    )
+    .await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "deepseek".into(),
+            model_id: "deepseek-chat".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "groq".into(),
+            model_id: "llama-3.3-70b-versatile".into(),
+            priority: 1,
+        },
+    ];
+
+    let planned = tokenscavenger::router::selection::apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        "agentic",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        tokenscavenger::router::selection::TokenEstimate {
+            input_tokens: 1_000,
+            output_tokens: 1_000,
+        },
+    )
+    .await;
+
+    assert_eq!(planned[0].provider_id, "groq");
+    assert_eq!(planned[1].provider_id, "deepseek");
+}
+
+#[tokio::test]
+async fn test_policy_hard_budget_filters_over_cap_and_unknown_paid_price() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.allow_paid_fallback = true;
+    config.routing.budgets.max_cost_per_request_usd = Some(0.0001);
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "deepseek".into(),
+            free_only: false,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "xai".into(),
+            free_only: false,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            free_only: true,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "deepseek", "deepseek-chat", false, 10, true, true).await;
+    seed_policy_provider_model(&state, "xai", "unknown-paid", false, 20, true, true).await;
+    seed_policy_provider_model(&state, "groq", "free-model", true, 30, true, true).await;
+    seed_policy_rate(&state, "deepseek", "deepseek-chat", 20.0, 20.0).await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "deepseek".into(),
+            model_id: "deepseek-chat".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "xai".into(),
+            model_id: "unknown-paid".into(),
+            priority: 1,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "groq".into(),
+            model_id: "free-model".into(),
+            priority: 2,
+        },
+    ];
+
+    let explanations = tokenscavenger::router::selection::explain_policy_plan(
+        plan,
+        &state,
+        &policy,
+        "agentic",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        tokenscavenger::router::selection::TokenEstimate {
+            input_tokens: 10_000,
+            output_tokens: 10_000,
+        },
+    )
+    .await;
+
+    let included = explanations
+        .iter()
+        .filter(|entry| entry.included)
+        .map(|entry| entry.attempt.provider_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(included, vec!["groq"]);
+    assert!(
+        explanations
+            .iter()
+            .find(|entry| entry.attempt.provider_id == "deepseek")
+            .unwrap()
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("per-request budget"))
+    );
+    assert!(
+        explanations
+            .iter()
+            .find(|entry| entry.attempt.provider_id == "xai")
+            .unwrap()
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("paid price is unknown"))
+    );
+}
+
+#[tokio::test]
+async fn test_policy_daily_provider_and_model_group_budgets_filter_projected_spend() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.allow_paid_fallback = true;
+    config.routing.budgets.max_cost_per_day_usd = Some(0.03);
+    config
+        .routing
+        .budgets
+        .max_cost_per_provider_per_day_usd
+        .insert("deepseek".into(), 0.01);
+    config
+        .routing
+        .budgets
+        .max_cost_per_model_group_per_day_usd
+        .insert("agentic".into(), 0.02);
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "deepseek".into(),
+            free_only: false,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "xai".into(),
+            free_only: false,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "deepseek", "deepseek-chat", false, 10, true, true).await;
+    seed_policy_provider_model(&state, "xai", "grok-3-mini", false, 20, true, true).await;
+    seed_policy_rate(&state, "deepseek", "deepseek-chat", 1.0, 1.0).await;
+    seed_policy_rate(&state, "xai", "grok-3-mini", 1.0, 1.0).await;
+    seed_success_usage(
+        &state,
+        "spent-deepseek",
+        "agentic",
+        "deepseek",
+        "deepseek-chat",
+        0.0095,
+    )
+    .await;
+    seed_success_usage(
+        &state,
+        "spent-agentic",
+        "agentic",
+        "xai",
+        "grok-3-mini",
+        0.0195,
+    )
+    .await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let token_estimate = tokenscavenger::router::selection::TokenEstimate {
+        input_tokens: 1_000,
+        output_tokens: 1_000,
+    };
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "deepseek".into(),
+            model_id: "deepseek-chat".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "xai".into(),
+            model_id: "grok-3-mini".into(),
+            priority: 1,
+        },
+    ];
+
+    let explanations = tokenscavenger::router::selection::explain_policy_plan(
+        plan,
+        &state,
+        &policy,
+        "agentic",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        token_estimate,
+    )
+    .await;
+
+    assert!(explanations.iter().all(|entry| !entry.included));
+    assert!(explanations.iter().any(|entry| {
+        entry
+            .reasons
+            .iter()
+            .any(|reason| reason.starts_with("filtered by daily budget:"))
+    }));
+    assert!(
+        explanations
+            .iter()
+            .find(|entry| entry.attempt.provider_id == "deepseek")
+            .unwrap()
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("provider daily budget"))
+    );
+    assert!(
+        explanations
+            .iter()
+            .find(|entry| entry.attempt.provider_id == "xai")
+            .unwrap()
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("model-group daily budget"))
+    );
+}
+
+#[tokio::test]
+async fn test_policy_tie_breaking_preserves_operator_priority() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.objective = tokenscavenger::config::schema::RoutingObjective::Balanced;
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            free_only: true,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "google".into(),
+            free_only: true,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "groq", "same", true, 100, true, true).await;
+    seed_policy_provider_model(&state, "google", "same", true, 100, true, true).await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "google".into(),
+            model_id: "same".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "groq".into(),
+            model_id: "same".into(),
+            priority: 1,
+        },
+    ];
+
+    let planned = tokenscavenger::router::selection::apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        "same",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        tokenscavenger::router::selection::TokenEstimate {
+            input_tokens: 100,
+            output_tokens: 100,
+        },
+    )
+    .await;
+
+    assert_eq!(planned[0].provider_id, "google");
+    assert_eq!(planned[1].provider_id, "groq");
+}
+
+#[tokio::test]
+async fn test_policy_local_only_filters_remote_providers() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.objective = tokenscavenger::config::schema::RoutingObjective::LocalOnly;
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "remote".into(),
+            base_url: Some("https://api.example.test".into()),
+            free_only: true,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "local".into(),
+            base_url: Some("http://127.0.0.1:11434/v1".into()),
+            free_only: true,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "remote", "same", true, 1, true, true).await;
+    seed_policy_provider_model(&state, "local", "same", true, 100, true, true).await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "remote".into(),
+            model_id: "same".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "local".into(),
+            model_id: "same".into(),
+            priority: 1,
+        },
+    ];
+
+    let planned = tokenscavenger::router::selection::apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        "same",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        tokenscavenger::router::selection::TokenEstimate {
+            input_tokens: 100,
+            output_tokens: 100,
+        },
+    )
+    .await;
+
+    assert_eq!(planned.len(), 1);
+    assert_eq!(planned[0].provider_id, "local");
+}
+
+#[tokio::test]
+async fn test_policy_quality_first_considers_context_window() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.objective = tokenscavenger::config::schema::RoutingObjective::QualityFirst;
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "small-context".into(),
+            free_only: true,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "large-context".into(),
+            free_only: true,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "small-context", "model", true, 100, true, true).await;
+    seed_policy_provider_model(&state, "large-context", "model", true, 100, true, true).await;
+    sqlx::query(
+        "UPDATE models SET metadata_json = ? WHERE provider_id = ? AND upstream_model_id = ?",
+    )
+    .bind(serde_json::json!({"context_window": 8192}).to_string())
+    .bind("small-context")
+    .bind("model")
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE models SET metadata_json = ? WHERE provider_id = ? AND upstream_model_id = ?",
+    )
+    .bind(serde_json::json!({"context_window": 2_000_000}).to_string())
+    .bind("large-context")
+    .bind("model")
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "small-context".into(),
+            model_id: "model".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "large-context".into(),
+            model_id: "model".into(),
+            priority: 1,
+        },
+    ];
+
+    let planned = tokenscavenger::router::selection::apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        "long-context-agent",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        tokenscavenger::router::selection::TokenEstimate {
+            input_tokens: 50_000,
+            output_tokens: 4_000,
+        },
+    )
+    .await;
+
+    assert_eq!(planned[0].provider_id, "large-context");
+}
+
+#[tokio::test]
+async fn test_policy_quality_first_agentic_harness_prefers_tool_json_capable_route() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let mut config = Config::default();
+    config.routing.objective = tokenscavenger::config::schema::RoutingObjective::QualityFirst;
+    config.providers = vec![
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "mistral".into(),
+            free_only: true,
+            ..Default::default()
+        },
+        tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            free_only: true,
+            ..Default::default()
+        },
+    ];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "mistral", "basic-chat", true, 10, false, false).await;
+    seed_policy_provider_model(
+        &state,
+        "groq",
+        "hermes-agentic-tools",
+        true,
+        100,
+        true,
+        true,
+    )
+    .await;
+
+    let policy = tokenscavenger::router::policy::RoutePolicy::from_config(&state.config());
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "mistral".into(),
+            model_id: "basic-chat".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "groq".into(),
+            model_id: "hermes-agentic-tools".into(),
+            priority: 1,
+        },
+    ];
+
+    let planned = tokenscavenger::router::selection::apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        "hermes-agent",
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+        tokenscavenger::router::selection::TokenEstimate {
+            input_tokens: 2_000,
+            output_tokens: 1_000,
+        },
+    )
+    .await;
+
+    assert_eq!(planned[0].provider_id, "groq");
+    assert_eq!(planned[0].model_id, "hermes-agentic-tools");
+}
+
+async fn seed_policy_provider_model(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+    free_tier: bool,
+    priority: i64,
+    supports_tools: bool,
+    supports_json_mode: bool,
+) {
+    sqlx::query(
+        "INSERT OR REPLACE INTO providers (provider_id, display_name, enabled, free_only)
+         VALUES (?, ?, 1, ?)",
+    )
+    .bind(provider_id)
+    .bind(provider_id)
+    .bind(free_tier)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT OR REPLACE INTO models
+         (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_tools, supports_json_mode, priority, metadata_json)
+         VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+    )
+    .bind(provider_id)
+    .bind(model_id)
+    .bind(model_id)
+    .bind(free_tier)
+    .bind(supports_tools)
+    .bind(supports_json_mode)
+    .bind(priority)
+    .bind(serde_json::json!({"context_window": 8192}).to_string())
+    .execute(&state.db)
+    .await
+    .unwrap();
+}
+
+async fn seed_policy_rate(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+    input_per_1m: f64,
+    output_per_1m: f64,
+) {
+    sqlx::query(
+        "INSERT INTO model_pricing
+         (provider_id, model_id, input_per_1m, output_per_1m, source_kind, confidence)
+         VALUES (?, ?, ?, ?, 'operator_override', 'provider_published')",
+    )
+    .bind(provider_id)
+    .bind(model_id)
+    .bind(input_per_1m)
+    .bind(output_per_1m)
+    .execute(&state.db)
+    .await
+    .unwrap();
+}
+
+async fn seed_request_log(
+    state: &AppState,
+    request_id: &str,
+    provider_id: &str,
+    model_id: &str,
+    status: &str,
+    latency_ms: i64,
+) {
+    sqlx::query(
+        "INSERT INTO request_log
+         (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms)
+         VALUES (?, 'chat', ?, ?, ?, ?, 200, ?)",
+    )
+    .bind(request_id)
+    .bind(model_id)
+    .bind(provider_id)
+    .bind(model_id)
+    .bind(status)
+    .bind(latency_ms)
+    .execute(&state.db)
+    .await
+    .unwrap();
+}
+
+async fn seed_success_usage(
+    state: &AppState,
+    request_id: &str,
+    requested_model: &str,
+    provider_id: &str,
+    model_id: &str,
+    cost: f64,
+) {
+    sqlx::query(
+        "INSERT INTO request_log
+         (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms)
+         VALUES (?, 'chat', ?, ?, ?, 'success', 200, 20)",
+    )
+    .bind(request_id)
+    .bind(requested_model)
+    .bind(provider_id)
+    .bind(model_id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO usage_events
+         (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, cost_confidence, free_tier)
+         VALUES (?, ?, ?, 1, 1, ?, 'provider_published', 0)",
+    )
+    .bind(request_id)
+    .bind(provider_id)
+    .bind(model_id)
+    .bind(cost)
+    .execute(&state.db)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

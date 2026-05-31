@@ -302,7 +302,27 @@ pub async fn admin_route_plan(
     crate::router::selection::assign_attempt_priorities(&mut raw_plan);
 
     let mut attempts = Vec::new();
-    for attempt in raw_plan {
+    let token_estimate = crate::router::selection::TokenEstimate {
+        input_tokens: params
+            .get("input_tokens")
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(256),
+        output_tokens: params
+            .get("output_tokens")
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(1024),
+    };
+    let explanations = crate::router::selection::explain_policy_plan(
+        raw_plan,
+        &state,
+        &policy,
+        &model,
+        endpoint_kind,
+        token_estimate,
+    )
+    .await;
+    for explanation in explanations {
+        let attempt = explanation.attempt;
         let health = state
             .health_states
             .get(&attempt.provider_id)
@@ -331,28 +351,49 @@ pub async fn admin_route_plan(
             .map(|provider| provider.free_only)
             .unwrap_or(true);
         let paid_allowed = free_only || config.routing.allow_paid_fallback;
-        let included = model_enabled
+        let base_included = model_enabled
             && paid_allowed
             && health != "Unhealthy"
             && breaker != "Open"
             && breaker != "HalfOpen";
-        let reason = if included {
-            "eligible"
+        let included = base_included && explanation.included;
+        let base_reason = if base_included {
+            None
         } else if !paid_allowed {
-            "filtered by paid fallback policy"
+            Some("filtered by paid fallback policy")
         } else {
-            "filtered by health, breaker, or model enablement"
+            Some("filtered by health, breaker, or model enablement")
         };
+        let mut reasons = explanation.reasons;
+        if let Some(base_reason) = base_reason {
+            reasons.insert(0, base_reason.to_string());
+        }
+        let reason = reasons.join("; ");
         attempts.push(serde_json::json!({
             "provider_id": attempt.provider_id,
             "model_id": attempt.model_id,
             "priority": attempt.priority,
+            "objective": format!("{:?}", explanation.objective),
+            "score": explanation.score.total,
+            "score_components": {
+                "cost": explanation.score.cost_score,
+                "latency": explanation.score.latency_score,
+                "reliability": explanation.score.reliability_score,
+                "quality": explanation.score.quality_score,
+                "context": explanation.score.context_score,
+                "operator": explanation.score.operator_score
+            },
+            "estimated_cost_usd": explanation.score.estimated_cost_usd,
+            "cost_confidence": explanation.score.cost_confidence,
+            "observed_latency_ms": explanation.score.observed_latency_ms,
+            "recent_failure_rate": explanation.score.recent_failure_rate,
             "health": health,
             "breaker_state": breaker,
             "model_enabled": model_enabled,
             "free_only": free_only,
             "included": included,
-            "reason": reason
+            "reason": reason,
+            "reasons": reasons
         }));
     }
 
@@ -362,6 +403,11 @@ pub async fn admin_route_plan(
         "endpoint": endpoint,
         "free_first": config.routing.free_first,
         "allow_paid_fallback": config.routing.allow_paid_fallback,
+        "objective": format!("{:?}", policy.objective_for_model_group(&model)),
+        "token_estimate": {
+            "input_tokens": token_estimate.input_tokens,
+            "output_tokens": token_estimate.output_tokens
+        },
         "attempts": attempts
     })))
 }
@@ -484,6 +530,28 @@ pub async fn admin_config_save(
         }
         if let Some(paid) = routing.get("allow_paid_fallback").and_then(|v| v.as_bool()) {
             config.routing.allow_paid_fallback = paid;
+            changed = true;
+        }
+        if let Some(objective) = routing.get("objective") {
+            config.routing.objective =
+                serde_json::from_value(objective.clone()).map_err(|error| {
+                    ApiError::InvalidRequest(format!("Invalid routing.objective: {error}"))
+                })?;
+            changed = true;
+        }
+        if let Some(overrides) = routing.get("model_group_objectives") {
+            config.routing.model_group_objectives = serde_json::from_value(overrides.clone())
+                .map_err(|error| {
+                    ApiError::InvalidRequest(format!(
+                        "Invalid routing.model_group_objectives: {error}"
+                    ))
+                })?;
+            changed = true;
+        }
+        if let Some(budgets) = routing.get("budgets") {
+            config.routing.budgets = serde_json::from_value(budgets.clone()).map_err(|error| {
+                ApiError::InvalidRequest(format!("Invalid routing.budgets: {error}"))
+            })?;
             changed = true;
         }
         if let Some(order) = routing.get("provider_order").and_then(|v| v.as_array()) {
