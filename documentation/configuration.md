@@ -30,12 +30,28 @@ path = "/metrics"                   # Metrics endpoint path
 [routing]
 free_first = true                   # Always prefer free tier first
 allow_paid_fallback = false         # Allow fallback to paid providers
+objective = "balanced"              # min_cost | min_latency | balanced | quality_first | local_only
 default_model_group_strategy = "provider-priority"
 provider_order = [                  # Fallback ordering
     "groq", "cerebras", "google", "openrouter", "cloudflare",
     "nvidia", "mistral", "github-models", "siliconflow",
     "huggingface", "cohere", "zai", "deepseek", "xai"
 ]
+
+[routing.model_group_objectives]
+"agentic" = "quality_first"
+"cheap:code" = "min_cost"
+
+[routing.budgets]
+max_cost_per_request_usd = 0.01
+max_cost_per_day_usd = 2.00
+
+[routing.budgets.max_cost_per_provider_per_day_usd]
+deepseek = 1.00
+xai = 0.50
+
+[routing.budgets.max_cost_per_model_group_per_day_usd]
+"agentic" = 1.50
 
 [resilience]
 max_retries_per_provider = 2        # Retry attempts per provider
@@ -99,14 +115,28 @@ target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 |-------|---------|-------------|
 | `free_first` | `true` | When true, free-tier providers are always preferred over paid. |
 | `allow_paid_fallback` | `false` | If true, providers marked `free_only = false` may be used after earlier routes are exhausted. |
+| `objective` | `"balanced"` | Scoring objective for eligible attempts: `min_cost`, `min_latency`, `balanced`, `quality_first`, or `local_only`. |
+| `model_group_objectives` | `{}` | Optional per-model-group objective overrides keyed by the requested model/group name. |
+| `budgets.max_cost_per_request_usd` | unset | Hard estimated USD cap for a single request. Paid routes with unknown pricing are blocked when any matching hard budget exists. |
+| `budgets.max_cost_per_day_usd` | unset | Hard estimated USD cap across all usage recorded today. |
+| `budgets.max_cost_per_provider_per_day_usd` | `{}` | Hard estimated USD cap per provider for usage recorded today. |
+| `budgets.max_cost_per_model_group_per_day_usd` | `{}` | Hard estimated USD cap per requested model/model group for usage recorded today. |
 | `default_model_group_strategy` | `"provider-priority"` | Strategy for resolving model groups with multiple targets. |
 | `provider_order` | `[default list]` | Ordered list defining the fallback chain. First match wins. |
 
-For ordinary chat, eligible attempts follow the model-group and provider order.
+TokenScavenger first applies endpoint capability, model enablement, provider
+health, circuit breaker, quota, and paid-fallback filters. It then applies hard
+budgets and scores the remaining candidates using estimated cost, observed
+latency, recent failure rate, context window, model/provider capability, and
+operator order.
+Route-plan explanations include the selected objective, score components,
+estimated cost, observed latency, failure rate, and skip reasons.
+
 For chat requests that include OpenAI `tools`, TokenScavenger applies a
-tool-aware reprioritization pass after normal filtering so agentic workloads
-prefer providers with stronger tool-call behavior while still respecting
-enabled models, provider health, circuit breakers, and paid-fallback policy.
+tool-aware reprioritization pass before policy scoring so agentic workloads and
+Hermes-style coding harnesses prefer providers with stronger tool-call behavior
+while still respecting enabled models, provider health, circuit breakers,
+budgets, and paid-fallback policy.
 
 ### `[resilience]`
 

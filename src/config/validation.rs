@@ -48,6 +48,34 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
             .push("resilience.breaker_cooldown_secs must be > 0".to_string());
     }
 
+    // Validate routing budgets
+    if let Some(limit) = cfg.routing.budgets.max_cost_per_request_usd {
+        if limit < 0.0 {
+            v.errors
+                .push("routing.budgets.max_cost_per_request_usd must be >= 0".to_string());
+        }
+    }
+    if let Some(limit) = cfg.routing.budgets.max_cost_per_day_usd {
+        if limit < 0.0 {
+            v.errors
+                .push("routing.budgets.max_cost_per_day_usd must be >= 0".to_string());
+        }
+    }
+    for (provider, limit) in &cfg.routing.budgets.max_cost_per_provider_per_day_usd {
+        if *limit < 0.0 {
+            v.errors.push(format!(
+                "routing.budgets.max_cost_per_provider_per_day_usd.{provider} must be >= 0"
+            ));
+        }
+    }
+    for (model_group, limit) in &cfg.routing.budgets.max_cost_per_model_group_per_day_usd {
+        if *limit < 0.0 {
+            v.errors.push(format!(
+                "routing.budgets.max_cost_per_model_group_per_day_usd.{model_group} must be >= 0"
+            ));
+        }
+    }
+
     // Validate providers
     let mut provider_ids = std::collections::HashSet::new();
     for provider in &cfg.providers {
@@ -162,5 +190,30 @@ mod tests {
                 .any(|e| e.contains("allowed_cors_origins"))
         );
         assert!(result.errors.iter().any(|e| e.contains("api_key")));
+    }
+
+    #[test]
+    fn test_validate_rejects_negative_routing_budget() {
+        let mut cfg = Config::default();
+        cfg.routing.budgets.max_cost_per_request_usd = Some(-0.01);
+        cfg.routing
+            .budgets
+            .max_cost_per_provider_per_day_usd
+            .insert("deepseek".into(), -1.0);
+
+        let result = validate_config(&cfg);
+
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("max_cost_per_request_usd"))
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("max_cost_per_provider_per_day_usd.deepseek"))
+        );
     }
 }

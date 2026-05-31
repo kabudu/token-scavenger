@@ -6,8 +6,8 @@ use crate::app::state::AppState;
 use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
-    assign_attempt_priorities, build_attempt_plan_for_target, filter_by_health,
-    filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
+    TokenEstimate, apply_policy_engine, assign_attempt_priorities, build_attempt_plan_for_target,
+    filter_by_health, filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
     record_context_failure_hint, record_rate_limit_hint, record_stream_silence_hint,
     should_skip_for_context_hint, should_skip_for_rate_limit_hint,
     should_skip_for_stream_silence_hint,
@@ -59,6 +59,7 @@ use serde::Serialize;
 #[derive(Debug, Clone)]
 struct StreamUsageContext {
     provider_id: String,
+    requested_model: String,
     free_tier: bool,
     started_at: Instant,
 }
@@ -225,6 +226,21 @@ pub async fn create_chat_stream(
     if request.tools.is_some() {
         plan = prioritize_for_tool_use(plan, &state).await;
     }
+    plan = apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        &request.model,
+        EndpointKind::ChatCompletions,
+        TokenEstimate {
+            input_tokens: request
+                .prompt_size_hint()
+                .div_ceil(4)
+                .min(u32::MAX as usize) as u32,
+            output_tokens: request.max_tokens.unwrap_or(1024),
+        },
+    )
+    .await;
 
     if plan.is_empty() {
         return Err(ApiError::RouteExhausted(format!(
@@ -299,6 +315,7 @@ pub async fn create_chat_stream(
                 let mut guard = task_usage_context.lock().await;
                 *guard = Some(StreamUsageContext {
                     provider_id: provider_id.clone(),
+                    requested_model: request_clone.model.clone(),
                     free_tier: provider_cfg.free_only,
                     started_at: Instant::now(),
                 });
@@ -546,6 +563,7 @@ pub async fn create_chat_stream(
                                 crate::usage::accounting::UsageRecord {
                                     provider_id: &ctx.provider_id,
                                     model_id: &model,
+                                    requested_model: &ctx.requested_model,
                                     usage: Some(&usage),
                                     latency_ms: ctx.started_at.elapsed().as_millis() as i64,
                                     free_tier: ctx.free_tier,

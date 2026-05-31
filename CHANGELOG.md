@@ -9,7 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added policy-based routing objectives for `min_cost`, `min_latency`,
+  `balanced`, `quality_first`, and `local_only`, with per-model-group
+  objective overrides.
+- Added hard routing budgets for estimated spend per request, per day, per
+  provider/day, and per model-group/day.
+- Added route-plan scoring diagnostics with cost, latency, reliability,
+  context-window, quality, operator-priority, and budget skip details.
+- Added deterministic policy-engine coverage for budget enforcement,
+  paid-fallback gating, tie-breaking, local-only routing, context-window
+  scoring, and Hermes-style agentic tool routing.
+
 ### Changed
+
+- Chat, streaming chat, and embeddings route planning now score eligible
+  provider/model candidates using estimated cost, observed latency, recent
+  failure rate, context window, capabilities, and operator priority.
+- Curated and discovered model metadata now preserves context-window hints for
+  policy scoring.
 
 ### Fixed
 

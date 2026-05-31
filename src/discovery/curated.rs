@@ -183,8 +183,8 @@ pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
         let _ = sqlx::query(
             "INSERT OR IGNORE INTO models \
              (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, \
-              discovered_at, updated_at) \
-             VALUES (?, ?, ?, 1, ?, 1, datetime('now'), datetime('now'))",
+              metadata_json, discovered_at, updated_at) \
+             VALUES (?, ?, ?, 1, ?, 1, ?, datetime('now'), datetime('now'))",
         )
         .bind(&model.provider_id)
         .bind(&model.upstream_model_id)
@@ -195,6 +195,7 @@ pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
                 .unwrap_or(&model.upstream_model_id),
         )
         .bind(model.free_tier)
+        .bind(serde_json::json!({"context_window": model.context_window}).to_string())
         .execute(db)
         .await;
     }

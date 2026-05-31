@@ -8,8 +8,8 @@ use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::fallback::{FallbackDecision, should_fallback};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
-    assign_attempt_priorities, build_attempt_plan_for_target, filter_by_health,
-    filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
+    TokenEstimate, apply_policy_engine, assign_attempt_priorities, build_attempt_plan_for_target,
+    filter_by_health, filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
     record_context_failure_hint, record_rate_limit_hint, should_skip_for_context_hint,
     should_skip_for_rate_limit_hint,
 };
@@ -104,6 +104,15 @@ pub async fn route_chat_request(
     if request.tools.is_some() {
         plan = prioritize_for_tool_use(plan, &state).await;
     }
+    plan = apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        &request.model,
+        EndpointKind::ChatCompletions,
+        chat_token_estimate(&request),
+    )
+    .await;
 
     if plan.is_empty() {
         record_route_failure(
@@ -215,6 +224,7 @@ pub async fn route_chat_request(
                     crate::usage::accounting::UsageRecord {
                         provider_id,
                         model_id: &response.model_id,
+                        requested_model: &request.model,
                         usage: usage_ref.as_ref(),
                         latency_ms: response.latency_ms,
                         free_tier: provider_cfg.free_only,
@@ -292,6 +302,7 @@ pub async fn route_chat_request(
                                         crate::usage::accounting::UsageRecord {
                                             provider_id,
                                             model_id: &response.model_id,
+                                            requested_model: &request.model,
                                             usage: usage_ref.as_ref(),
                                             latency_ms: response.latency_ms,
                                             free_tier: provider_cfg.free_only,
@@ -359,6 +370,7 @@ pub async fn route_chat_request(
                                     crate::usage::accounting::UsageRecord {
                                         provider_id,
                                         model_id: &response.model_id,
+                                        requested_model: &request.model,
                                         usage: usage_ref.as_ref(),
                                         latency_ms: response.latency_ms,
                                         free_tier: provider_cfg.free_only,
@@ -516,6 +528,15 @@ pub async fn route_embeddings_request(
         &state,
     )
     .await;
+    let plan = apply_policy_engine(
+        plan,
+        &state,
+        &policy,
+        &request.model,
+        EndpointKind::Embeddings,
+        embeddings_token_estimate(&request),
+    )
+    .await;
     if plan.is_empty() {
         record_route_failure(
             &state,
@@ -591,6 +612,7 @@ pub async fn route_embeddings_request(
                     crate::usage::accounting::UsageRecord {
                         provider_id,
                         model_id: &response.model_id,
+                        requested_model: &request.model,
                         usage: Some(&usage),
                         latency_ms: response.latency_ms,
                         free_tier: provider_cfg.free_only,
@@ -641,6 +663,25 @@ pub async fn route_embeddings_request(
         ),
         last_error.as_ref(),
     ))
+}
+
+fn chat_token_estimate(request: &NormalizedChatRequest) -> TokenEstimate {
+    TokenEstimate {
+        input_tokens: chars_to_token_hint(request.prompt_size_hint()),
+        output_tokens: request.max_tokens.unwrap_or(1024),
+    }
+}
+
+fn embeddings_token_estimate(request: &NormalizedEmbeddingsRequest) -> TokenEstimate {
+    let input_chars = request.input.iter().map(|item| item.len()).sum::<usize>();
+    TokenEstimate {
+        input_tokens: chars_to_token_hint(input_chars),
+        output_tokens: 0,
+    }
+}
+
+fn chars_to_token_hint(chars: usize) -> u32 {
+    chars.div_ceil(4).min(u32::MAX as usize) as u32
 }
 
 fn api_error_for_exhausted(message: String, last_error: Option<&ProviderError>) -> ApiError {

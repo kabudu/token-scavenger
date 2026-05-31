@@ -278,6 +278,14 @@ attempts toward providers and models with stronger tool-call behavior. This
 helps agent clients such as Hermes get real `tool_calls` instead of prose like
 "I'll inspect that" without requiring a separate model group.
 
+## Policy-Based Routing
+
+Routing can be scored by `min_cost`, `min_latency`, `balanced`,
+`quality_first`, or `local_only`, with per-model-group overrides. Optional hard
+budgets can cap estimated spend per request, per day, per provider/day, or per
+model-group/day. Route-plan diagnostics show score components, estimated cost,
+latency, failure rate, and budget skip reasons.
+
 ## Provider Support Matrix
 
 See [documentation/provider-matrix.md](documentation/provider-matrix.md) for details on each provider's API format, free tier limits, and known quirks.

@@ -6,17 +6,19 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 ## 1. Policy Engine For Cost, Latency, And Quality
 
+**Status:** Implemented in `feature/policy-engine-cost-latency-quality`.
+
 **Current baseline:** TokenScavenger already has provider ordering, model enablement, free-first routing, explicit paid fallback gating, retries, health checks, circuit breakers, usage accounting, and estimated cost surfaces.
 
 **Why it matters:** The next step is to make those primitives policy-driven. Operators should be able to route each request by intent: cheapest acceptable model, fastest healthy route, best quality route, privacy-preferred route, or hard budget cap.
 
 **What good looks like:**
 
-- Per-model-group routing objectives such as `min_cost`, `min_latency`, `balanced`, `quality_first`, and `local_only`.
-- Configurable max cost per request, per day, per provider, and per model group.
-- Provider/model scoring that combines price, observed latency, recent failure rate, context window, endpoint capability, and operator priority.
-- Route-plan explanations that score each candidate and show why one model won over alternatives.
-- Deterministic tests for budget enforcement, paid fallback gating, and policy tie-breaking.
+- [x] Per-model-group routing objectives such as `min_cost`, `min_latency`, `balanced`, `quality_first`, and `local_only`.
+- [x] Configurable max cost per request, per day, per provider, and per model group.
+- [x] Provider/model scoring that combines price, observed latency, recent failure rate, context window, endpoint capability, model capability, and operator priority.
+- [x] Route-plan explanations that score each candidate and show why one model won over alternatives.
+- [x] Deterministic tests for budget enforcement, paid fallback gating, and policy tie-breaking.
 
 ## 2. Rich Provider Marketplace And Plugin SDK
 
