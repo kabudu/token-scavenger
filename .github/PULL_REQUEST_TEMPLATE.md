@@ -24,7 +24,6 @@
 
 - [ ] Updated `README.md` if project behavior or positioning changed.
 - [ ] Updated relevant files in `documentation/`.
-- [ ] Updated relevant `.dev/implementation*.md` or forensic checklist items.
 - [ ] Updated the marketing website in `docs/` if user-facing project messaging changed.
 - [ ] Not applicable.
 
