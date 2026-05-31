@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.2.0] - 2026-05-31
+
+### Added
+
 - Added policy-based routing objectives for `min_cost`, `min_latency`,
   `balanced`, `quality_first`, and `local_only`, with per-model-group
   objective overrides.
