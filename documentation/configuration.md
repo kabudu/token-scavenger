@@ -33,7 +33,7 @@ allow_paid_fallback = false         # Allow fallback to paid providers
 objective = "balanced"              # min_cost | min_latency | balanced | quality_first | local_only
 default_model_group_strategy = "provider-priority"
 provider_order = [                  # Fallback ordering
-    "groq", "cerebras", "google", "openrouter", "cloudflare",
+    "ollama", "local", "groq", "cerebras", "google", "openrouter", "cloudflare",
     "nvidia", "mistral", "github-models", "siliconflow",
     "huggingface", "cohere", "zai", "deepseek", "xai"
 ]
@@ -132,6 +132,12 @@ operator order.
 Route-plan explanations include the selected objective, score components,
 estimated cost, observed latency, failure rate, and skip reasons.
 
+The `local_only` objective keeps only local attempts. Built-in local provider
+IDs (`local`, `ollama`, `llama-cpp`, and `lmstudio`) always qualify, and any
+provider whose configured `base_url` uses `localhost`, `127.0.0.1`, or `::1`
+also qualifies. Local providers still use the normal adapter, health, breaker,
+fallback, usage, and metrics paths.
+
 For chat requests that include OpenAI `tools`, TokenScavenger applies a
 tool-aware reprioritization pass before policy scoring so agentic workloads and
 Hermes-style coding harnesses prefer providers with stronger tool-call behavior
@@ -161,7 +167,16 @@ This is an array of provider configurations. Each entry specifies:
 | `discover_models` | `true` | Whether to query the provider's model list endpoint. |
 
 Supported provider IDs:
-`groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`)
+`groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`), `local`, `ollama`, `llama-cpp` (or `llamacpp`), `lmstudio` (or `lm-studio`)
+
+Local provider defaults:
+
+| Provider | Default base URL | Notes |
+|----------|------------------|-------|
+| `local` | `http://127.0.0.1:1234/v1` | Generic OpenAI-compatible local or LAN upstream. Override `base_url` for your server. |
+| `ollama` | `http://127.0.0.1:11434/v1` | Uses Ollama's OpenAI-compatible endpoints. |
+| `llama-cpp` | `http://127.0.0.1:8080/v1` | Uses the llama.cpp server OpenAI-compatible API. |
+| `lmstudio` | `http://127.0.0.1:1234/v1` | Uses LM Studio's local OpenAI-compatible server. |
 
 ### `[[model_groups]]`
 

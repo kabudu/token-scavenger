@@ -1,6 +1,9 @@
 use crate::api::openai::chat::{
     NormalizedChatRequest, ProviderChatResponse, ProviderUsage, ToolCall,
 };
+use crate::api::openai::embeddings::{
+    EmbeddingData, NormalizedEmbeddingsRequest, ProviderEmbeddingsResponse,
+};
 use crate::config::schema::ProviderConfig;
 use crate::discovery::curated::DiscoveredModel;
 use crate::providers::http::{ProviderHttp, bearer_auth};
@@ -343,6 +346,132 @@ pub async fn openai_discover_models(
         .unwrap_or_default();
 
     Ok(models)
+}
+
+/// Helper to execute an OpenAI-compatible embeddings request.
+pub async fn openai_embeddings(
+    ctx: &ProviderContext,
+    request: NormalizedEmbeddingsRequest,
+    provider_id: &str,
+) -> Result<ProviderEmbeddingsResponse, ProviderError> {
+    let url = with_trailing_slash(&ctx.base_url)
+        .join("embeddings")
+        .map_err(|e| ProviderError::Other(e.to_string()))?;
+
+    let config = ProviderConfig {
+        id: provider_id.into(),
+        api_key: ctx.api_key.clone(),
+        ..Default::default()
+    };
+
+    let mut body = serde_json::json!({
+        "model": request.model,
+        "input": request.input,
+    });
+    if let Some(value) = request.encoding_format.as_ref() {
+        body["encoding_format"] = serde_json::json!(value);
+    }
+    if let Some(value) = request.user.as_ref() {
+        body["user"] = serde_json::json!(value);
+    }
+
+    let start = std::time::Instant::now();
+    let resp = ProviderHttp::post_json(&ctx.client, url, bearer_auth(&config), &body).await?;
+    let latency_ms = start.elapsed().as_millis() as i64;
+    let status = resp.status();
+    let rate_limits = parse_rate_limit_headers(resp.headers());
+    let response_body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ProviderError::MalformedResponse(e.to_string()))?;
+
+    if !status.is_success() {
+        let msg = response_body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        return Err(classify_error_with_rate_limits(
+            status.as_u16(),
+            msg,
+            &rate_limits,
+        ));
+    }
+
+    let model = response_body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&request.model)
+        .to_string();
+
+    let data = response_body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let embedding = item
+                        .get("embedding")?
+                        .as_array()?
+                        .iter()
+                        .filter_map(|value| value.as_f64())
+                        .collect::<Vec<_>>();
+                    Some(EmbeddingData {
+                        object: item
+                            .get("object")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("embedding")
+                            .to_string(),
+                        index: item.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                        embedding,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if data.is_empty() {
+        return Err(ProviderError::MalformedResponse(
+            "embeddings response contained no embedding vectors".into(),
+        ));
+    }
+
+    let usage = response_body.get("usage").map_or(
+        ProviderUsage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
+            reasoning_tokens: None,
+        },
+        |usage| ProviderUsage {
+            prompt_tokens: usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            completion_tokens: usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            total_tokens: usage
+                .get("total_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
+            reasoning_tokens: None,
+        },
+    );
+
+    Ok(ProviderEmbeddingsResponse {
+        provider_id: provider_id.to_string(),
+        model_id: model,
+        data,
+        usage,
+        latency_ms,
+    })
 }
 
 /// Parse a single SSE data line and extract the JSON payload.

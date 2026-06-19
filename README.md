@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-**A lightweight, single-binary, self-hosted OpenAI-compatible LLM router that intelligently scavenges free-tier tokens first - with smart fallback to paid providers when you allow it.**
+**A lightweight, single-binary, self-hosted OpenAI-compatible LLM router that intelligently scavenges local and free-tier tokens first - with smart fallback to paid providers when you allow it.**
 
 **Just change the `base_url` in your OpenAI SDK** and TokenScavenger handles the rest: provider credentials, routing logic, model discovery, circuit breakers, usage tracking, and a beautiful operator dashboard - all in one Rust binary backed by SQLite.
 
@@ -22,9 +22,9 @@
                             ┌───────────────────────────────┤
                             ↓                               ↓
                     ┌──────────────┐              ┌──────────────────┐
-                    │  Groq (free)  │              │  Gemini (free)   │
+                    │ Local/Ollama  │              │  Gemini (free)   │
                     ├──────────────┤              ├──────────────────┤
-                    │ Cerebras     │              │ OpenRouter       │
+                    │ Groq         │              │ OpenRouter       │
                     │ Mistral      │              │ Cloudflare       │
                     │ NVIDIA NIM   │              │ GitHub Models    │
                     │ HuggingFace  │              │ SiliconFlow      │
@@ -34,7 +34,7 @@
 
 ## Why TokenScavenger?
 
-- **Maximize free inference** across 14 permanent free-tier providers without managing dozens of API endpoints.
+- **Maximize local and free inference** across local OpenAI-compatible servers and permanent free-tier providers without managing dozens of API endpoints.
 - **Zero runtime overhead** — one static binary, no Docker or Python/Node required for basic use.
 - **Production-grade resilience** — circuit breakers, health checks, retries, and full observability.
 - **Beautiful built-in UI** — monitor usage, routing decisions, and provider health in real time.
@@ -46,7 +46,7 @@
 - **Tool-aware routing** for agentic clients, preferring stronger tool-call
   providers automatically when OpenAI `tools` are present
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
-- **14 built-in providers** with automatic model discovery
+- **18 built-in providers** with automatic model discovery, including local OpenAI-compatible upstreams
 - **Circuit breakers, retries & health monitoring**
 - **Prometheus metrics** + per-provider token usage tracking
 - **Embedded web UI** with live dashboard, logs, and config editor
@@ -197,7 +197,7 @@ src/
   db/           SQLite pool, migrations (9 tables), helpers
   discovery/    Model discovery, curated catalog, merge logic
   metrics/      Prometheus counters/histograms, structured tracing
-  providers/    14 provider adapter implementations
+  providers/    18 provider adapter implementations
   resilience/   Circuit breakers, health tracking, retry/backoff
   router/       Route planning engine, policy, model groups, fallback
   ui/           Embedded operator web UI (9 views)

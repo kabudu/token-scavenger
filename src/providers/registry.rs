@@ -97,6 +97,30 @@ pub const SUPPORTED_PROVIDERS: &[ProviderCatalogEntry] = &[
         default_base_url: "https://api.x.ai/v1",
         free_only_default: false,
     },
+    ProviderCatalogEntry {
+        id: "local",
+        display_name: "Local OpenAI-Compatible",
+        default_base_url: "http://127.0.0.1:1234/v1",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "ollama",
+        display_name: "Ollama",
+        default_base_url: "http://127.0.0.1:11434/v1",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "llama-cpp",
+        display_name: "llama.cpp Server",
+        default_base_url: "http://127.0.0.1:8080/v1",
+        free_only_default: true,
+    },
+    ProviderCatalogEntry {
+        id: "lmstudio",
+        display_name: "LM Studio",
+        default_base_url: "http://127.0.0.1:1234/v1",
+        free_only_default: true,
+    },
 ];
 
 /// Registry of all available provider adapters.
@@ -183,6 +207,10 @@ fn create_adapter(id: &str) -> Option<Arc<dyn ProviderAdapter>> {
         )),
         "deepseek" => Some(Arc::new(crate::providers::stub_adapters::DeepSeekAdapter)),
         "xai" | "grok" => Some(Arc::new(crate::providers::stub_adapters::XaiAdapter)),
+        "local" => Some(Arc::new(crate::providers::local::LocalOpenAiAdapter)),
+        "ollama" => Some(Arc::new(crate::providers::local::OllamaAdapter)),
+        "llama-cpp" | "llamacpp" => Some(Arc::new(crate::providers::local::LlamaCppAdapter)),
+        "lmstudio" | "lm-studio" => Some(Arc::new(crate::providers::local::LmStudioAdapter)),
         _ => None,
     }
 }

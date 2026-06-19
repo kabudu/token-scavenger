@@ -171,6 +171,33 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             context_window: Some(2_000_000),
             free_tier: false,
         },
+        // Local OpenAI-compatible providers. These are conservative examples;
+        // dynamic discovery and operator-configured model rows remain the source
+        // of truth for what is actually loaded on the workstation.
+        DiscoveredModel {
+            provider_id: "ollama".into(),
+            upstream_model_id: "llama3.2".into(),
+            display_name: Some("Llama 3.2 (Ollama)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: None,
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "ollama".into(),
+            upstream_model_id: "qwen2.5-coder:7b".into(),
+            display_name: Some("Qwen2.5 Coder 7B (Ollama)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: None,
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "local".into(),
+            upstream_model_id: "local-model".into(),
+            display_name: Some("Local Model".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: None,
+            free_tier: true,
+        },
     ]
 }
 
@@ -180,11 +207,19 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
 pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
     let catalog = curated_catalog();
     for model in &catalog {
+        let supports_chat = model
+            .endpoint_compatibility
+            .iter()
+            .any(|kind| kind == "chat");
+        let supports_embeddings = model
+            .endpoint_compatibility
+            .iter()
+            .any(|kind| kind == "embeddings");
         let _ = sqlx::query(
             "INSERT OR IGNORE INTO models \
-             (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, \
+             (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, \
               metadata_json, discovered_at, updated_at) \
-             VALUES (?, ?, ?, 1, ?, 1, ?, datetime('now'), datetime('now'))",
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?, datetime('now'), datetime('now'))",
         )
         .bind(&model.provider_id)
         .bind(&model.upstream_model_id)
@@ -195,6 +230,8 @@ pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
                 .unwrap_or(&model.upstream_model_id),
         )
         .bind(model.free_tier)
+        .bind(supports_chat)
+        .bind(supports_embeddings)
         .bind(serde_json::json!({"context_window": model.context_window}).to_string())
         .execute(db)
         .await;
