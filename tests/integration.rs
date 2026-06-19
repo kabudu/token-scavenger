@@ -2,6 +2,8 @@
 //!
 //! Uses the Axum test harness with an ephemeral SQLite database.
 
+mod common;
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -1047,6 +1049,10 @@ async fn test_provider_contract_matrix_and_failure_classification() {
         "siliconflow",
         "deepseek",
         "xai",
+        "local",
+        "ollama",
+        "llama-cpp",
+        "lmstudio",
     ];
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     let mut config = Config::default();
@@ -1101,6 +1107,67 @@ async fn test_provider_contract_matrix_and_failure_classification() {
         tokenscavenger::providers::shared::classify_error(500, "boom"),
         ProviderError::Other(_)
     ));
+}
+
+#[tokio::test]
+async fn test_local_openai_adapter_supports_embeddings() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        usage_tokens: (3, 0),
+        ..Default::default()
+    })
+    .await;
+
+    let adapter = tokenscavenger::providers::local::LocalOpenAiAdapter;
+    let config = tokenscavenger::config::schema::ProviderConfig {
+        id: "local".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: None,
+        free_only: true,
+        discover_models: true,
+    };
+    let ctx = tokenscavenger::providers::traits::ProviderContext {
+        base_url: tokenscavenger::providers::traits::ProviderAdapter::base_url(&adapter, &config),
+        api_key: None,
+        config: std::sync::Arc::new(config),
+        client: reqwest::Client::new(),
+    };
+
+    assert!(
+        tokenscavenger::providers::traits::ProviderAdapter::supports_endpoint(
+            &adapter,
+            &tokenscavenger::providers::traits::EndpointKind::Embeddings,
+        )
+    );
+    let models =
+        tokenscavenger::providers::traits::ProviderAdapter::discover_models(&adapter, &ctx)
+            .await
+            .unwrap();
+    assert!(
+        models[0]
+            .endpoint_compatibility
+            .contains(&"embeddings".to_string())
+    );
+
+    let response = tokenscavenger::providers::traits::ProviderAdapter::embeddings(
+        &adapter,
+        &ctx,
+        tokenscavenger::api::openai::embeddings::NormalizedEmbeddingsRequest {
+            model: "local-embed".into(),
+            input: vec!["hello".into()],
+            encoding_format: None,
+            user: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.provider_id, "local");
+    assert_eq!(response.model_id, "local-embed");
+    assert_eq!(response.data[0].embedding, vec![0.125, -0.25, 0.5]);
+    assert_eq!(response.usage.prompt_tokens, 3);
+
+    handle.abort();
 }
 
 #[tokio::test]

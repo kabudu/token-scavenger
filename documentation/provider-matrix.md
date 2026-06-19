@@ -1,6 +1,6 @@
 # Provider Support Matrix
 
-TokenScavenger ships with 14 built-in provider adapters. This document details each provider's API format, capabilities, free-tier limits, paid fallback behavior, and known quirks.
+TokenScavenger ships with 18 built-in provider adapters. This document details each provider's API format, capabilities, free-tier limits, paid fallback behavior, and known quirks.
 
 ## Legend
 
@@ -15,6 +15,10 @@ TokenScavenger ships with 14 built-in provider adapters. This document details e
 
 | Provider | API Format | Chat | Streaming | Tools | Embeddings | Vision | Free Tier |
 |----------|-----------|------|-----------|-------|------------|--------|-----------|
+| Local OpenAI-Compatible | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
+| Ollama | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
+| llama.cpp Server | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
+| LM Studio | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
 | Groq | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Google Gemini | Native | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OpenRouter | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ (:free suffix) |
@@ -31,6 +35,62 @@ TokenScavenger ships with 14 built-in provider adapters. This document details e
 | xAI (Grok) | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ✅ | Paid fallback |
 
 ## Provider Details
+
+### Local OpenAI-Compatible
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `http://127.0.0.1:1234/v1` by default; override `base_url` for your server |
+| **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Embeddings endpoint** | `POST /embeddings` |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Free models** | Operator-local models |
+| **Quirks** | ⚠️ Capabilities depend on the local server and loaded model. TokenScavenger handles routing, health, fallback, metrics, and normalization, but does not serve models itself. |
+| **Routing** | Use provider ID `local`, or set `[routing].objective = "local_only"` to filter to local upstreams. |
+
+### Ollama
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `http://127.0.0.1:11434/v1` |
+| **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Embeddings endpoint** | `POST /embeddings` |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Free models** | Locally pulled Ollama models such as `llama3.2` or `qwen2.5-coder:7b` |
+| **Quirks** | ⚠️ Model availability and tool/JSON/vision behavior depend on locally pulled models and Ollama's compatibility layer. |
+| **Docs** | https://github.com/ollama/ollama/blob/main/docs/openai.md |
+
+### llama.cpp Server
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `http://127.0.0.1:8080/v1` |
+| **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Embeddings endpoint** | `POST /embeddings` |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Free models** | The model loaded by the local llama.cpp server |
+| **Quirks** | ⚠️ Capabilities depend on server flags and the loaded model. |
+| **Docs** | https://github.com/ggml-org/llama.cpp/tree/master/tools/server |
+
+### LM Studio
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `http://127.0.0.1:1234/v1` |
+| **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Embeddings endpoint** | `POST /embeddings` |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Free models** | The model selected in LM Studio's local server |
+| **Quirks** | ⚠️ Capabilities depend on the selected local model. |
+| **Docs** | https://lmstudio.ai/docs/app/api/endpoints/openai |
 
 ### Groq
 

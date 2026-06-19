@@ -100,7 +100,7 @@ free_first = true
 allow_paid_fallback = false
 
 # Provider order defines the fallback chain
-provider_order = ["groq", "cerebras", "google", "openrouter", "cloudflare",
+provider_order = ["ollama", "local", "groq", "cerebras", "google", "openrouter", "cloudflare",
                   "nvidia", "mistral", "github-models", "siliconflow",
                   "huggingface", "cohere", "zai", "deepseek", "xai"]
 
@@ -108,6 +108,12 @@ provider_order = ["groq", "cerebras", "google", "openrouter", "cloudflare",
 max_retries_per_provider = 2
 breaker_failure_threshold = 3
 breaker_cooldown_secs = 60
+
+[[providers]]
+id = "ollama"
+enabled = true
+base_url = "http://127.0.0.1:11434/v1"
+api_key = ""
 
 [[providers]]
 id = "groq"

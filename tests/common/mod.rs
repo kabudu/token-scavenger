@@ -4,21 +4,19 @@
 //! for integration and E2E testing.
 
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Sse},
     routing::{get, post},
-    Json, Router,
 };
 use std::sync::{Arc, Mutex};
-use tokio_stream::StreamExt;
 
 /// Configurable mock provider state.
 #[derive(Clone, Default)]
 pub struct MockProviderState {
     pub delay_ms: u64,
     pub status_code: u16,
-    pub response_body: String,
     pub fail_count: Arc<Mutex<u32>>,
     pub succeed_after: u32,
     pub usage_tokens: (u32, u32),
@@ -30,6 +28,7 @@ pub async fn start_mock_server(state: MockProviderState) -> (String, tokio::task
 
     let app = Router::new()
         .route("/v1/chat/completions", post(chat_handler))
+        .route("/v1/embeddings", post(embeddings_handler))
         .route("/v1/models", get(models_handler))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(state);
@@ -50,7 +49,10 @@ async fn chat_handler(
     State(state): State<Arc<MockProviderState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
+    let stream = body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
 
     tokio::time::sleep(std::time::Duration::from_millis(state.delay_ms)).await;
 
@@ -58,8 +60,13 @@ async fn chat_handler(
     let mut fails = state.fail_count.lock().unwrap();
     if *fails < state.succeed_after {
         *fails += 1;
-        let status = StatusCode::from_u16(state.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        return (status, Json(serde_json::json!({"error": {"message": "mock failure"}}))).into_response();
+        let status =
+            StatusCode::from_u16(state.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        return (
+            status,
+            Json(serde_json::json!({"error": {"message": "mock failure"}})),
+        )
+            .into_response();
     }
 
     if stream {
@@ -77,32 +84,64 @@ async fn chat_handler(
         };
         Sse::new(stream).into_response()
     } else {
-        (StatusCode::OK, Json(serde_json::json!({
-            "id": "chatcmpl-1",
-            "object": "chat.completion",
-            "created": 1,
-            "model": "test-model",
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": "Mock response"},
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": state.usage_tokens.0,
-                "completion_tokens": state.usage_tokens.1,
-                "total_tokens": state.usage_tokens.0 + state.usage_tokens.1
-            }
-        }))).into_response()
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test-model",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Mock response"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": state.usage_tokens.0,
+                    "completion_tokens": state.usage_tokens.1,
+                    "total_tokens": state.usage_tokens.0 + state.usage_tokens.1
+                }
+            })),
+        )
+            .into_response()
     }
 }
 
-async fn models_handler(
-    State(_state): State<Arc<MockProviderState>>,
-) -> impl IntoResponse {
+async fn models_handler(State(_state): State<Arc<MockProviderState>>) -> impl IntoResponse {
     Json(serde_json::json!({
         "object": "list",
         "data": [
             {"id": "test-model", "object": "model", "created": 0, "owned_by": "test-org"}
         ]
     }))
+}
+
+async fn embeddings_handler(
+    State(state): State<Arc<MockProviderState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    tokio::time::sleep(std::time::Duration::from_millis(state.delay_ms)).await;
+
+    let model = body
+        .get("model")
+        .and_then(|value| value.as_str())
+        .unwrap_or("test-embedding-model");
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "object": "list",
+            "model": model,
+            "data": [{
+                "object": "embedding",
+                "index": 0,
+                "embedding": [0.125, -0.25, 0.5]
+            }],
+            "usage": {
+                "prompt_tokens": state.usage_tokens.0,
+                "total_tokens": state.usage_tokens.0
+            }
+        })),
+    )
+        .into_response()
 }
