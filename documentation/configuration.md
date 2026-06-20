@@ -145,6 +145,13 @@ Hermes-style coding harnesses prefer providers with stronger tool-call behavior
 while still respecting enabled models, provider health, circuit breakers,
 budgets, and paid-fallback policy.
 
+Model intelligence metadata is also applied before policy scoring. TokenScavenger
+normalizes model family, task tags, modalities, context window, tool/JSON/vision
+signals, reasoning hints, embeddings support, and discovery freshness from the
+curated and discovered catalog. Requests that need tools, JSON mode, vision
+input, or a context length larger than a model's known window are rerouted before
+an upstream call is made.
+
 ### `[resilience]`
 
 | Field | Default | Description |
@@ -198,6 +205,16 @@ serially stall the refresh cycle.
 |-------|---------|-------------|
 | `name` | *(required)* | Public model group name used in the `model` field of requests |
 | `target` | *(required)* | Single target or ordered target array. Strings are model IDs that can route through any eligible provider. Objects pin a model to one provider: `{ provider = "nvidia", model = "google/gemma-4-31b-it" }`. |
+
+TokenScavenger seeds editable smart groups on first run:
+
+- `fast:chat`
+- `cheap:code`
+- `reasoning:deep`
+- `vision:balanced`
+
+They use the same `model_groups` table and are inserted only when absent, so
+operator-edited groups are never overwritten by startup seeding.
 
 ## Example Configurations
 

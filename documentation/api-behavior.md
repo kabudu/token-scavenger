@@ -8,7 +8,7 @@ TokenScavenger exposes OpenAI-compatible HTTP endpoints while routing each reque
 |----------|-------------|
 | `POST /v1/chat/completions` | OpenAI-compatible chat completions, including streaming SSE when `stream: true`. |
 | `POST /v1/embeddings` | OpenAI-compatible embeddings for providers that support embeddings. |
-| `GET /v1/models` | Merged public model catalog from curated models, discovery, and operator configuration. |
+| `GET /v1/models` | Merged public model catalog from curated models, discovery, operator configuration, and model intelligence metadata. |
 | `GET /healthz` | Lightweight process health check. |
 | `GET /readyz` | Readiness check with dependency state. |
 | `GET /metrics` | Prometheus metrics. |
@@ -80,6 +80,20 @@ Useful metrics include:
 - `tokenscavenger_provider_health_state`
 - `tokenscavenger_provider_breaker_state`
 - `tokenscavenger_quota_remaining`
+
+## Model Intelligence
+
+`GET /v1/models` remains OpenAI-compatible but may include additional optional
+fields such as `provider_id`, `free_tier`, `context_window`, `task_tags`,
+`modalities`, and `freshness`. Clients that only expect OpenAI's base model
+shape can ignore these fields.
+
+Chat and streaming route planning also consults model intelligence metadata.
+Candidates are skipped before upstream calls when the request needs tools, JSON
+mode, vision input, or a known context window that the model cannot satisfy.
+`/admin/route-plan` exposes the same compatibility decision with query hints
+such as `tools=true`, `json=true`, `vision=true`, `input_tokens=...`, and
+`output_tokens=...`.
 
 ## Streaming Errors
 

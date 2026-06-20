@@ -811,7 +811,7 @@ pub async fn render_models(state: &AppState) -> String {
             <div class="p-0 overflow-x-auto min-h-[300px]">
                 <table class="w-full text-left">
                     <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
-                        <tr><th>Model ID</th><th>Provider</th><th>Status</th><th>Priority</th><th>Actions</th></tr>
+                        <tr><th>Model ID</th><th>Provider</th><th>Intelligence</th><th>Freshness</th><th>Status</th><th>Priority</th><th>Actions</th></tr>
                     </thead>
                     <tbody id="modelsTableBody" class="divide-y divide-white/5">{}</tbody>
                 </table>
@@ -845,7 +845,7 @@ pub async fn render_models(state: &AppState) -> String {
     }}
 
     function setModelStatus(message) {{
-        document.getElementById('modelsTableBody').innerHTML = `<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">${{message}}</td></tr>`;
+        document.getElementById('modelsTableBody').innerHTML = `<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">${{message}}</td></tr>`;
         document.getElementById('pageInfo').innerText = '';
     }}
 
@@ -884,11 +884,17 @@ pub async fn render_models(state: &AppState) -> String {
 
         let html = '';
         if (slice.length === 0) {{
-            html = `<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>`;
+            html = `<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>`;
         }} else {{
             slice.forEach(m => {{
                 const u = m.upstream_model_id || '?';
                 const p = m.provider_id || '?';
+                const intel = m.intelligence || {{}};
+                const tags = (intel.task_tags || []).slice(0, 3).map(t => `<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/10">${{t}}</span>`).join('');
+                const modalities = (intel.modalities || []).map(t => `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/10">${{t}}</span>`).join('');
+                const context = intel.context_window ? `${{Number(intel.context_window).toLocaleString()}} ctx` : 'unknown ctx';
+                const freshness = m.freshness || intel.freshness || 'Unknown';
+                const freshnessScore = Math.round((m.freshness_score || intel.freshness_score || 0) * 100);
                 const enabled = m.enabled !== false;
                 const next_enabled = !enabled;
                 const button_label = enabled ? "Disable" : "Enable";
@@ -897,7 +903,7 @@ pub async fn render_models(state: &AppState) -> String {
                 const status_html = enabled 
                     ? `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Enabled</span>`
                     : `<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Disabled</span>`;
-                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}</td><td class="text-sm">${{p}}</td><td>${{status_html}}</td><td><input type="number" value="${{prio}}" class="w-16 bg-black/20 border border-white/10 rounded px-2 py-0.5 text-xs text-center" onchange="updateModelPriority('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}', this.value)"></td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
+                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}<div class="text-[10px] text-slate-500 mt-1">${{intel.family || 'general'}} · ${{context}}</div></td><td class="text-sm">${{p}}</td><td><div class="flex flex-wrap gap-1 max-w-xs">${{tags}}${{modalities}}</div></td><td class="text-xs"><span class="text-slate-300">${{freshness}}</span><div class="text-[10px] text-slate-500">${{freshnessScore}}%</div></td><td>${{status_html}}</td><td><input type="number" value="${{prio}}" class="w-16 bg-black/20 border border-white/10 rounded px-2 py-0.5 text-xs text-center" onchange="updateModelPriority('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}', this.value)"></td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
             }});
         }}
         document.getElementById('modelsTableBody').innerHTML = html;
@@ -921,10 +927,10 @@ pub async fn render_models(state: &AppState) -> String {
 
 fn render_initial_model_rows(models: &serde_json::Value) -> String {
     let Some(models) = models.get("models").and_then(|value| value.as_array()) else {
-        return r#"<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>"#.to_string();
+        return r#"<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>"#.to_string();
     };
     if models.is_empty() {
-        return r#"<tr><td colspan="5" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>"#.to_string();
+        return r#"<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">No models found</td></tr>"#.to_string();
     }
 
     models
@@ -951,14 +957,33 @@ fn render_initial_model_rows(models: &serde_json::Value) -> String {
                 .get("priority")
                 .and_then(|value| value.as_i64())
                 .unwrap_or(100);
+            let intelligence = model.get("intelligence").unwrap_or(&serde_json::Value::Null);
+            let family = escape_html(
+                intelligence
+                    .get("family")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("general"),
+            );
+            let context = intelligence
+                .get("context_window")
+                .and_then(|value| value.as_u64())
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let freshness = escape_html(
+                model
+                    .get("freshness")
+                    .or_else(|| intelligence.get("freshness"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("Unknown"),
+            );
             let status = if enabled {
                 r#"<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Enabled</span>"#
             } else {
                 r#"<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Disabled</span>"#
             };
             format!(
-                r#"<tr><td class="font-mono text-sm text-cyan-400">{}</td><td class="text-sm">{}</td><td>{}</td><td class="text-sm">{}</td><td class="text-xs text-slate-500">Loading...</td></tr>"#,
-                upstream, provider, status, priority
+                r#"<tr><td class="font-mono text-sm text-cyan-400">{}<div class="text-[10px] text-slate-500 mt-1">{} · {} ctx</div></td><td class="text-sm">{}</td><td class="text-xs text-slate-500">Loading...</td><td class="text-xs">{}</td><td>{}</td><td class="text-sm">{}</td><td class="text-xs text-slate-500">Loading...</td></tr>"#,
+                upstream, family, context, provider, freshness, status, priority
             )
         })
         .collect::<Vec<_>>()

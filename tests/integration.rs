@@ -57,7 +57,10 @@ async fn build_test_app() -> (axum::Router, AppState) {
             axum::routing::post(routes::chat_completions),
         )
         .route("/v1/embeddings", axum::routing::post(routes::embeddings))
-        .route("/admin/config", axum::routing::get(routes::admin_config))
+        .route(
+            "/admin/config",
+            axum::routing::get(routes::admin_config).put(routes::admin_config_save),
+        )
         .with_state(state.clone());
 
     (router, state)
@@ -2424,6 +2427,177 @@ async fn test_policy_quality_first_agentic_harness_prefers_tool_json_capable_rou
 
     assert_eq!(planned[0].provider_id, "groq");
     assert_eq!(planned[0].model_id, "hermes-agentic-tools");
+}
+
+#[tokio::test]
+async fn test_model_intelligence_filters_context_and_vision_requirements() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "small", "model", true, 100, true, true).await;
+    seed_policy_provider_model(&state, "vision", "model", true, 100, true, true).await;
+    sqlx::query("UPDATE models SET metadata_json = ?, supports_vision = ? WHERE provider_id = ?")
+        .bind(serde_json::json!({"context_window": 4096}).to_string())
+        .bind(false)
+        .bind("small")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE models SET metadata_json = ?, supports_vision = ? WHERE provider_id = ?")
+        .bind(serde_json::json!({"context_window": 128000, "supports_vision": true}).to_string())
+        .bind(true)
+        .bind("vision")
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let plan = vec![
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "small".into(),
+            model_id: "model".into(),
+            priority: 0,
+        },
+        tokenscavenger::router::selection::RouteAttempt {
+            provider_id: "vision".into(),
+            model_id: "model".into(),
+            priority: 1,
+        },
+    ];
+
+    let filtered = tokenscavenger::discovery::model_intelligence::filter_by_model_intelligence(
+        plan,
+        &state,
+        tokenscavenger::discovery::model_intelligence::ModelRequestRequirements {
+            requires_tools: false,
+            requires_json_mode: false,
+            requires_vision: true,
+            required_context_tokens: Some(10_000),
+        },
+    )
+    .await;
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].provider_id, "vision");
+}
+
+#[tokio::test]
+async fn test_smart_model_groups_are_seeded_without_overwriting_operator_groups() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO model_groups (name, target_json, enabled) VALUES ('fast:chat', '[\"operator-model\"]', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    tokenscavenger::discovery::model_intelligence::seed_smart_model_groups(&pool).await;
+
+    let fast = sqlx::query_as::<_, (String,)>(
+        "SELECT target_json FROM model_groups WHERE name = 'fast:chat'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let reasoning = sqlx::query_as::<_, (String,)>(
+        "SELECT target_json FROM model_groups WHERE name = 'reasoning:deep'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(fast.0, "[\"operator-model\"]");
+    assert!(reasoning.0.contains("grok-4.20-reasoning"));
+}
+
+#[tokio::test]
+async fn test_public_model_list_includes_intelligence_metadata() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    seed_policy_provider_model(&state, "google", "gemini-2.0-flash", true, 100, true, true).await;
+
+    let response = tokenscavenger::discovery::merge::build_model_list(&state).await;
+    let gemini = response
+        .data
+        .iter()
+        .find(|model| {
+            model.provider_id.as_deref() == Some("google") && model.id == "gemini-2.0-flash"
+        })
+        .expect("gemini model present");
+
+    assert!(gemini.context_window.is_some());
+    assert!(
+        gemini
+            .modalities
+            .as_ref()
+            .is_some_and(|modalities| modalities.contains(&"vision".to_string()))
+    );
+    assert!(gemini.freshness.is_some());
+}
+
+#[tokio::test]
+async fn test_admin_config_save_updates_model_intelligence_overrides() {
+    let (app, state) = build_test_app().await;
+    seed_policy_provider_model(&state, "mock", "plain", true, 100, true, true).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/config")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "models": [{
+                            "provider_id": "mock",
+                            "model_id": "plain",
+                            "supports_vision": true,
+                            "metadata": {
+                                "context_window": 64000,
+                                "task_tags": ["chat", "vision"]
+                            }
+                        }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let row = sqlx::query_as::<_, (bool, String)>(
+        "SELECT supports_vision, metadata_json FROM models WHERE provider_id = 'mock' AND upstream_model_id = 'plain'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(row.0);
+    assert!(row.1.contains("64000"));
 }
 
 async fn seed_policy_provider_model(

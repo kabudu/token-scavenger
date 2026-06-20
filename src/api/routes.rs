@@ -312,6 +312,24 @@ pub async fn admin_route_plan(
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(1024),
     };
+    let route_requirements = crate::discovery::model_intelligence::ModelRequestRequirements {
+        requires_tools: params
+            .get("tools")
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(false),
+        requires_json_mode: params
+            .get("json")
+            .or_else(|| params.get("json_mode"))
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(false),
+        requires_vision: params
+            .get("vision")
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(false),
+        required_context_tokens: Some(
+            u64::from(token_estimate.input_tokens) + u64::from(token_estimate.output_tokens),
+        ),
+    };
     let explanations = crate::router::selection::explain_policy_plan(
         raw_plan,
         &state,
@@ -349,6 +367,12 @@ pub async fn admin_route_plan(
             crate::providers::traits::EndpointKind::Embeddings => model_state.2,
             crate::providers::traits::EndpointKind::ModelList => true,
         };
+        let compatibility = crate::discovery::model_intelligence::model_compatibility(
+            &state,
+            &attempt,
+            route_requirements,
+        )
+        .await;
         let free_only = config
             .providers
             .iter()
@@ -358,6 +382,7 @@ pub async fn admin_route_plan(
         let paid_allowed = free_only || config.routing.allow_paid_fallback;
         let base_included = model_enabled
             && endpoint_supported
+            && compatibility.compatible
             && paid_allowed
             && health != "Unhealthy"
             && breaker != "Open"
@@ -369,11 +394,17 @@ pub async fn admin_route_plan(
             Some("filtered by paid fallback policy")
         } else if !endpoint_supported {
             Some("filtered by model endpoint capability")
+        } else if !compatibility.compatible {
+            Some("filtered by model intelligence compatibility")
         } else {
             Some("filtered by health, breaker, or model enablement")
         };
         let mut reasons = explanation.reasons;
+        reasons.extend(compatibility.reasons);
         if let Some(base_reason) = base_reason {
+            if base_reason == "filtered by model intelligence compatibility" {
+                reasons.retain(|reason| reason != "eligible");
+            }
             reasons.insert(0, base_reason.to_string());
         }
         let reason = reasons.join("; ");
@@ -398,6 +429,7 @@ pub async fn admin_route_plan(
             "health": health,
             "breaker_state": breaker,
             "model_enabled": model_enabled,
+            "model_intelligence_compatible": compatibility.compatible,
             "free_only": free_only,
             "included": included,
             "reason": reason,
@@ -415,6 +447,12 @@ pub async fn admin_route_plan(
         "token_estimate": {
             "input_tokens": token_estimate.input_tokens,
             "output_tokens": token_estimate.output_tokens
+        },
+        "requirements": {
+            "tools": route_requirements.requires_tools,
+            "json_mode": route_requirements.requires_json_mode,
+            "vision": route_requirements.requires_vision,
+            "context_tokens": route_requirements.required_context_tokens
         },
         "attempts": attempts
     })))
@@ -730,8 +768,26 @@ pub async fn admin_config_save(
             ) {
                 let enabled = model_update.get("enabled").and_then(|v| v.as_bool());
                 let priority = model_update.get("priority").and_then(|v| v.as_i64());
+                let supports_tools = model_update.get("supports_tools").and_then(|v| v.as_bool());
+                let supports_json_mode = model_update
+                    .get("supports_json_mode")
+                    .and_then(|v| v.as_bool());
+                let supports_vision = model_update
+                    .get("supports_vision")
+                    .and_then(|v| v.as_bool());
+                let metadata_json = model_update.get("metadata").or_else(|| {
+                    model_update
+                        .get("metadata_json")
+                        .filter(|value| value.is_object())
+                });
 
-                if enabled.is_some() || priority.is_some() {
+                if enabled.is_some()
+                    || priority.is_some()
+                    || supports_tools.is_some()
+                    || supports_json_mode.is_some()
+                    || supports_vision.is_some()
+                    || metadata_json.is_some()
+                {
                     let mut query = String::from(
                         "INSERT INTO models (provider_id, upstream_model_id, public_model_id, updated_at",
                     );
@@ -750,6 +806,26 @@ pub async fn admin_config_save(
                         values.push_str(", ?");
                         update.push_str(", priority = excluded.priority");
                     }
+                    if supports_tools.is_some() {
+                        query.push_str(", supports_tools");
+                        values.push_str(", ?");
+                        update.push_str(", supports_tools = excluded.supports_tools");
+                    }
+                    if supports_json_mode.is_some() {
+                        query.push_str(", supports_json_mode");
+                        values.push_str(", ?");
+                        update.push_str(", supports_json_mode = excluded.supports_json_mode");
+                    }
+                    if supports_vision.is_some() {
+                        query.push_str(", supports_vision");
+                        values.push_str(", ?");
+                        update.push_str(", supports_vision = excluded.supports_vision");
+                    }
+                    if metadata_json.is_some() {
+                        query.push_str(", metadata_json");
+                        values.push_str(", ?");
+                        update.push_str(", metadata_json = excluded.metadata_json");
+                    }
 
                     let full_query = format!("{} {}) {}", query, values, update);
                     let mut sql = sqlx::query(&full_query)
@@ -762,6 +838,18 @@ pub async fn admin_config_save(
                     }
                     if let Some(p) = priority {
                         sql = sql.bind(p);
+                    }
+                    if let Some(supports_tools) = supports_tools {
+                        sql = sql.bind(supports_tools);
+                    }
+                    if let Some(supports_json_mode) = supports_json_mode {
+                        sql = sql.bind(supports_json_mode);
+                    }
+                    if let Some(supports_vision) = supports_vision {
+                        sql = sql.bind(supports_vision);
+                    }
+                    if let Some(metadata_json) = metadata_json {
+                        sql = sql.bind(metadata_json.to_string());
                     }
 
                     if let Err(e) = sql.execute(&state.db).await {

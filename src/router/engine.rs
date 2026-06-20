@@ -3,6 +3,9 @@ use crate::api::openai::chat::*;
 use crate::api::openai::embeddings::*;
 use crate::app::state::AppState;
 use crate::config::schema::Config;
+use crate::discovery::model_intelligence::{
+    ModelRequestRequirements, filter_by_model_intelligence,
+};
 use crate::providers::registry::ProviderRegistry;
 use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::fallback::{FallbackDecision, should_fallback};
@@ -102,6 +105,8 @@ pub async fn route_chat_request(
         EndpointKind::ChatCompletions,
     )
     .await;
+    plan = filter_by_model_intelligence(plan, &state, ModelRequestRequirements::for_chat(&request))
+        .await;
     if request.tools.is_some() {
         plan = prioritize_for_tool_use(plan, &state).await;
     }
