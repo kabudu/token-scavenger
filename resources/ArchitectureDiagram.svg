@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" viewBox="0 0 1280 720">
+  <title id="title">TokenScavenger architecture</title>
+  <desc id="desc">An OpenAI SDK client sends requests to TokenScavenger, which routes through policy, health, model discovery, metrics, and adapter layers to local, free-tier, and paid fallback providers.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="0.52" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="fox" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fb923c"/>
+      <stop offset="0.55" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="emerald" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e293b" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#0f172a" stop-opacity="0.92"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-30%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.45"/>
+    </filter>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb923c"/>
+    </marker>
+    <marker id="arrowEmerald" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+    </marker>
+    <style>
+      .label { font-family: Arial, Helvetica, sans-serif; fill: #f8fafc; }
+      .muted { fill: #94a3b8; }
+      .small { font-size: 22px; }
+      .tiny { font-size: 17px; }
+      .title { font-size: 32px; font-weight: 800; letter-spacing: .02em; }
+      .section { font-size: 24px; font-weight: 750; }
+      .pill { font-size: 15px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .card { fill: url(#panel); stroke: #334155; stroke-width: 1.5; }
+      .orangeStroke { stroke: #fb923c; }
+      .emeraldStroke { stroke: #34d399; }
+      .dash { stroke-dasharray: 9 11; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="720" rx="36" fill="url(#bg)"/>
+  <circle cx="1090" cy="120" r="210" fill="#f97316" opacity="0.10"/>
+  <circle cx="230" cy="620" r="230" fill="#10b981" opacity="0.08"/>
+  <path d="M80 124 C260 40 412 88 590 122 C765 155 907 77 1200 98" fill="none" stroke="#fb923c" stroke-width="2" opacity="0.18"/>
+  <path d="M70 617 C300 560 437 660 655 604 C832 558 1006 609 1212 542" fill="none" stroke="#34d399" stroke-width="2" opacity="0.16"/>
+
+  <g transform="translate(70 58)">
+    <text class="label title" x="0" y="0">Token<tspan fill="#f97316">Scavenger</tspan> Architecture</text>
+    <text class="label muted small" x="0" y="34">One OpenAI-compatible gateway for local-first routing, fallback, health, metrics, and usage.</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect class="card" x="70" y="210" width="215" height="155" rx="26"/>
+    <text class="label section" x="100" y="260">Your App</text>
+    <text class="label muted small" x="100" y="296">OpenAI SDK</text>
+    <rect x="100" y="318" width="140" height="34" rx="17" fill="#0f172a" stroke="#334155"/>
+    <text class="label tiny" x="118" y="341">base_url swap</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect x="450" y="160" width="380" height="300" rx="34" fill="#111827" stroke="#fb923c" stroke-width="2.2"/>
+    <circle cx="505" cy="216" r="34" fill="url(#fox)" filter="url(#glow)"/>
+    <path d="M486 208 L499 187 L512 208 L532 202 L521 228 L505 238 L489 228 Z" fill="#fff7ed" opacity=".92"/>
+    <path d="M498 217 L505 229 L512 217 Z" fill="#111827"/>
+    <text class="label title" x="552" y="220">TokenScavenger</text>
+    <text class="label muted small" x="552" y="252">single Rust binary :8000</text>
+
+    <g transform="translate(486 292)">
+      <rect x="0" y="0" width="146" height="42" rx="21" fill="#1e293b" stroke="#475569"/>
+      <text class="label tiny" x="21" y="27">Policy engine</text>
+      <rect x="166" y="0" width="146" height="42" rx="21" fill="#1e293b" stroke="#475569"/>
+      <text class="label tiny" x="188" y="27">Health checks</text>
+      <rect x="0" y="58" width="146" height="42" rx="21" fill="#1e293b" stroke="#475569"/>
+      <text class="label tiny" x="24" y="85">Model catalog</text>
+      <rect x="166" y="58" width="146" height="42" rx="21" fill="#1e293b" stroke="#475569"/>
+      <text class="label tiny" x="188" y="85">Fallback plan</text>
+    </g>
+    <rect x="518" y="414" width="244" height="34" rx="17" fill="#064e3b" stroke="#10b981" opacity=".9"/>
+    <text class="label tiny" x="552" y="436">SQLite + Prometheus + UI</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect class="card" x="980" y="102" width="230" height="142" rx="26"/>
+    <rect x="1008" y="126" width="95" height="28" rx="14" fill="#064e3b" stroke="#10b981"/>
+    <text class="label pill" x="1024" y="146">Local</text>
+    <text class="label section" x="1008" y="186">Ollama</text>
+    <text class="label muted tiny" x="1008" y="215">llama.cpp · LM Studio</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect class="card" x="980" y="289" width="230" height="142" rx="26"/>
+    <rect x="1008" y="313" width="120" height="28" rx="14" fill="#1e293b" stroke="#34d399"/>
+    <text class="label pill" x="1024" y="333">Free tier</text>
+    <text class="label section" x="1008" y="373">Groq · Gemini</text>
+    <text class="label muted tiny" x="1008" y="402">Cloudflare · GitHub Models</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect class="card" x="980" y="476" width="230" height="142" rx="26"/>
+    <rect x="1008" y="500" width="138" height="28" rx="14" fill="#431407" stroke="#fb923c"/>
+    <text class="label pill" x="1024" y="520">Allowed paid</text>
+    <text class="label section" x="1008" y="560">DeepSeek · xAI</text>
+    <text class="label muted tiny" x="1008" y="589">only when policy permits</text>
+  </g>
+
+  <path d="M285 286 C344 286 382 286 432 286" fill="none" stroke="#fb923c" stroke-width="5" marker-end="url(#arrowOrange)" filter="url(#glow)"/>
+  <path d="M450 348 C386 348 346 348 294 348" fill="none" stroke="#34d399" stroke-width="3.5" marker-end="url(#arrowEmerald)"/>
+
+  <path d="M830 246 C890 208 913 176 966 168" fill="none" class="emeraldStroke" stroke-width="4" marker-end="url(#arrowEmerald)"/>
+  <path d="M830 318 C888 321 918 342 966 356" fill="none" class="emeraldStroke" stroke-width="4" marker-end="url(#arrowEmerald)"/>
+  <path d="M830 392 C890 440 922 506 966 542" fill="none" class="orangeStroke dash" stroke-width="4" marker-end="url(#arrowOrange)"/>
+
+  <g transform="translate(78 536)">
+    <rect x="0" y="0" width="310" height="92" rx="24" fill="#020617" opacity=".72" stroke="#334155"/>
+    <text class="label tiny" x="26" y="34">Route decisions are observable:</text>
+    <text class="label muted tiny" x="26" y="62">health · breakers · budgets · metrics · logs</text>
+  </g>
+
+  <g transform="translate(465 514)">
+    <rect x="0" y="0" width="360" height="92" rx="24" fill="#020617" opacity=".72" stroke="#334155"/>
+    <text class="label tiny" x="26" y="34">Provider differences stop at adapters.</text>
+    <text class="label muted tiny" x="26" y="62">Handlers stay OpenAI-compatible.</text>
+  </g>
+</svg>
