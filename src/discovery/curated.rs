@@ -215,11 +215,21 @@ pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
             .endpoint_compatibility
             .iter()
             .any(|kind| kind == "embeddings");
+        let intelligence_metadata = crate::discovery::model_intelligence::intelligence_metadata(
+            &model.provider_id,
+            &model.upstream_model_id,
+            model.context_window,
+            supports_embeddings,
+        );
+        let supports_vision = intelligence_metadata
+            .get("supports_vision")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         let _ = sqlx::query(
             "INSERT OR IGNORE INTO models \
              (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, \
-              metadata_json, discovered_at, updated_at) \
-             VALUES (?, ?, ?, 1, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+              supports_vision, metadata_json, discovered_at, updated_at) \
+             VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
         )
         .bind(&model.provider_id)
         .bind(&model.upstream_model_id)
@@ -232,7 +242,8 @@ pub async fn seed_curated_models(db: &sqlx::SqlitePool) {
         .bind(model.free_tier)
         .bind(supports_chat)
         .bind(supports_embeddings)
-        .bind(serde_json::json!({"context_window": model.context_window}).to_string())
+        .bind(supports_vision)
+        .bind(intelligence_metadata.to_string())
         .execute(db)
         .await;
     }

@@ -9,9 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a Model Intelligence Layer with normalized model families, task tags,
+  modalities, context-window metadata, reasoning/vision/tool/JSON capability
+  signals, and catalog freshness scoring.
+- Added built-in smart model groups for `fast:chat`, `cheap:code`,
+  `reasoning:deep`, and `vision:balanced`.
+
 ### Changed
 
+- `/v1/models`, `/admin/models`, the Models UI, and route-plan diagnostics now
+  expose model intelligence metadata for easier provider/model comparison.
+
 ### Fixed
+
+- Chat and streaming route planning now reroutes before upstream calls when a
+  model cannot satisfy requested tools, JSON mode, vision input, or known
+  context-window requirements.
 
 ## [0.3.1] - 2026-06-20
 

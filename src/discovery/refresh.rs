@@ -72,6 +72,13 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
                     .endpoint_compatibility
                     .iter()
                     .any(|kind| kind == "embeddings");
+                let mut metadata = crate::discovery::model_intelligence::intelligence_metadata(
+                    &m.provider_id,
+                    &m.upstream_model_id,
+                    m.context_window,
+                    supports_embeddings,
+                );
+                metadata["source"] = serde_json::json!("discovered");
                 match sqlx::query(
                     "INSERT OR REPLACE INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, metadata_json, discovered_at, updated_at)
                      VALUES (?, ?, ?, 1, ?, ?, ?, ?, datetime('now'), datetime('now'))"
@@ -82,7 +89,7 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
                 .bind(m.free_tier)
                 .bind(supports_chat)
                 .bind(supports_embeddings)
-                .bind(serde_json::json!({"context_window": m.context_window}).to_string())
+                .bind(metadata.to_string())
                 .execute(&state.db)
                 .await
                 {

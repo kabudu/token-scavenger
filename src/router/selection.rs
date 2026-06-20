@@ -382,9 +382,25 @@ async fn quality_and_context_score(
     attempt: &RouteAttempt,
     endpoint_kind: EndpointKind,
 ) -> (f64, f64) {
-    let caps = sqlx::query_as::<_, (bool, bool, bool, i64, Option<String>)>(
-        "SELECT supports_tools, supports_json_mode, supports_vision, priority, metadata_json
-         FROM models WHERE provider_id = ? AND upstream_model_id = ?",
+    let caps = sqlx::query_as::<
+        _,
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT m.supports_tools, m.supports_json_mode, m.supports_vision, m.supports_embeddings,
+                m.priority, m.metadata_json, p.discovery_state, m.discovered_at, m.updated_at
+         FROM models m
+         LEFT JOIN providers p ON p.provider_id = m.provider_id
+         WHERE m.provider_id = ? AND m.upstream_model_id = ?",
     )
     .bind(&attempt.provider_id)
     .bind(&attempt.model_id)
@@ -392,29 +408,55 @@ async fn quality_and_context_score(
     .await
     .ok()
     .flatten()
-    .unwrap_or((true, true, false, 100, None));
+    .unwrap_or((true, true, false, false, 100, None, None, None, None));
+
+    let intelligence = crate::discovery::model_intelligence::infer_model_intelligence(
+        &attempt.provider_id,
+        &attempt.model_id,
+        caps.5.as_deref(),
+        caps.3,
+        caps.6.as_deref(),
+        caps.7.as_deref(),
+        caps.8.as_deref(),
+    );
 
     let provider_quality =
         (tool_reliability_rank(&attempt.provider_id) as f64 / 100.0).clamp(0.0, 1.0);
     let capability_score = match endpoint_kind {
         EndpointKind::ChatCompletions => {
-            (if caps.0 { 0.35 } else { 0.0 })
-                + (if caps.1 { 0.25 } else { 0.0 })
-                + (if caps.2 { 0.10 } else { 0.0 })
+            (if caps.0 { 0.30 } else { 0.0 })
+                + (if caps.1 { 0.20 } else { 0.0 })
+                + (if caps.2 || intelligence.supports_vision {
+                    0.10
+                } else {
+                    0.0
+                })
+                + (if intelligence.supports_reasoning {
+                    0.10
+                } else {
+                    0.0
+                })
                 + 0.30
         }
-        EndpointKind::Embeddings => 0.65,
+        EndpointKind::Embeddings => {
+            if caps.3 || intelligence.supports_embeddings {
+                0.75
+            } else {
+                0.25
+            }
+        }
         EndpointKind::ModelList => 0.50,
     };
-    let model_priority_score = 1.0 / (1.0 + caps.3.max(0) as f64 / 100.0);
+    let model_priority_score = 1.0 / (1.0 + caps.4.max(0) as f64 / 100.0);
 
-    let context_score = context_score(caps.4.as_deref());
+    let context_score = context_score(caps.5.as_deref());
 
     (
         (provider_quality * 0.40
-            + capability_score * 0.30
+            + capability_score * 0.25
             + model_priority_score * 0.15
-            + context_score * 0.15)
+            + context_score * 0.10
+            + intelligence.freshness_score * 0.10)
             .clamp(0.0, 1.0),
         context_score,
     )

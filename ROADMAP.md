@@ -36,17 +36,19 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 ## 3. Model Intelligence Layer
 
+**Status:** Implemented in v0.3.2.
+
 **Current baseline:** TokenScavenger already merges curated and discovered model catalogs, supports model groups, exposes model enablement and priority controls, and documents provider capabilities. Model group editing exists in the admin UI.
 
 **Why it matters:** Operators should not have to memorize every upstream model name or manually guess equivalent fallbacks. TokenScavenger can become the map between task intent and concrete provider models.
 
 **What good looks like:**
 
-- Normalized model families, task tags, context windows, modality flags, JSON/tool support, reasoning support, and pricing metadata.
-- Higher-level smart model groups such as `fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced` built on top of the existing model group system.
-- Compatibility checks that reject or reroute when a provider cannot satisfy tools, JSON mode, vision, embeddings, or context length.
-- Automatic catalog freshness scoring so stale discovery data is visible.
-- Admin UI flows for comparing models across providers and editing advanced model group strategies without hand-writing JSON.
+- [x] Normalized model families, task tags, context windows, modality flags, JSON/tool support, reasoning support, and pricing metadata.
+- [x] Higher-level smart model groups such as `fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced` built on top of the existing model group system.
+- [x] Compatibility checks that reject or reroute when a provider cannot satisfy tools, JSON mode, vision, embeddings, or context length.
+- [x] Automatic catalog freshness scoring so stale discovery data is visible.
+- [x] Admin UI flows for comparing models across providers and editing advanced model group strategies without hand-writing JSON.
 
 ## 4. Operator-Grade Observability And Incident Workflow
 

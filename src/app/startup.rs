@@ -82,6 +82,11 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
     crate::discovery::curated::seed_curated_models(&state.db).await;
     info!("Curated models seeded");
 
+    // 5d. Seed built-in smart model groups. Operator-edited groups win because
+    //     this uses INSERT OR IGNORE rather than overwriting existing rows.
+    crate::discovery::model_intelligence::seed_smart_model_groups(&state.db).await;
+    info!("Smart model groups seeded");
+
     // 6. Initialize the provider registry from effective config
     state.provider_registry.init_from_config(&state).await;
     info!("Provider registry initialized");

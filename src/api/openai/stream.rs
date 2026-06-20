@@ -3,6 +3,9 @@ use crate::api::openai::chat::NormalizedChatRequest;
 use crate::api::openai::chat::StreamDelta;
 use crate::api::openai::chat::UsageResponse;
 use crate::app::state::AppState;
+use crate::discovery::model_intelligence::{
+    ModelRequestRequirements, filter_by_model_intelligence,
+};
 use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
@@ -224,6 +227,8 @@ pub async fn create_chat_stream(
         EndpointKind::ChatCompletions,
     )
     .await;
+    plan = filter_by_model_intelligence(plan, &state, ModelRequestRequirements::for_chat(&request))
+        .await;
     if request.tools.is_some() {
         plan = prioritize_for_tool_use(plan, &state).await;
     }

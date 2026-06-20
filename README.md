@@ -30,6 +30,8 @@
 - **Free-tier-first routing** with configurable fallback chains
 - **Tool-aware routing** for agentic clients, preferring stronger tool-call
   providers automatically when OpenAI `tools` are present
+- **Model intelligence layer** with smart groups, task tags, modality flags,
+  context-window awareness, and catalog freshness scoring
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
 - **18 built-in providers** with automatic model discovery, including local OpenAI-compatible upstreams
 - **Circuit breakers, retries & health monitoring**
@@ -271,6 +273,20 @@ budgets can cap estimated spend per request, per day, per provider/day, or per
 model-group/day. Route-plan diagnostics show score components, estimated cost,
 latency, failure rate, and budget skip reasons.
 
+## Model Intelligence
+
+TokenScavenger normalizes model families, task tags, modality flags, context
+windows, JSON/tool support, reasoning hints, embeddings support, and catalog
+freshness into the merged model catalog. Built-in smart model groups such as
+`fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced` sit on top
+of the normal model-group system, so operators can edit or override them in the
+UI.
+
+Chat and streaming route planning uses this metadata to reroute before calling
+an upstream when a model cannot satisfy requested tools, JSON mode, vision input,
+or known context-window requirements. `/admin/route-plan` exposes the same
+compatibility decisions for dry-run diagnostics.
+
 ## Provider Support Matrix
 
 See [documentation/provider-matrix.md](documentation/provider-matrix.md) for details on each provider's API format, free tier limits, and known quirks.
@@ -289,8 +305,8 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 
 - Dashboard — system status, uptime, provider count
 - Providers — enable/disable, inspect health and breaker state
-- Models — view discovered and curated models
-- Routing — view fallback order and model group configuration
+- Models — compare discovered and curated models with intelligence metadata
+- Routing — view fallback order and smart/custom model group configuration
 - Usage — token counts and estimated costs
 - Health — per-provider health states
 - Logs — real-time log stream via SSE
