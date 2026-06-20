@@ -11,7 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced the README architecture overview with an SVG diagram using the
+  TokenScavenger logo color theme.
+
 ### Fixed
+
+- Fixed route planning so persisted per-model endpoint capabilities are enforced
+  for chat, streaming, and embeddings routes.
+- Fixed local provider embedding support to use bounded background capability
+  probing with explicit enabled/disabled overrides.
+- Fixed embeddings fallback diagnostics so non-success upstream responses
+  preserve provider error bodies instead of masking them as JSON parse failures.
+- Fixed Prometheus build metadata to report the running package version instead
+  of hard-coded v0.1.0 labels.
 
 ## [0.3.0] - 2026-06-19
 
@@ -19,17 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added first-class local OpenAI-compatible provider adapters for generic local
   servers, Ollama, llama.cpp server, and LM Studio, including chat, streaming,
-  probed/configurable embeddings, model discovery, routing, health, fallback,
-  usage, and metrics integration through the normal provider path.
+  model discovery, routing, health, fallback, usage, and metrics integration
+  through the normal provider path.
 
 ### Changed
 
 ### Fixed
-
-- Fixed route planning so persisted per-model endpoint capabilities are enforced
-  for chat, streaming, and embeddings routes.
-- Fixed Prometheus build metadata to report the running package version instead
-  of hard-coded v0.1.0 labels.
 
 ## [0.2.0] - 2026-05-31
 
