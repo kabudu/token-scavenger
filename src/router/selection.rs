@@ -802,11 +802,20 @@ pub async fn filter_by_model_enabled(
     plan: Vec<RouteAttempt>,
     state: &AppState,
 ) -> Vec<RouteAttempt> {
+    filter_by_model_enabled_for_endpoint(plan, state, EndpointKind::ChatCompletions).await
+}
+
+/// Filter an attempt plan by persisted model enablement and endpoint compatibility.
+pub async fn filter_by_model_enabled_for_endpoint(
+    plan: Vec<RouteAttempt>,
+    state: &AppState,
+    endpoint_kind: EndpointKind,
+) -> Vec<RouteAttempt> {
     let mut filtered = Vec::with_capacity(plan.len());
 
     for attempt in plan {
-        let enabled = sqlx::query_as::<_, (bool,)>(
-            "SELECT enabled FROM models WHERE provider_id = ? AND upstream_model_id = ?",
+        let model_state = sqlx::query_as::<_, (bool, bool, bool)>(
+            "SELECT enabled, supports_chat, supports_embeddings FROM models WHERE provider_id = ? AND upstream_model_id = ?",
         )
         .bind(&attempt.provider_id)
         .bind(&attempt.model_id)
@@ -814,15 +823,30 @@ pub async fn filter_by_model_enabled(
         .await
         .ok()
         .flatten()
-        .map(|row| row.0);
+        .map(|row| {
+            let endpoint_supported = match endpoint_kind {
+                EndpointKind::ChatCompletions => row.1,
+                EndpointKind::Embeddings => row.2,
+                EndpointKind::ModelList => true,
+            };
+            (row.0, endpoint_supported)
+        });
 
-        match enabled {
-            Some(true) => filtered.push(attempt),
-            Some(false) => {
+        match model_state {
+            Some((true, true)) => filtered.push(attempt),
+            Some((false, _)) => {
                 tracing::info!(
                     provider = %attempt.provider_id,
                     model = %attempt.model_id,
                     "Filtered out: model disabled"
+                );
+            }
+            Some((true, false)) => {
+                tracing::info!(
+                    provider = %attempt.provider_id,
+                    model = %attempt.model_id,
+                    endpoint = ?endpoint_kind,
+                    "Filtered out: model does not support requested endpoint"
                 );
             }
             None => {

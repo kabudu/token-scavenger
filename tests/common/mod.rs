@@ -17,6 +17,9 @@ use std::sync::{Arc, Mutex};
 pub struct MockProviderState {
     pub delay_ms: u64,
     pub status_code: u16,
+    pub embeddings_status_code: u16,
+    pub embeddings_error_body: Option<String>,
+    pub model_ids: Vec<String>,
     pub fail_count: Arc<Mutex<u32>>,
     pub succeed_after: u32,
     pub usage_tokens: (u32, u32),
@@ -107,12 +110,19 @@ async fn chat_handler(
     }
 }
 
-async fn models_handler(State(_state): State<Arc<MockProviderState>>) -> impl IntoResponse {
+async fn models_handler(State(state): State<Arc<MockProviderState>>) -> impl IntoResponse {
+    let model_ids = if state.model_ids.is_empty() {
+        vec!["test-model".to_string()]
+    } else {
+        state.model_ids.clone()
+    };
+    let data = model_ids
+        .into_iter()
+        .map(|id| serde_json::json!({"id": id, "object": "model", "created": 0, "owned_by": "test-org"}))
+        .collect::<Vec<_>>();
     Json(serde_json::json!({
         "object": "list",
-        "data": [
-            {"id": "test-model", "object": "model", "created": 0, "owned_by": "test-org"}
-        ]
+        "data": data
     }))
 }
 
@@ -121,6 +131,24 @@ async fn embeddings_handler(
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     tokio::time::sleep(std::time::Duration::from_millis(state.delay_ms)).await;
+
+    let status_code = if state.embeddings_status_code == 0 {
+        StatusCode::OK
+    } else {
+        StatusCode::from_u16(state.embeddings_status_code)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+    };
+    if !status_code.is_success() {
+        let message = state
+            .embeddings_error_body
+            .clone()
+            .unwrap_or_else(|| "mock embeddings failure".into());
+        return (
+            status_code,
+            Json(serde_json::json!({"error": {"message": message}})),
+        )
+            .into_response();
+    }
 
     let model = body
         .get("model")

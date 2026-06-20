@@ -15,10 +15,10 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 
 | Provider | API Format | Chat | Streaming | Tools | Embeddings | Vision | Free Tier |
 |----------|-----------|------|-----------|-------|------------|--------|-----------|
-| Local OpenAI-Compatible | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
-| Ollama | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
-| llama.cpp Server | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
-| LM Studio | OpenAI-compat | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ |
+| Local OpenAI-Compatible | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Ollama | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| llama.cpp Server | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| LM Studio | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 | Groq | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Google Gemini | Native | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OpenRouter | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ (:free suffix) |
@@ -43,11 +43,11 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Base URL** | `http://127.0.0.1:1234/v1` by default; override `base_url` for your server |
 | **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
 | **Chat endpoint** | `POST /chat/completions` |
-| **Embeddings endpoint** | `POST /embeddings` |
+| **Embeddings endpoint** | `POST /embeddings`, advertised per discovered model after `embedding_support` probing or operator override |
 | **Models endpoint** | `GET /models` |
 | **Format** | OpenAI-compatible |
 | **Free models** | Operator-local models |
-| **Quirks** | ⚠️ Capabilities depend on the local server and loaded model. TokenScavenger handles routing, health, fallback, metrics, and normalization, but does not serve models itself. |
+| **Quirks** | ⚠️ Capabilities depend on the local server and loaded model. TokenScavenger handles routing, health, fallback, metrics, and normalization, but does not serve models itself. Local embeddings default to probing; set `embedding_support = "enabled"` or `"disabled"` to override. |
 | **Routing** | Use provider ID `local`, or set `[routing].objective = "local_only"` to filter to local upstreams. |
 
 ### Ollama
@@ -57,11 +57,11 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Base URL** | `http://127.0.0.1:11434/v1` |
 | **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
 | **Chat endpoint** | `POST /chat/completions` |
-| **Embeddings endpoint** | `POST /embeddings` |
+| **Embeddings endpoint** | `POST /embeddings`, advertised only after probing or override |
 | **Models endpoint** | `GET /models` |
 | **Format** | OpenAI-compatible |
 | **Free models** | Locally pulled Ollama models such as `llama3.2` or `qwen2.5-coder:7b` |
-| **Quirks** | ⚠️ Model availability and tool/JSON/vision behavior depend on locally pulled models and Ollama's compatibility layer. |
+| **Quirks** | ⚠️ Model availability and tool/JSON/vision/embedding behavior depend on locally pulled models and Ollama's compatibility layer. |
 | **Docs** | https://github.com/ollama/ollama/blob/main/docs/openai.md |
 
 ### llama.cpp Server
@@ -71,7 +71,7 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Base URL** | `http://127.0.0.1:8080/v1` |
 | **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
 | **Chat endpoint** | `POST /chat/completions` |
-| **Embeddings endpoint** | `POST /embeddings` |
+| **Embeddings endpoint** | `POST /embeddings`, advertised only after probing or override |
 | **Models endpoint** | `GET /models` |
 | **Format** | OpenAI-compatible |
 | **Free models** | The model loaded by the local llama.cpp server |
@@ -85,7 +85,7 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Base URL** | `http://127.0.0.1:1234/v1` |
 | **Auth** | Optional `Authorization: Bearer <key>` when `api_key` is configured |
 | **Chat endpoint** | `POST /chat/completions` |
-| **Embeddings endpoint** | `POST /embeddings` |
+| **Embeddings endpoint** | `POST /embeddings`, advertised only after probing or override |
 | **Models endpoint** | `GET /models` |
 | **Format** | OpenAI-compatible |
 | **Free models** | The model selected in LM Studio's local server |

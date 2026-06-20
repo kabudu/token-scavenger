@@ -341,6 +341,7 @@ fn add_provider(config: &mut Config) -> Result<(), Box<dyn std::error::Error>> {
         api_key: Some(api_key),
         free_only,
         discover_models: true,
+        embedding_support: Default::default(),
     });
 
     println!("  ✓ Provider added");

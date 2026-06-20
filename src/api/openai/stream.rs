@@ -7,9 +7,9 @@ use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
     TokenEstimate, apply_policy_engine, assign_attempt_priorities, build_attempt_plan_for_target,
-    filter_by_health, filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
-    record_context_failure_hint, record_rate_limit_hint, record_stream_silence_hint,
-    should_skip_for_context_hint, should_skip_for_rate_limit_hint,
+    filter_by_health, filter_by_model_enabled_for_endpoint, filter_by_paid_policy,
+    prioritize_for_tool_use, record_context_failure_hint, record_rate_limit_hint,
+    record_stream_silence_hint, should_skip_for_context_hint, should_skip_for_rate_limit_hint,
     should_skip_for_stream_silence_hint,
 };
 use axum::response::sse::Event;
@@ -218,9 +218,10 @@ pub async fn create_chat_stream(
         )));
     }
 
-    let mut plan = filter_by_model_enabled(
+    let mut plan = filter_by_model_enabled_for_endpoint(
         filter_by_paid_policy(filter_by_health(plan, &state), &state),
         &state,
+        EndpointKind::ChatCompletions,
     )
     .await;
     if request.tools.is_some() {

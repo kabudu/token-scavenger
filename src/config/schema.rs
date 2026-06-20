@@ -210,6 +210,21 @@ pub struct ProviderConfig {
     pub free_only: bool,
     #[serde(default = "default_true")]
     pub discover_models: bool,
+    #[serde(default)]
+    pub embedding_support: ProviderEmbeddingSupport,
+}
+
+/// How OpenAI-compatible local adapters should advertise embeddings support.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderEmbeddingSupport {
+    /// Probe `/embeddings` during discovery before marking a local model as embedding-capable.
+    #[default]
+    Auto,
+    /// Mark discovered models as embedding-capable without probing.
+    Enabled,
+    /// Do not advertise embeddings support for discovered local models.
+    Disabled,
 }
 
 // Default values

@@ -380,23 +380,21 @@ pub async fn openai_embeddings(
     let latency_ms = start.elapsed().as_millis() as i64;
     let status = resp.status();
     let rate_limits = parse_rate_limit_headers(resp.headers());
+
+    if !status.is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        let msg = extract_error_message(&body_text);
+        return Err(classify_error_with_rate_limits(
+            status.as_u16(),
+            &msg,
+            &rate_limits,
+        ));
+    }
+
     let response_body: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| ProviderError::MalformedResponse(e.to_string()))?;
-
-    if !status.is_success() {
-        let msg = response_body
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown error");
-        return Err(classify_error_with_rate_limits(
-            status.as_u16(),
-            msg,
-            &rate_limits,
-        ));
-    }
 
     let model = response_body
         .get("model")
@@ -472,6 +470,25 @@ pub async fn openai_embeddings(
         usage,
         latency_ms,
     })
+}
+
+pub async fn probe_openai_embeddings(
+    ctx: &ProviderContext,
+    model: &str,
+    provider_id: &str,
+) -> Result<(), ProviderError> {
+    openai_embeddings(
+        ctx,
+        NormalizedEmbeddingsRequest {
+            model: model.to_string(),
+            input: vec!["tokenscavenger embedding capability probe".into()],
+            encoding_format: None,
+            user: None,
+        },
+        provider_id,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Parse a single SSE data line and extract the JSON payload.
@@ -731,6 +748,22 @@ pub async fn openai_stream_completions(
 /// Classify HTTP status codes into provider errors.
 pub fn classify_error(status: u16, message: &str) -> ProviderError {
     classify_error_with_rate_limits(status, message, &Default::default())
+}
+
+fn extract_error_message(body_text: &str) -> String {
+    if body_text.trim().is_empty() {
+        return "unknown error".into();
+    }
+    serde_json::from_str::<serde_json::Value>(body_text)
+        .ok()
+        .and_then(|body| {
+            body.get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(|message| message.as_str())
+                .or_else(|| body.get("message").and_then(|message| message.as_str()))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| body_text.to_string())
 }
 
 /// Classify HTTP status codes into provider errors with optional rate-limit hints.

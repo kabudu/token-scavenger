@@ -154,6 +154,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
             api_key: Some(api_key),
             free_only,
             discover_models: true,
+            embedding_support: Default::default(),
         });
     }
 

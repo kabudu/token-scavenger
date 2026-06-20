@@ -178,6 +178,7 @@ async fn test_admin_config_redacts_provider_secrets() {
             api_key: Some("gsk_super_secret_key".into()),
             free_only: true,
             discover_models: true,
+            embedding_support: Default::default(),
         }],
         ..Default::default()
     };
@@ -393,6 +394,7 @@ async fn test_admin_config_save_preserves_redacted_provider_api_key() {
             api_key: Some("gsk_super_secret_key".into()),
             free_only: true,
             discover_models: true,
+            embedding_support: Default::default(),
         }],
         ..Default::default()
     };
@@ -820,14 +822,15 @@ async fn test_route_plan_endpoint_explains_attempts() {
         .await
         .unwrap();
     let mut config = Config::default();
-    config.routing.provider_order = vec!["groq".into()];
+    config.routing.provider_order = vec!["local".into()];
     config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
-        id: "groq".into(),
+        id: "local".into(),
         enabled: true,
         base_url: None,
         api_key: None,
         free_only: true,
         discover_models: false,
+        embedding_support: Default::default(),
     }];
     let state = AppState::new(
         config,
@@ -836,12 +839,33 @@ async fn test_route_plan_endpoint_explains_attempts() {
         tokio::sync::broadcast::channel(1).0,
     );
     state.provider_registry.init_from_config(&state).await;
+    sqlx::query(
+        "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
+         VALUES (?, ?, 1, ?, 1)",
+    )
+    .bind("local")
+    .bind("Local")
+    .bind("http://127.0.0.1:1234/v1")
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, discovered_at, updated_at)
+         VALUES (?, ?, ?, 1, 1, 1, 0, datetime('now'), datetime('now'))",
+    )
+    .bind("local")
+    .bind("test-local")
+    .bind("test-local")
+    .execute(&state.db)
+    .await
+    .unwrap();
     let router = tokenscavenger::app::startup::build_router(state);
 
     let response = router
+        .clone()
         .oneshot(
             Request::builder()
-                .uri("/admin/route-plan?model=llama3-8b-8192&endpoint=chat")
+                .uri("/admin/route-plan?model=test-local&endpoint=chat")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -853,9 +877,35 @@ async fn test_route_plan_endpoint_explains_attempts() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["requested_model"], "llama3-8b-8192");
+    assert_eq!(json["requested_model"], "test-local");
+    assert!(
+        json["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|attempt| { attempt["provider_id"] == "local" && attempt["included"] == true })
+    );
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/route-plan?model=test-local&endpoint=embeddings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(json["attempts"].as_array().unwrap().iter().any(|attempt| {
-        attempt["provider_id"] == "groq" && attempt["reason"].as_str().is_some()
+        attempt["provider_id"] == "local"
+            && attempt["included"] == false
+            && attempt["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("model endpoint capability"))
     }));
 }
 
@@ -1065,6 +1115,7 @@ async fn test_provider_contract_matrix_and_failure_classification() {
             api_key: None,
             free_only: true,
             discover_models: false,
+            embedding_support: Default::default(),
         })
         .collect();
     let state = AppState::new(
@@ -1110,7 +1161,7 @@ async fn test_provider_contract_matrix_and_failure_classification() {
 }
 
 #[tokio::test]
-async fn test_local_openai_adapter_supports_embeddings() {
+async fn test_local_openai_adapter_auto_probes_embeddings() {
     let (base_url, handle) = common::start_mock_server(common::MockProviderState {
         usage_tokens: (3, 0),
         ..Default::default()
@@ -1125,6 +1176,7 @@ async fn test_local_openai_adapter_supports_embeddings() {
         api_key: None,
         free_only: true,
         discover_models: true,
+        embedding_support: Default::default(),
     };
     let ctx = tokenscavenger::providers::traits::ProviderContext {
         base_url: tokenscavenger::providers::traits::ProviderAdapter::base_url(&adapter, &config),
@@ -1166,6 +1218,148 @@ async fn test_local_openai_adapter_supports_embeddings() {
     assert_eq!(response.model_id, "local-embed");
     assert_eq!(response.data[0].embedding, vec![0.125, -0.25, 0.5]);
     assert_eq!(response.usage.prompt_tokens, 3);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_local_openai_adapter_does_not_advertise_embeddings_when_probe_fails() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        embeddings_status_code: 501,
+        embeddings_error_body: Some("embeddings disabled".into()),
+        ..Default::default()
+    })
+    .await;
+
+    let adapter = tokenscavenger::providers::local::LocalOpenAiAdapter;
+    let config = tokenscavenger::config::schema::ProviderConfig {
+        id: "local".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: None,
+        free_only: true,
+        discover_models: true,
+        embedding_support: tokenscavenger::config::schema::ProviderEmbeddingSupport::Auto,
+    };
+    let ctx = tokenscavenger::providers::traits::ProviderContext {
+        base_url: tokenscavenger::providers::traits::ProviderAdapter::base_url(&adapter, &config),
+        api_key: None,
+        config: std::sync::Arc::new(config),
+        client: reqwest::Client::new(),
+    };
+
+    let models =
+        tokenscavenger::providers::traits::ProviderAdapter::discover_models(&adapter, &ctx)
+            .await
+            .unwrap();
+    assert!(
+        !models[0]
+            .endpoint_compatibility
+            .contains(&"embeddings".to_string())
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_local_openai_adapter_embedding_support_can_be_configured() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        embeddings_status_code: 501,
+        embeddings_error_body: Some("embeddings disabled".into()),
+        ..Default::default()
+    })
+    .await;
+
+    let adapter = tokenscavenger::providers::local::LocalOpenAiAdapter;
+    let mut config = tokenscavenger::config::schema::ProviderConfig {
+        id: "local".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: None,
+        free_only: true,
+        discover_models: true,
+        embedding_support: tokenscavenger::config::schema::ProviderEmbeddingSupport::Enabled,
+    };
+    let mut ctx = tokenscavenger::providers::traits::ProviderContext {
+        base_url: tokenscavenger::providers::traits::ProviderAdapter::base_url(&adapter, &config),
+        api_key: None,
+        config: std::sync::Arc::new(config.clone()),
+        client: reqwest::Client::new(),
+    };
+
+    let forced_models =
+        tokenscavenger::providers::traits::ProviderAdapter::discover_models(&adapter, &ctx)
+            .await
+            .unwrap();
+    assert!(
+        forced_models[0]
+            .endpoint_compatibility
+            .contains(&"embeddings".to_string())
+    );
+
+    config.embedding_support = tokenscavenger::config::schema::ProviderEmbeddingSupport::Disabled;
+    ctx.config = std::sync::Arc::new(config);
+    let disabled_models =
+        tokenscavenger::providers::traits::ProviderAdapter::discover_models(&adapter, &ctx)
+            .await
+            .unwrap();
+    assert!(
+        !disabled_models[0]
+            .endpoint_compatibility
+            .contains(&"embeddings".to_string())
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_local_openai_adapter_auto_probes_embeddings_with_bounded_concurrency() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        delay_ms: 250,
+        model_ids: vec![
+            "local-a".into(),
+            "local-b".into(),
+            "local-c".into(),
+            "local-d".into(),
+        ],
+        ..Default::default()
+    })
+    .await;
+
+    let adapter = tokenscavenger::providers::local::LocalOpenAiAdapter;
+    let config = tokenscavenger::config::schema::ProviderConfig {
+        id: "local".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: None,
+        free_only: true,
+        discover_models: true,
+        embedding_support: tokenscavenger::config::schema::ProviderEmbeddingSupport::Auto,
+    };
+    let ctx = tokenscavenger::providers::traits::ProviderContext {
+        base_url: tokenscavenger::providers::traits::ProviderAdapter::base_url(&adapter, &config),
+        api_key: None,
+        config: std::sync::Arc::new(config),
+        client: reqwest::Client::new(),
+    };
+
+    let started_at = std::time::Instant::now();
+    let models =
+        tokenscavenger::providers::traits::ProviderAdapter::discover_models(&adapter, &ctx)
+            .await
+            .unwrap();
+    let elapsed = started_at.elapsed();
+
+    assert_eq!(models.len(), 4);
+    assert!(models.iter().all(|model| {
+        model
+            .endpoint_compatibility
+            .contains(&"embeddings".to_string())
+    }));
+    assert!(
+        elapsed < std::time::Duration::from_millis(800),
+        "local embeddings probes should be bounded-concurrent, elapsed={elapsed:?}"
+    );
 
     handle.abort();
 }
@@ -1363,6 +1557,7 @@ async fn test_disabled_provider_is_not_registered() {
             api_key: None,
             free_only: true,
             discover_models: true,
+            embedding_support: Default::default(),
         }],
         ..Default::default()
     };
