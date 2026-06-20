@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.3.2] - 2026-06-20
+
+### Added
+
 - Added a Model Intelligence Layer with normalized model families, task tags,
   modalities, context-window metadata, reasoning/vision/tool/JSON capability
   signals, and catalog freshness scoring.
