@@ -152,6 +152,7 @@ mod tests {
                     api_key: None,
                     free_only: true,
                     discover_models: true,
+                    embedding_support: Default::default(),
                 },
                 ProviderConfig {
                     id: "groq".into(),
@@ -160,6 +161,7 @@ mod tests {
                     api_key: None,
                     free_only: true,
                     discover_models: true,
+                    embedding_support: Default::default(),
                 },
             ],
             ..Default::default()

@@ -333,8 +333,8 @@ pub async fn admin_route_plan(
             .get(&attempt.provider_id)
             .map(|b| format!("{:?}", b.state()))
             .unwrap_or_else(|| "Closed".to_string());
-        let model_enabled = sqlx::query_as::<_, (bool,)>(
-            "SELECT enabled FROM models WHERE provider_id = ? AND upstream_model_id = ?",
+        let model_state = sqlx::query_as::<_, (bool, bool, bool)>(
+            "SELECT enabled, supports_chat, supports_embeddings FROM models WHERE provider_id = ? AND upstream_model_id = ?",
         )
         .bind(&attempt.provider_id)
         .bind(&attempt.model_id)
@@ -342,8 +342,13 @@ pub async fn admin_route_plan(
         .await
         .ok()
         .flatten()
-        .map(|row| row.0)
-        .unwrap_or(true);
+        .unwrap_or((true, true, true));
+        let model_enabled = model_state.0;
+        let endpoint_supported = match endpoint_kind {
+            crate::providers::traits::EndpointKind::ChatCompletions => model_state.1,
+            crate::providers::traits::EndpointKind::Embeddings => model_state.2,
+            crate::providers::traits::EndpointKind::ModelList => true,
+        };
         let free_only = config
             .providers
             .iter()
@@ -352,6 +357,7 @@ pub async fn admin_route_plan(
             .unwrap_or(true);
         let paid_allowed = free_only || config.routing.allow_paid_fallback;
         let base_included = model_enabled
+            && endpoint_supported
             && paid_allowed
             && health != "Unhealthy"
             && breaker != "Open"
@@ -361,6 +367,8 @@ pub async fn admin_route_plan(
             None
         } else if !paid_allowed {
             Some("filtered by paid fallback policy")
+        } else if !endpoint_supported {
+            Some("filtered by model endpoint capability")
         } else {
             Some("filtered by health, breaker, or model enablement")
         };
@@ -616,6 +624,17 @@ pub async fn admin_config_save(
                     .and_then(|v| v.as_str())
                     .and_then(|s| if s.is_empty() { None } else { Some(s) });
                 let free_only = provider_update.get("free_only").and_then(|v| v.as_bool());
+                let embedding_support = provider_update
+                    .get("embedding_support")
+                    .and_then(|v| v.as_str())
+                    .and_then(|value| match value {
+                        "auto" => Some(crate::config::schema::ProviderEmbeddingSupport::Auto),
+                        "enabled" => Some(crate::config::schema::ProviderEmbeddingSupport::Enabled),
+                        "disabled" => {
+                            Some(crate::config::schema::ProviderEmbeddingSupport::Disabled)
+                        }
+                        _ => None,
+                    });
                 let is_removal = provider_update
                     .get("remove")
                     .and_then(|v| v.as_bool())
@@ -643,6 +662,9 @@ pub async fn admin_config_save(
                     }
                     if let Some(f) = free_only {
                         provider.free_only = f;
+                    }
+                    if let Some(support) = embedding_support {
+                        provider.embedding_support = support;
                     }
                     // Persist provider state to DB
                     let display_name = &provider.id;
@@ -673,6 +695,7 @@ pub async fn admin_config_save(
                         api_key: api_key.map(String::from),
                         free_only: free_only.unwrap_or(true),
                         discover_models: true,
+                        embedding_support: embedding_support.unwrap_or_default(),
                     };
                     config.providers.push(new_provider);
                     let _ = sqlx::query(

@@ -1,6 +1,7 @@
 use crate::api::openai::chat::{NormalizedChatRequest, ProviderChatResponse};
 use crate::api::openai::embeddings::{NormalizedEmbeddingsRequest, ProviderEmbeddingsResponse};
 use crate::config::schema::ProviderConfig;
+use crate::config::schema::ProviderEmbeddingSupport;
 use crate::discovery::curated::DiscoveredModel;
 use crate::providers::http::bearer_auth;
 use crate::providers::normalization::ProviderCapabilities;
@@ -9,8 +10,14 @@ use crate::providers::traits::{
     AuthKind, EndpointKind, ProviderAdapter, ProviderContext, ProviderError,
 };
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::header::HeaderMap;
+use std::collections::HashSet;
+use std::time::Duration;
 use url::Url;
+
+const LOCAL_EMBEDDING_PROBE_CONCURRENCY: usize = 4;
+const LOCAL_EMBEDDING_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 fn local_capabilities(docs_url: &'static str, quirks: Vec<String>) -> ProviderCapabilities {
     ProviderCapabilities {
@@ -23,6 +30,46 @@ fn local_capabilities(docs_url: &'static str, quirks: Vec<String>) -> ProviderCa
         supports_vision: false,
         docs_url: Some(docs_url.into()),
     }
+}
+
+async fn probe_local_embedding_models(
+    ctx: &ProviderContext,
+    provider_id: &'static str,
+    model_ids: Vec<String>,
+) -> HashSet<String> {
+    futures::stream::iter(model_ids)
+        .map(|model_id| async move {
+            let result = tokio::time::timeout(
+                LOCAL_EMBEDDING_PROBE_TIMEOUT,
+                shared::probe_openai_embeddings(ctx, &model_id, provider_id),
+            )
+            .await;
+            match result {
+                Ok(Ok(())) => Some(model_id),
+                Ok(Err(error)) => {
+                    tracing::debug!(
+                        provider = provider_id,
+                        model = %model_id,
+                        error = %error,
+                        "Local embeddings probe did not succeed"
+                    );
+                    None
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        provider = provider_id,
+                        model = %model_id,
+                        timeout_ms = LOCAL_EMBEDDING_PROBE_TIMEOUT.as_millis(),
+                        "Local embeddings probe timed out"
+                    );
+                    None
+                }
+            }
+        })
+        .buffer_unordered(LOCAL_EMBEDDING_PROBE_CONCURRENCY)
+        .filter_map(|model_id| async move { model_id })
+        .collect()
+        .await
 }
 
 macro_rules! local_openai_adapter {
@@ -67,8 +114,27 @@ macro_rules! local_openai_adapter {
                 ctx: &ProviderContext,
             ) -> Result<Vec<DiscoveredModel>, ProviderError> {
                 let mut models = shared::openai_discover_models(ctx, $id).await?;
+                let probed_embedding_models = match ctx.config.embedding_support {
+                    ProviderEmbeddingSupport::Auto => {
+                        let model_ids = models
+                            .iter()
+                            .map(|model| model.upstream_model_id.clone())
+                            .collect::<Vec<_>>();
+                        Some(probe_local_embedding_models(ctx, $id, model_ids).await)
+                    }
+                    _ => None,
+                };
                 for model in &mut models {
-                    if !model.endpoint_compatibility.iter().any(|kind| kind == "embeddings") {
+                    let supports_embeddings = match ctx.config.embedding_support {
+                        ProviderEmbeddingSupport::Enabled => true,
+                        ProviderEmbeddingSupport::Disabled => false,
+                        ProviderEmbeddingSupport::Auto => probed_embedding_models
+                            .as_ref()
+                            .is_some_and(|model_ids| model_ids.contains(&model.upstream_model_id)),
+                    };
+                    if supports_embeddings
+                        && !model.endpoint_compatibility.iter().any(|kind| kind == "embeddings")
+                    {
                         model.endpoint_compatibility.push("embeddings".into());
                     }
                 }

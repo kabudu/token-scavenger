@@ -723,6 +723,14 @@ pub async fn render_providers(state: &AppState) -> String {
                         <small>Block paid endpoint use</small>
                     </span>
                 </label>
+                <label class="provider-field">
+                    <span>Embeddings</span>
+                    <select id="new-provider-embedding-support" class="provider-input">
+                        <option value="auto">Auto probe</option>
+                        <option value="enabled">Force on</option>
+                        <option value="disabled">Force off</option>
+                    </select>
+                </label>
                 <button class="btn provider-add-btn" onclick="addProvider()">Add Provider</button>
             </div>
         </div>
@@ -754,8 +762,9 @@ pub async fn render_providers(state: &AppState) -> String {
         const apiKey = document.getElementById('new-provider-key').value.trim();
         const baseUrl = document.getElementById('new-provider-base-url').value.trim();
         const freeOnly = document.getElementById('new-provider-free-only').checked;
+        const embeddingSupport = document.getElementById('new-provider-embedding-support').value;
         if (!apiKey) { showModal('Error', 'API key is required', true); return; }
-        const provider = { id, enabled: true, api_key: apiKey, free_only: freeOnly };
+        const provider = { id, enabled: true, api_key: apiKey, free_only: freeOnly, embedding_support: embeddingSupport };
         if (baseUrl) provider.base_url = baseUrl;
         const r = await fetch('/admin/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({providers:[provider]})});
         if (r.ok) location.reload(); else showModal('Error', 'Provider add failed', true);

@@ -44,6 +44,7 @@ async fn build_e2e_app_with_failure(
         api_key: None,
         free_only: true,
         discover_models: true,
+        embedding_support: Default::default(),
     }];
 
     let state = tokenscavenger::app::state::AppState::new(
@@ -190,6 +191,10 @@ async fn build_e2e_app_with_failure(
         .route(
             "/v1/chat/completions",
             post(tokenscavenger::api::routes::chat_completions),
+        )
+        .route(
+            "/v1/embeddings",
+            post(tokenscavenger::api::routes::embeddings),
         )
         .route("/v1/models", get(tokenscavenger::api::routes::models))
         .route("/healthz", get(tokenscavenger::api::routes::healthz))
@@ -496,6 +501,31 @@ async fn e2e_disabled_model_is_not_routed_for_streaming() {
                         "model": "test-model",
                         "stream": true,
                         "messages": [{"role":"user","content":"Hi"}]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn e2e_model_without_embeddings_support_is_not_routed_for_embeddings() {
+    let (app, _state) = build_e2e_app(0).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/embeddings")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model",
+                        "input": "hello"
                     }))
                     .unwrap(),
                 ))

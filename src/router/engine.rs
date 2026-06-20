@@ -9,9 +9,9 @@ use crate::router::fallback::{FallbackDecision, should_fallback};
 use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
     TokenEstimate, apply_policy_engine, assign_attempt_priorities, build_attempt_plan_for_target,
-    filter_by_health, filter_by_model_enabled, filter_by_paid_policy, prioritize_for_tool_use,
-    record_context_failure_hint, record_rate_limit_hint, should_skip_for_context_hint,
-    should_skip_for_rate_limit_hint,
+    filter_by_health, filter_by_model_enabled_for_endpoint, filter_by_paid_policy,
+    prioritize_for_tool_use, record_context_failure_hint, record_rate_limit_hint,
+    should_skip_for_context_hint, should_skip_for_rate_limit_hint,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -96,9 +96,10 @@ pub async fn route_chat_request(
     }
 
     // Filter by health and breaker state
-    let mut plan = filter_by_model_enabled(
+    let mut plan = filter_by_model_enabled_for_endpoint(
         filter_by_paid_policy(filter_by_health(plan, &state), &state),
         &state,
+        EndpointKind::ChatCompletions,
     )
     .await;
     if request.tools.is_some() {
@@ -523,9 +524,10 @@ pub async fn route_embeddings_request(
         )));
     }
 
-    let plan = filter_by_model_enabled(
+    let plan = filter_by_model_enabled_for_endpoint(
         filter_by_paid_policy(filter_by_health(plan, &state), &state),
         &state,
+        EndpointKind::Embeddings,
     )
     .await;
     let plan = apply_policy_engine(

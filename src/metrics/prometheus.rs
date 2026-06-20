@@ -321,7 +321,9 @@ pub fn render_metrics() -> String {
     writeln!(output, "# TYPE tokenscavenger_build_info gauge").ok();
     writeln!(
         output,
-        "tokenscavenger_build_info{{version=\"0.1.0\",rust=\"1.94.0\"}} 1"
+        "tokenscavenger_build_info{{version=\"{}\",rust=\"{}\"}} 1",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("RUSTC_VERSION").unwrap_or("unknown")
     )
     .ok();
 

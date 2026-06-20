@@ -39,6 +39,7 @@ pub fn expand_provider_config(
         api_key: cfg.api_key.as_ref().map(|k| expand_env_vars(k)),
         free_only: cfg.free_only,
         discover_models: cfg.discover_models,
+        embedding_support: cfg.embedding_support,
     }
 }
 
@@ -85,6 +86,7 @@ mod tests {
             api_key: None,
             free_only: true,
             discover_models: true,
+            embedding_support: Default::default(),
         };
         let expanded = expand_provider_config(&cfg);
         assert_eq!(expanded.api_key, None);

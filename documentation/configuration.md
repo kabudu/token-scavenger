@@ -66,6 +66,7 @@ base_url = ""                       # Override default API endpoint
 api_key = "${GROQ_API_KEY}"         # API key (supports env expansion)
 free_only = true                    # Mark as free-tier
 discover_models = true              # Auto-discover available models
+embedding_support = "auto"          # auto | enabled | disabled for local embeddings
 
 # Model groups for simplified model routing
 [[model_groups]]
@@ -165,6 +166,7 @@ This is an array of provider configurations. Each entry specifies:
 | `api_key` | `""` | API key. Supports `${ENV_VAR}` expansion. |
 | `free_only` | `true` | If `false`, this provider can be used for paid fallback. |
 | `discover_models` | `true` | Whether to query the provider's model list endpoint. |
+| `embedding_support` | `"auto"` | For local OpenAI-compatible providers, controls whether discovered models are marked embedding-capable: `"auto"` probes `/embeddings`, `"enabled"` trusts the operator override, and `"disabled"` suppresses embeddings. Remote providers ignore this field. |
 
 Supported provider IDs:
 `groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`), `local`, `ollama`, `llama-cpp` (or `llamacpp`), `lmstudio` (or `lm-studio`)
@@ -177,6 +179,18 @@ Local provider defaults:
 | `ollama` | `http://127.0.0.1:11434/v1` | Uses Ollama's OpenAI-compatible endpoints. |
 | `llama-cpp` | `http://127.0.0.1:8080/v1` | Uses the llama.cpp server OpenAI-compatible API. |
 | `lmstudio` | `http://127.0.0.1:1234/v1` | Uses LM Studio's local OpenAI-compatible server. |
+
+Local embeddings are intentionally model-aware. With the default
+`embedding_support = "auto"`, TokenScavenger probes each discovered local model
+against `/embeddings` before advertising embeddings support in `/v1/models` or
+using that model for embedding routes. Use `"enabled"` when a local server blocks
+or dislikes probes but you know the model supports embeddings, and `"disabled"`
+when the local server is chat-only.
+
+Discovery refresh runs in the normal background discovery loop. Local embedding
+probes are bounded to four concurrent probe requests with a short per-model
+timeout, so a large local catalog or unsupported embedding endpoint does not
+serially stall the refresh cycle.
 
 ### `[[model_groups]]`
 

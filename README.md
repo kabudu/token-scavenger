@@ -13,24 +13,9 @@
 
 **Just change the `base_url` in your OpenAI SDK** and TokenScavenger handles the rest: provider credentials, routing logic, model discovery, circuit breakers, usage tracking, and a beautiful operator dashboard - all in one Rust binary backed by SQLite.
 
-```text
-┌─────────────┐     POST /v1/chat/completions     ┌────────────────┐
-│  Your App   │ ──────────────────────────────────→│ TokenScavenger │
-│ (OpenAI SDK)│                                     │   :8000        │
-│             │←──── OpenAI-shaped responses ──────│                │
-└─────────────┘                                     └───────┬────────┘
-                            ┌───────────────────────────────┤
-                            ↓                               ↓
-                    ┌──────────────┐              ┌──────────────────┐
-                    │ Local/Ollama  │              │  Gemini (free)   │
-                    ├──────────────┤              ├──────────────────┤
-                    │ Groq         │              │ OpenRouter       │
-                    │ Mistral      │              │ Cloudflare       │
-                    │ NVIDIA NIM   │              │ GitHub Models    │
-                    │ HuggingFace  │              │ SiliconFlow      │
-                    │ ZAI/Zhipu    │              │ Cohere           │
-                    └──────────────┘              └──────────────────┘
-```
+<p align="center">
+  <img src="resources/ArchitectureDiagram.svg" alt="TokenScavenger architecture diagram showing OpenAI SDK clients routing through TokenScavenger to local, free-tier, and allowed paid providers" width="960">
+</p>
 
 ## Why TokenScavenger?
 
