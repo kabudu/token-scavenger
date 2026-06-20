@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+## [0.3.1] - 2026-06-20
+
+### Added
+
+### Changed
+
 - Replaced the README architecture overview with an SVG diagram using the
   TokenScavenger logo color theme.
 
