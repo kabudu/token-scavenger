@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.3.4] - 2026-06-21
+
+### Added
+
 - Added role-aware admin authorization with read-only, operator, config editor,
   credential manager, and admin roles.
 - Added external identity support for the admin UI/API through trusted
