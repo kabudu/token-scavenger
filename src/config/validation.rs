@@ -1,5 +1,5 @@
 use crate::config::schema::Config;
-use reqwest::header::HeaderValue;
+use reqwest::header::{HeaderName, HeaderValue};
 use url::Url;
 
 /// Result of config validation.
@@ -22,6 +22,46 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
             v.errors.push(format!(
                 "server.allowed_cors_origins contains an invalid header value: {origin}"
             ));
+        }
+    }
+    if cfg.server.external_identity.enabled {
+        for (field, value) in [
+            (
+                "server.external_identity.user_header",
+                &cfg.server.external_identity.user_header,
+            ),
+            (
+                "server.external_identity.email_header",
+                &cfg.server.external_identity.email_header,
+            ),
+            (
+                "server.external_identity.name_header",
+                &cfg.server.external_identity.name_header,
+            ),
+            (
+                "server.external_identity.groups_header",
+                &cfg.server.external_identity.groups_header,
+            ),
+        ] {
+            if value.parse::<HeaderName>().is_err() {
+                v.errors
+                    .push(format!("{field} must be a valid HTTP header name"));
+            }
+        }
+        let has_role_group = !cfg.server.external_identity.read_only_groups.is_empty()
+            || !cfg.server.external_identity.operator_groups.is_empty()
+            || !cfg.server.external_identity.config_editor_groups.is_empty()
+            || !cfg
+                .server
+                .external_identity
+                .credential_manager_groups
+                .is_empty()
+            || !cfg.server.external_identity.admin_groups.is_empty();
+        if !has_role_group {
+            v.warnings.push(
+                "server.external_identity.enabled is true but no role groups are configured"
+                    .to_string(),
+            );
         }
     }
 
@@ -192,6 +232,29 @@ mod tests {
                 .any(|e| e.contains("allowed_cors_origins"))
         );
         assert!(result.errors.iter().any(|e| e.contains("api_key")));
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_external_identity_header_names() {
+        let cfg = Config {
+            server: ServerConfig {
+                external_identity: ExternalIdentityConfig {
+                    enabled: true,
+                    user_header: "bad header".into(),
+                    admin_groups: vec!["admins".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = validate_config(&cfg);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("external_identity.user_header"))
+        );
     }
 
     #[test]

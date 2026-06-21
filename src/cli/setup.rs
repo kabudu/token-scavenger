@@ -164,6 +164,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
         server: ServerConfig {
             bind: bind.clone(),
             master_api_key,
+            external_identity: Default::default(),
             allowed_cors_origins: vec![],
             allow_query_api_keys: false,
             ui_session_auth: use_master_key,

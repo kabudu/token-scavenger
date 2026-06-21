@@ -2,6 +2,7 @@ use crate::api::error::ApiError;
 use crate::app::state::AppState;
 use axum::response::sse::Event;
 use axum::{
+    Extension,
     extract::{Query, State},
     http::{HeaderMap, HeaderValue, header},
     response::{Html, IntoResponse, Json, Sse},
@@ -150,6 +151,32 @@ pub async fn admin_providers(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let providers = crate::providers::registry::get_providers_state(&state).await;
     Ok(Json(providers))
+}
+
+pub async fn admin_whoami(
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(Extension(context)) = auth else {
+        return Ok(Json(serde_json::json!({
+            "authenticated": true,
+            "source": "disabled",
+            "role": "admin"
+        })));
+    };
+
+    Ok(Json(serde_json::json!({
+        "authenticated": true,
+        "source": match context.source {
+            crate::api::auth::AuthSource::MasterKey => "master_key",
+            crate::api::auth::AuthSource::UiSession => "ui_session",
+            crate::api::auth::AuthSource::ExternalIdentity => "external_identity",
+        },
+        "subject": context.subject,
+        "email": context.email,
+        "display_name": context.display_name,
+        "role": context.role.as_str(),
+        "can_manage_credentials": context.role.can_manage_credentials()
+    })))
 }
 
 pub async fn admin_session(
@@ -517,8 +544,19 @@ pub async fn admin_provider_test(
 /// PUT /admin/config — save operator config changes (hot-reloads without restart)
 pub async fn admin_config_save(
     State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth_context = auth.map(|Extension(context)| context);
+    if config_update_changes_credentials(&body)
+        && !auth_context
+            .as_ref()
+            .map(|context| context.role.can_manage_credentials())
+            .unwrap_or(true)
+    {
+        return Err(ApiError::Forbidden);
+    }
+
     let mut config = (*state.runtime_config.load_full()).clone();
     let before_config = config.clone();
     let mut changed = false;
@@ -550,6 +588,13 @@ pub async fn admin_config_save(
         }
         if let Some(ui_session_auth) = server.get("ui_session_auth").and_then(|v| v.as_bool()) {
             config.server.ui_session_auth = ui_session_auth;
+            changed = true;
+        }
+        if let Some(external_identity) = server.get("external_identity") {
+            config.server.external_identity = serde_json::from_value(external_identity.clone())
+                .map_err(|error| {
+                    ApiError::InvalidRequest(format!("Invalid server.external_identity: {error}"))
+                })?;
             changed = true;
         }
         if let Some(allow_query_api_keys) =
@@ -896,7 +941,7 @@ pub async fn admin_config_save(
             let _ = sqlx::query(
                 "INSERT INTO config_audit_log (actor, action, target_type, before_json, after_json) VALUES (?, ?, ?, ?, ?)",
             )
-            .bind("operator")
+            .bind(audit_actor(auth_context.as_ref()))
             .bind("config_update_rejected")
             .bind("config")
             .bind(serde_json::to_string(&before_config).unwrap_or_default())
@@ -913,7 +958,7 @@ pub async fn admin_config_save(
             "INSERT INTO config_snapshots (version, created_by, source, config_json) VALUES (?, ?, ?, ?)",
         )
         .bind(&before_config.version)
-        .bind("operator")
+        .bind(audit_actor(auth_context.as_ref()))
         .bind("admin_config_save")
         .bind(snapshot_json)
         .execute(&state.db)
@@ -943,7 +988,7 @@ pub async fn admin_config_save(
         let _ = sqlx::query(
             "INSERT INTO config_audit_log (actor, action, target_type) VALUES (?, ?, ?)",
         )
-        .bind("operator")
+        .bind(audit_actor(auth_context.as_ref()))
         .bind("config_update")
         .bind("config")
         .execute(&state.db)
@@ -953,6 +998,39 @@ pub async fn admin_config_save(
     Ok(Json(
         serde_json::json!({"status": "ok", "message": "Config saved and applied without restart"}),
     ))
+}
+
+fn audit_actor(context: Option<&crate::api::auth::AuthContext>) -> String {
+    context
+        .map(crate::api::auth::AuthContext::audit_actor)
+        .unwrap_or_else(|| "operator".to_string())
+}
+
+fn config_update_changes_credentials(body: &serde_json::Value) -> bool {
+    let server_key_changes = body
+        .get("server")
+        .and_then(|server| server.get("master_api_key"))
+        .and_then(|value| value.as_str())
+        .map(|value| !value.is_empty() && !crate::util::redact::is_redacted_secret(value))
+        .unwrap_or(false);
+    if server_key_changes {
+        return true;
+    }
+
+    body.get("providers")
+        .and_then(|providers| providers.as_array())
+        .map(|providers| {
+            providers.iter().any(|provider| {
+                provider
+                    .get("api_key")
+                    .and_then(|value| value.as_str())
+                    .map(|value| {
+                        !value.is_empty() && !crate::util::redact::is_redacted_secret(value)
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 pub async fn admin_config_rollback(

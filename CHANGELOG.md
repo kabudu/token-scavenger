@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added role-aware admin authorization with read-only, operator, config editor,
+  credential manager, and admin roles.
+- Added external identity support for the admin UI/API through trusted
+  reverse-proxy headers, enabling Google, GitHub, Microsoft, and OSS OIDC
+  providers through proxies such as oauth2-proxy, Dex, Authelia, Keycloak, and
+  Zitadel.
+- Added `GET /admin/whoami` for validating the authenticated admin principal,
+  auth source, resolved role, and credential-management permission.
+
 ### Changed
 
 ### Fixed

@@ -27,6 +27,8 @@ pub enum ApiError {
     InvalidRequest(String),
     #[error("Authentication failed")]
     AuthError,
+    #[error("Forbidden")]
+    Forbidden,
     #[error("Provider unavailable: {0}")]
     ProviderUnavailable(String),
     #[error("All routes exhausted: {0}")]
@@ -58,6 +60,12 @@ impl IntoResponse for ApiError {
                 "auth_error".into(),
                 "authentication_error".into(),
                 "Authentication failed".into(),
+            ),
+            ApiError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "forbidden".into(),
+                "permission_error".into(),
+                "Permission denied".into(),
             ),
             ApiError::ProviderUnavailable(msg) => (
                 StatusCode::SERVICE_UNAVAILABLE,

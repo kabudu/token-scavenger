@@ -140,6 +140,38 @@ allowed_cors_origins = ["https://proxy.example.com"]
 allow_query_api_keys = false     # Prefer Authorization: Bearer <key>
 ```
 
+### External Identity
+
+For teams, put TokenScavenger behind an identity-aware reverse proxy and map
+provider groups into TokenScavenger roles. This keeps Google, GitHub, Microsoft,
+and other OIDC providers outside the runtime while allowing the admin UI/API to
+enforce local permissions.
+
+```toml
+[server]
+bind = "127.0.0.1:8000"
+master_api_key = "${PROXY_KEY}"
+
+[server.external_identity]
+enabled = true
+read_only_groups = ["tokenscavenger-viewers"]
+operator_groups = ["tokenscavenger-operators"]
+config_editor_groups = ["tokenscavenger-editors"]
+credential_manager_groups = ["tokenscavenger-credential-managers"]
+admin_groups = ["tokenscavenger-admins"]
+```
+
+The reverse proxy must strip any incoming identity headers from clients before
+setting its own trusted values. TokenScavenger expects these default headers:
+
+- `x-auth-request-user`
+- `x-auth-request-email`
+- `x-auth-request-preferred-username`
+- `x-auth-request-groups`
+
+Use `GET /admin/whoami` after deployment to verify the resolved identity source,
+subject, role, and credential-management permission.
+
 ### Reverse Proxy (Nginx)
 
 ```nginx
@@ -156,6 +188,10 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        proxy_set_header X-Auth-Request-User $upstream_http_x_auth_request_user;
+        proxy_set_header X-Auth-Request-Email $upstream_http_x_auth_request_email;
+        proxy_set_header X-Auth-Request-Preferred-Username $upstream_http_x_auth_request_preferred_username;
+        proxy_set_header X-Auth-Request-Groups $upstream_http_x_auth_request_groups;
         proxy_read_timeout 300s;
         proxy_buffering off;  # Required for streaming
     }

@@ -37,6 +37,8 @@
 - **Circuit breakers, retries & health monitoring**
 - **Prometheus metrics**, request traces, incident feed, and diagnostic bundles
 - **Embedded web UI** with live dashboard, observability, logs, and config editor
+- **Team-ready admin auth** with role-aware access and external identity headers
+  from OIDC-capable reverse proxies
 - **SQLite persistence** (WAL mode) for usage accounting and audit log
 - **Interactive setup wizard** and CLI tools
 - **Single static binary** (~15–25 MB)
@@ -300,6 +302,11 @@ See [ROADMAP.md](ROADMAP.md) for five high-value future enhancements that can pu
 ## Deployment
 
 See [documentation/deployment.md](documentation/deployment.md) for deployment options including Docker, systemd, and cross-compilation.
+
+For team deployments, TokenScavenger can trust identity headers from an
+OIDC-capable reverse proxy such as oauth2-proxy, Dex, Authelia, Keycloak, Zitadel,
+or a cloud identity proxy. Groups map to read-only, operator, config editor,
+credential manager, and admin roles for the operator UI and admin API.
 
 ## Operator UI
 

@@ -630,6 +630,248 @@ async fn test_optional_ui_session_cookie_authenticates_browser_requests() {
 }
 
 #[tokio::test]
+async fn test_external_identity_headers_authenticate_admin_ui_with_role() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut external_identity = tokenscavenger::config::schema::ExternalIdentityConfig {
+        enabled: true,
+        read_only_groups: vec!["tokenscavenger-viewers".into()],
+        ..Default::default()
+    };
+    external_identity.groups_header = "x-forwarded-groups".into();
+    let config = Config {
+        server: ServerConfig {
+            external_identity,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/whoami")
+                .header("x-auth-request-user", "alice")
+                .header("x-auth-request-email", "alice@example.com")
+                .header("x-forwarded-groups", "tokenscavenger-viewers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["source"], "external_identity");
+    assert_eq!(json["email"], "alice@example.com");
+    assert_eq!(json["role"], "read_only");
+}
+
+#[tokio::test]
+async fn test_external_identity_headers_do_not_authorize_openai_api() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let external_identity = tokenscavenger::config::schema::ExternalIdentityConfig {
+        enabled: true,
+        admin_groups: vec!["tokenscavenger-admins".into()],
+        ..Default::default()
+    };
+    let config = Config {
+        server: ServerConfig {
+            master_api_key: "secret".into(),
+            external_identity,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("x-auth-request-user", "alice")
+                .header("x-auth-request-groups", "tokenscavenger-admins")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_external_identity_without_master_key_does_not_protect_openai_api() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let external_identity = tokenscavenger::config::schema::ExternalIdentityConfig {
+        enabled: true,
+        admin_groups: vec!["tokenscavenger-admins".into()],
+        ..Default::default()
+    };
+    let config = Config {
+        server: ServerConfig {
+            external_identity,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_external_identity_read_only_role_cannot_mutate_config() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let external_identity = tokenscavenger::config::schema::ExternalIdentityConfig {
+        enabled: true,
+        read_only_groups: vec!["tokenscavenger-viewers".into()],
+        ..Default::default()
+    };
+    let config = Config {
+        server: ServerConfig {
+            external_identity,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config")
+                .method("PUT")
+                .header("content-type", "application/json")
+                .header("x-auth-request-user", "alice")
+                .header("x-auth-request-groups", "tokenscavenger-viewers")
+                .body(Body::from(
+                    json!({"routing": {"free_first": false}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_config_editor_cannot_change_credentials_without_credential_role() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let external_identity = tokenscavenger::config::schema::ExternalIdentityConfig {
+        enabled: true,
+        config_editor_groups: vec!["tokenscavenger-editors".into()],
+        credential_manager_groups: vec!["tokenscavenger-credential-managers".into()],
+        ..Default::default()
+    };
+    let config = Config {
+        server: ServerConfig {
+            external_identity,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let rejected = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config")
+                .method("PUT")
+                .header("content-type", "application/json")
+                .header("x-auth-request-user", "alice")
+                .header("x-auth-request-groups", "tokenscavenger-editors")
+                .body(Body::from(
+                    json!({"providers": [{"id": "groq", "api_key": "new-secret"}]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+
+    let accepted = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/config")
+                .method("PUT")
+                .header("content-type", "application/json")
+                .header("x-auth-request-user", "bob")
+                .header(
+                    "x-auth-request-groups",
+                    "tokenscavenger-credential-managers",
+                )
+                .body(Body::from(
+                    json!({"providers": [{"id": "groq", "api_key": "new-secret"}]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_ui_redirects_to_login_when_session_auth_required() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
