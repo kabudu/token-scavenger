@@ -112,6 +112,7 @@ pub async fn ui_static(
         "routing" => crate::ui::routes::render_routing(&state).await,
         "usage" => crate::ui::routes::render_usage(&state).await,
         "health" => crate::ui::routes::render_health(&state).await,
+        "observability" => crate::ui::routes::render_observability(&state).await,
         "logs" => crate::ui::routes::render_logs(&state).await,
         "chat" => crate::ui::routes::render_chat(&state).await,
         "config" => crate::ui::routes::render_config(&state).await,
@@ -1062,6 +1063,7 @@ pub async fn admin_save_model_group(
 #[derive(serde::Deserialize)]
 pub struct AnalyticsQuery {
     pub period: Option<String>,
+    pub limit: Option<u32>,
 }
 
 pub async fn admin_analytics_traffic(
@@ -1101,6 +1103,60 @@ pub async fn admin_analytics_metrics(
     let period = query.period.unwrap_or_else(|| "24h".to_string());
     Ok(Json(
         crate::usage::aggregation::get_period_summary(&state, &period).await,
+    ))
+}
+
+pub async fn admin_observability_summary(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let period = query.period.unwrap_or_else(|| "24h".to_string());
+    Ok(Json(
+        crate::observability::get_observability_summary(&state, &period).await,
+    ))
+}
+
+pub async fn admin_request_traces(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        crate::observability::get_request_traces(
+            &state,
+            crate::observability::bounded_limit(query.limit),
+        )
+        .await,
+    ))
+}
+
+pub async fn admin_request_trace(
+    State(state): State<AppState>,
+    axum::extract::Path(request_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    crate::observability::get_request_trace(&state, &request_id)
+        .await
+        .map(Json)
+        .ok_or_else(|| ApiError::InvalidRequest(format!("request trace '{request_id}' not found")))
+}
+
+pub async fn admin_incidents(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<AnalyticsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        crate::observability::get_incidents(
+            &state,
+            crate::observability::bounded_limit(query.limit),
+        )
+        .await,
+    ))
+}
+
+pub async fn admin_diagnostic_bundle(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        crate::observability::get_diagnostic_bundle(&state).await,
     ))
 }
 

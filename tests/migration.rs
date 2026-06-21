@@ -33,6 +33,7 @@ async fn test_clean_bootstrap() {
         "provider_health_events",
         "providers",
         "request_log",
+        "request_trace_events",
         "usage_events",
         "_sqlx_migrations",
     ];
@@ -129,6 +130,19 @@ async fn test_can_insert_and_query_all_tables() {
 
     sqlx::query("INSERT INTO provider_health_events (provider_id, health_state, event_type) VALUES (?, ?, ?)")
         .bind("test").bind("healthy").bind("test").execute(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO request_trace_events (request_id, event_type, provider_id, model_id, outcome)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("req-1")
+    .bind("attempt_result")
+    .bind("test")
+    .bind("m1")
+    .bind("success")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     sqlx::query("INSERT INTO discovery_runs (provider_id, status) VALUES (?, ?)")
         .bind("test")

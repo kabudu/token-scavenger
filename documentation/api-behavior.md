@@ -13,6 +13,11 @@ TokenScavenger exposes OpenAI-compatible HTTP endpoints while routing each reque
 | `GET /readyz` | Readiness check with dependency state. |
 | `GET /metrics` | Prometheus metrics. |
 | `GET /ui` | Embedded operator dashboard, when enabled. |
+| `GET /admin/observability/summary` | Time-window success, 429, fallback, token, cost, and provider saturation summary. |
+| `GET /admin/request-traces` | Recent request trace summaries. |
+| `GET /admin/request-traces/{request_id}` | Detailed route timeline, usage, and request outcome for one request. |
+| `GET /admin/incidents` | Incident feed derived from provider health events, route failures, and config audit history. |
+| `GET /admin/diagnostics/bundle` | Redacted diagnostic bundle for support and incident handoff. |
 
 ## Error Shape
 
@@ -80,6 +85,26 @@ Useful metrics include:
 - `tokenscavenger_provider_health_state`
 - `tokenscavenger_provider_breaker_state`
 - `tokenscavenger_quota_remaining`
+
+## Observability And Incident Workflow
+
+Every routed request receives a durable trace timeline in SQLite. Trace events
+record the model group resolution, planned candidates, skip reasons, attempts,
+retry/fallback decisions, upstream response class, latency, and usage linkage.
+Request and diagnostic endpoints never include request bodies and apply the same
+secret redaction used by the admin config API.
+
+Useful triage endpoints:
+
+```bash
+curl http://localhost:8000/admin/observability/summary?period=24h
+curl http://localhost:8000/admin/request-traces?limit=25
+curl http://localhost:8000/admin/request-traces/<request-id>
+curl http://localhost:8000/admin/incidents?limit=25
+curl http://localhost:8000/admin/diagnostics/bundle
+```
+
+The embedded UI exposes the same workflow at `/ui/observability`.
 
 ## Model Intelligence
 

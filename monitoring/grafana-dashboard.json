@@ -1,0 +1,89 @@
+{
+  "title": "TokenScavenger Observability",
+  "uid": "tokenscavenger-observability",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "tags": ["tokenscavenger", "llm-router"],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(rate(tokenscavenger_requests_total[5m]))", "legendFormat": "rps"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "429 Rate",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(rate(tokenscavenger_requests_total{status=~\"rate_limited|quota_exhausted\"}[5m])) / clamp_min(sum(rate(tokenscavenger_requests_total[5m])), 0.001)", "legendFormat": "429 ratio"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}}
+    },
+    {
+      "type": "stat",
+      "title": "Estimated Spend",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(increase(tokenscavenger_estimated_cost_usd_total[24h]))", "legendFormat": "USD"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}}
+    },
+    {
+      "type": "stat",
+      "title": "Open Breakers",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [
+        {"expr": "sum(tokenscavenger_provider_breaker_state{state=~\"open|half_open\"})", "legendFormat": "breakers"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests By Provider",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (provider, status) (rate(tokenscavenger_requests_total[5m]))", "legendFormat": "{{provider}} {{status}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Route Attempt Outcomes",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (provider, outcome) (rate(tokenscavenger_route_attempts_total[5m]))", "legendFormat": "{{provider}} {{outcome}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Volume",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (provider, type) (rate(tokenscavenger_tokens_total[5m]))", "legendFormat": "{{provider}} {{type}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (provider, endpoint) (rate(tokenscavenger_request_latency_seconds_sum[5m])) / clamp_min(sum by (provider, endpoint) (rate(tokenscavenger_request_latency_seconds_count[5m])), 0.001)", "legendFormat": "{{provider}} {{endpoint}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "table",
+      "title": "Provider Health",
+      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 6},
+      "targets": [
+        {"expr": "tokenscavenger_provider_health_state", "legendFormat": "{{provider}} {{state}}", "format": "table", "instant": true}
+      ]
+    }
+  ]
+}

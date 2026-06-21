@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an operator-grade observability workflow with durable request trace
+  timelines, time-window success/429/fallback/token/cost analytics, an incident
+  feed, redacted diagnostic bundle export, and `/ui/observability`.
+- Added ready-to-import Grafana dashboard and Prometheus alert starters under
+  `monitoring/`.
+
 ### Changed
+
+- Updated the roadmap status for the shipped v0.2.0 policy engine tidy-up.
 
 ### Fixed
 

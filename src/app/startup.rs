@@ -430,6 +430,26 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(crate::api::routes::admin_analytics_metrics),
         )
         .route(
+            "/admin/observability/summary",
+            axum::routing::get(crate::api::routes::admin_observability_summary),
+        )
+        .route(
+            "/admin/request-traces",
+            axum::routing::get(crate::api::routes::admin_request_traces),
+        )
+        .route(
+            "/admin/request-traces/{request_id}",
+            axum::routing::get(crate::api::routes::admin_request_trace),
+        )
+        .route(
+            "/admin/incidents",
+            axum::routing::get(crate::api::routes::admin_incidents),
+        )
+        .route(
+            "/admin/diagnostics/bundle",
+            axum::routing::get(crate::api::routes::admin_diagnostic_bundle),
+        )
+        .route(
             "/admin/pricing",
             axum::routing::get(crate::api::routes::admin_pricing),
         )

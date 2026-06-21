@@ -201,6 +201,21 @@ Usage and health event data accumulates over time. The default schema includes t
 
 ## Monitoring
 
+### Incident Workflow
+
+The embedded UI includes `/ui/observability` for request traces, incident feed
+review, and redacted diagnostic bundle export. The backing admin endpoints are:
+
+- `GET /admin/observability/summary?period=24h`
+- `GET /admin/request-traces?limit=50`
+- `GET /admin/request-traces/{request_id}`
+- `GET /admin/incidents?limit=50`
+- `GET /admin/diagnostics/bundle`
+
+Diagnostic bundles include runtime version, redacted effective config, recent
+request traces, incidents, health states, and 24-hour observability summary.
+They do not include provider API keys or full request/response bodies.
+
 ### Prometheus Metrics
 
 Available at `GET /metrics`:
@@ -213,6 +228,11 @@ Available at `GET /metrics`:
 | `tokenscavenger_route_attempts_total` | Counter | provider, model, outcome | Route attempt outcomes |
 | `tokenscavenger_provider_health_state` | Gauge | provider, state | Current health state per provider |
 | `tokenscavenger_provider_breaker_state` | Gauge | provider, state | Circuit breaker state per provider |
+
+Ready-to-import monitoring starters live in `monitoring/`:
+
+- `monitoring/grafana-dashboard.json`
+- `monitoring/prometheus-alerts.yml`
 
 ### Logging
 

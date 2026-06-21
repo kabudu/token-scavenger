@@ -5,38 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="title"
-      content="TokenScavenger v0.3.0 | Local-first LLM Routing"
+      content="TokenScavenger v0.3.3 | Observable LLM Routing"
     />
     <meta
       name="description"
-      content="TokenScavenger v0.3.0 adds local OpenAI-compatible provider routing for Ollama, llama.cpp, LM Studio, and generic local servers alongside free-tier and paid fallback providers."
+      content="TokenScavenger v0.3.3 adds request traces, incident workflow, redacted diagnostic bundles, and Grafana/Prometheus starters to local-first LLM routing."
     />
     <meta name="robots" content="index, follow" />
     <link rel="icon" type="image/png" href="assets/TokenScavengerLogo.png" />
     <meta property="og:type" content="website" />
     <meta
       property="og:title"
-      content="TokenScavenger v0.3.0 | Local-first LLM Routing"
+      content="TokenScavenger v0.3.3 | Observable LLM Routing"
     />
     <meta
       property="og:description"
-      content="Route local Ollama, llama.cpp, LM Studio, free-tier providers, and explicit paid fallback through one self-hosted OpenAI-compatible gateway."
+      content="Route local, free-tier, and explicit paid fallback models through one self-hosted gateway with request traces and incident diagnostics."
     />
     <meta
       property="og:image"
       content="/assets/token-scavenger-v0.3.0-local-release.png"
     />
     <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:title" content="TokenScavenger v0.3.0" />
+    <meta property="twitter:title" content="TokenScavenger v0.3.3" />
     <meta
       property="twitter:description"
-      content="Now with local OpenAI-compatible providers: Ollama, llama.cpp, LM Studio, and generic local upstreams."
+      content="Now with request traces, incident workflow, redacted diagnostic bundles, and Grafana/Prometheus starters."
     />
     <meta
       property="twitter:image"
       content="/assets/token-scavenger-v0.3.0-local-release.png"
     />
-    <title>TokenScavenger v0.3.0 | Local-first LLM Routing</title>
+    <title>TokenScavenger v0.3.3 | Observable LLM Routing</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -178,9 +178,9 @@
               gateway.
             </h1>
             <p class="mt-6 max-w-xl text-lg leading-8 text-slate-300">
-              TokenScavenger v0.3.0 routes Ollama, llama.cpp, LM Studio, local
-              OpenAI-compatible servers, free-tier providers, and explicit paid
-              fallback through one self-hosted Rust gateway.
+              TokenScavenger v0.3.3 routes local, free-tier, and explicit paid
+              fallback providers with durable request traces, incident
+              diagnostics, and redacted support bundles.
             </p>
             <div class="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center">
               <a
@@ -214,8 +214,8 @@
                   Live status
                 </p>
                 <p class="mt-1 text-sm text-slate-300">
-                  Local and remote providers share health, fallback, and
-                  metrics.
+                  Local and remote providers share health, fallback, metrics,
+                  traces, and incident workflow.
                 </p>
               </div>
               <div
@@ -349,7 +349,7 @@
               </p>
               <pre
                 class="mt-6 min-w-0 overflow-x-auto rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
-              ><code>VERSION=v0.3.0
+              ><code>VERSION=v0.3.3
 curl -LO https://github.com/kabudu/token-scavenger/releases/download/$VERSION/tokenscavenger-$VERSION-aarch64-apple-darwin.zip
 unzip tokenscavenger-$VERSION-aarch64-apple-darwin.zip
 ./tokenscavenger</code></pre>
@@ -369,7 +369,7 @@ unzip tokenscavenger-$VERSION-aarch64-apple-darwin.zip
               </p>
               <pre
                 class="mt-6 min-w-0 overflow-x-auto rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
-              ><code>VERSION=v0.3.0
+              ><code>VERSION=v0.3.3
 curl -LO https://github.com/kabudu/token-scavenger/releases/download/$VERSION/tokenscavenger-$VERSION-x86_64-unknown-linux-gnu
 chmod +x tokenscavenger-$VERSION-x86_64-unknown-linux-gnu
 ./tokenscavenger-$VERSION-x86_64-unknown-linux-gnu</code></pre>
@@ -389,7 +389,7 @@ chmod +x tokenscavenger-$VERSION-x86_64-unknown-linux-gnu
               </p>
               <pre
                 class="mt-6 min-w-0 max-w-full whitespace-pre-wrap break-all rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
-              ><code class="whitespace-pre-wrap break-all">$Version = "v0.3.0"
+              ><code class="whitespace-pre-wrap break-all">$Version = "v0.3.3"
 $Url = "https://github.com/kabudu/token-scavenger/releases/download/$Version/tokenscavenger-$Version-x86_64-pc-windows-msvc.exe"
 Invoke-WebRequest `
   -Uri $Url `
@@ -505,8 +505,8 @@ Invoke-WebRequest `
               class="mt-4 mx-auto max-w-2xl text-base leading-7 text-slate-400"
             >
               Tokens are the new currency of the AI era. TokenScavenger keeps
-              local, free-tier, and approved paid routes observable and under
-              operator control.
+              local, free-tier, and approved paid routes observable, explainable,
+              and under operator control.
             </p>
           </div>
           <div class="grid gap-8 lg:grid-cols-4">
@@ -532,12 +532,12 @@ Invoke-WebRequest `
             </article>
             <article class="feature-card rounded-3xl p-8">
               <h3 class="text-xl font-semibold text-white">
-                Smart circuit breakers
+                Incident workflow
               </h3>
               <p class="mt-4 text-slate-300">
-                Automatically detect provider failures and route traffic to the
-                best available local or free provider without client-side
-                changes.
+                Trace every request, inspect provider incidents, and export
+                redacted diagnostic bundles when production traffic slows down
+                or starts hitting 429s.
               </p>
             </article>
             <article class="feature-card rounded-3xl p-8">
