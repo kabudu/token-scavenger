@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+## [0.3.7] - 2026-06-21
+
+### Added
+
+### Changed
+
 - Refreshed README and deployment guidance for Homebrew-first installs,
   self-update testing, and current v0.3.6 deployment examples.
 
