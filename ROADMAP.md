@@ -77,6 +77,7 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 - Role-aware admin access for read-only operators, config editors, and credential managers.
 - Optional encrypted provider credential storage using OS keychains or an operator-supplied encryption key.
 - Cryptographically signed release artifacts, SBOM generation, and documented verification steps beyond the existing checksum release flow.
+- Self-update support that alerts admins when a new TokenScavenger release is available, offers an admin UI CTA to apply it, installs the new version safely, and reloads the app/UI onto the updated binary by restarting with the same executable arguments and configuration used for the current process.
 - Homebrew packaging and Kubernetes manifests that complement the existing binary, Docker, Docker Compose, and systemd deployment docs.
 - Restore drills, retention policy controls, and migration rollback guidance for SQLite state, extending the current backup and automatic migration docs.
 - Optional external identity integration for the admin UI, such as OIDC reverse-proxy headers, while keeping local auth simple.
