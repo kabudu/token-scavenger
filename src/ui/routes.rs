@@ -177,22 +177,20 @@ pub fn render_shell(
     <div class="min-w-0">
         <h1 class="text-xl font-bold">{}</h1>
     </div>
-    <div class="flex items-center gap-4">
+    <div class="flex items-center gap-3">
+        <div id="update-widget" class="hidden items-center gap-2 rounded-full border px-3 py-1.5" style="border-color: rgba(211,84,0,0.25); background: rgba(211,84,0,0.10);">
+        <span class="h-2 w-2 rounded-full" style="background: #D35400; box-shadow: 0 0 10px rgba(211,84,0,0.55);"></span>
+        <span class="text-[10px] font-bold uppercase tracking-wider" style="color: #D35400;">Update</span>
+        <span id="update-widget-version" class="font-mono text-[10px] font-bold text-orange-100/90"></span>
+        <span id="update-widget-asset" class="hidden max-w-[10rem] truncate text-[10px] text-orange-100/45 xl:inline"></span>
+        <button id="update-apply-btn" class="ml-1 border-l pl-2 text-[10px] font-bold uppercase tracking-wider text-orange-100/80 transition hover:text-white" style="border-color: rgba(211,84,0,0.25);">Apply</button>
+        </div>
         <div class="flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10" id="health-badge">
         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" id="health-badge-dot"></span>
         <span class="text-[10px] font-bold text-emerald-500 uppercase tracking-wider" id="health-badge-text">Operational</span>
         </div>
     </div>
     </header>
-    <div id="update-banner" class="mx-8 mt-6 hidden rounded-lg border border-orange-500/30 bg-orange-500/10 px-4 py-3 text-sm text-orange-100">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-                <span class="font-semibold">Update available</span>
-                <span id="update-banner-text" class="text-orange-100/80"></span>
-            </div>
-            <button id="update-apply-btn" class="btn btn-primary text-xs">Apply Update</button>
-        </div>
-    </div>
     <div class="p-8 space-y-6">
     {}
     </div>
@@ -309,11 +307,14 @@ async function checkForUpdate() {{
         if (!response.ok) return;
         const update = await response.json();
         if (!update.enabled || !update.update_available) return;
-        const banner = document.getElementById('update-banner');
-        const text = document.getElementById('update-banner-text');
+        const widget = document.getElementById('update-widget');
+        const version = document.getElementById('update-widget-version');
+        const asset = document.getElementById('update-widget-asset');
         const button = document.getElementById('update-apply-btn');
-        if (!banner || !text || !button) return;
-        text.innerText = ` v${{update.latest_version}} is available for ${{update.asset_name || 'this platform'}}.`;
+        if (!widget || !version || !asset || !button) return;
+        version.innerText = `v${{update.latest_version}}`;
+        asset.innerText = update.asset_name || 'current platform';
+        widget.title = `TokenScavenger v${{update.latest_version}} is available for ${{update.asset_name || 'this platform'}}.`;
         button.onclick = () => showConfirm('Apply update?', 'TokenScavenger will install the verified release asset, restart with the same arguments, and reload the admin UI.', async () => {{
             const apply = await fetch('/admin/update/apply', {{ method: 'POST' }});
             const body = await apply.json().catch(() => ({{}}));
@@ -324,7 +325,8 @@ async function checkForUpdate() {{
             showModal('Restart scheduled', 'The new version is being installed. This page will reload shortly.', false);
             setTimeout(() => window.location.reload(), 5000);
         }});
-        banner.classList.remove('hidden');
+        widget.classList.remove('hidden');
+        widget.classList.add('flex');
     }} catch (_) {{
         // Update checks are best-effort and should never disturb the admin UI.
     }}

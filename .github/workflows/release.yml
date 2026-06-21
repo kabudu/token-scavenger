@@ -207,7 +207,7 @@ jobs:
       - name: Generate checksums
         run: |
           find dist -type f -name 'tokenscavenger-v*' | sort | while read f; do
-            sha256sum "$f" >> checksums.txt
+            sha256sum "$f" | awk -v asset="$(basename "$f")" '{print $1 "  " asset}' >> checksums.txt
           done
           cat checksums.txt
 
