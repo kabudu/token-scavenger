@@ -15,6 +15,7 @@ pub struct UpdateStatus {
     pub update_available: bool,
     pub release_url: Option<String>,
     pub asset_name: Option<String>,
+    pub check_error: Option<String>,
 }
 
 pub async fn check_for_update(config: &UpdateConfig) -> Result<UpdateStatus, UpdateError> {
@@ -27,10 +28,24 @@ pub async fn check_for_update(config: &UpdateConfig) -> Result<UpdateStatus, Upd
             update_available: false,
             release_url: None,
             asset_name: None,
+            check_error: None,
         });
     }
 
-    let release = fetch_latest_release(config).await?;
+    let release = match fetch_latest_release(config).await {
+        Ok(release) => release,
+        Err(error) => {
+            return Ok(UpdateStatus {
+                enabled: true,
+                current_version: current,
+                latest_version: None,
+                update_available: false,
+                release_url: None,
+                asset_name: platform_asset_name(&format!("v{}", env!("CARGO_PKG_VERSION"))),
+                check_error: Some(error.to_string()),
+            });
+        }
+    };
     let latest = release.tag_name.trim_start_matches('v').to_string();
     let asset_name = platform_asset_name(&release.tag_name);
     let update_available = version_gt(&latest, &current);
@@ -41,6 +56,7 @@ pub async fn check_for_update(config: &UpdateConfig) -> Result<UpdateStatus, Upd
         update_available,
         release_url: Some(release.html_url),
         asset_name,
+        check_error: None,
     })
 }
 
@@ -60,6 +76,7 @@ pub async fn apply_update(state: AppState) -> Result<UpdateStatus, UpdateError> 
             update_available: false,
             release_url: Some(release.html_url),
             asset_name: platform_asset_name(&release.tag_name),
+            check_error: None,
         });
     }
 
@@ -76,7 +93,7 @@ pub async fn apply_update(state: AppState) -> Result<UpdateStatus, UpdateError> 
         .find(|asset| asset.name == "checksums.txt")
         .ok_or(UpdateError::MissingChecksums)?;
 
-    let client = github_client()?;
+    let client = github_asset_client()?;
     let binary_bytes = client
         .get(&asset.browser_download_url)
         .send()
@@ -109,6 +126,7 @@ pub async fn apply_update(state: AppState) -> Result<UpdateStatus, UpdateError> 
         update_available: true,
         release_url: Some(release.html_url),
         asset_name: Some(asset_name),
+        check_error: None,
     })
 }
 
@@ -180,7 +198,7 @@ fn verify_checksum(asset_name: &str, bytes: &[u8], checksums: &str) -> Result<()
             let mut parts = line.split_whitespace();
             let hash = parts.next()?;
             let name = parts.next()?;
-            (name == asset_name).then(|| hash.to_string())
+            name.ends_with(asset_name).then(|| hash.to_string())
         })
         .ok_or_else(|| UpdateError::MissingChecksum(asset_name.to_string()))?;
     let actual = format!("{:x}", Sha256::digest(bytes));
@@ -220,7 +238,7 @@ async fn fetch_latest_release(config: &UpdateConfig) -> Result<GithubRelease, Up
         "https://api.github.com/repos/{}/releases/latest",
         config.github_repo
     );
-    Ok(github_client()?
+    Ok(github_metadata_client()?
         .get(url)
         .send()
         .await?
@@ -229,7 +247,15 @@ async fn fetch_latest_release(config: &UpdateConfig) -> Result<GithubRelease, Up
         .await?)
 }
 
-fn github_client() -> Result<reqwest::Client, UpdateError> {
+fn github_metadata_client() -> Result<reqwest::Client, UpdateError> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent(format!("tokenscavenger/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(UpdateError::Http)
+}
+
+fn github_asset_client() -> Result<reqwest::Client, UpdateError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent(format!("tokenscavenger/{}", env!("CARGO_PKG_VERSION")))
@@ -288,6 +314,14 @@ mod tests {
         let bytes = b"hello";
         let hash = format!("{:x}", Sha256::digest(bytes));
         let checksums = format!("{hash}  artifact");
+        verify_checksum("artifact", bytes, &checksums).unwrap();
+    }
+
+    #[test]
+    fn verifies_matching_checksum_when_release_file_uses_dist_path() {
+        let bytes = b"hello";
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        let checksums = format!("{hash}  dist/artifact/artifact");
         verify_checksum("artifact", bytes, &checksums).unwrap();
     }
 }

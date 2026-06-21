@@ -19,7 +19,7 @@ TokenScavenger exposes OpenAI-compatible HTTP endpoints while routing each reque
 | `GET /admin/incidents` | Incident feed derived from provider health events, route failures, and config audit history. |
 | `GET /admin/diagnostics/bundle` | Redacted diagnostic bundle for support and incident handoff. |
 | `GET /admin/whoami` | Current authenticated admin principal, auth source, role, and credential-management permission. |
-| `GET /admin/update/check` | Self-update status for the configured GitHub release source. |
+| `GET /admin/update/check` | Self-update status for the configured GitHub release source. Network failures return `200 OK` with `update_available = false` and `check_error`. |
 | `POST /admin/update/apply` | Download, checksum-verify, install, and restart onto the latest release when self-update is enabled. |
 
 ## Error Shape

@@ -77,7 +77,7 @@ impl Default for RetentionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_update_repo")]
     pub github_repo: String,
@@ -88,7 +88,7 @@ pub struct UpdateConfig {
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             github_repo: default_update_repo(),
             check_interval_secs: default_update_check_interval_secs(),
         }

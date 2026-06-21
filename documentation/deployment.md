@@ -189,7 +189,9 @@ files cannot be restored without the same key.
 
 ### Self-Update
 
-Self-update is opt-in:
+Self-update checks are enabled by default. The check is passive and only shows
+an admin UI CTA when a newer release exists; installing the update still
+requires an explicit operator action.
 
 ```toml
 [updates]
@@ -198,7 +200,9 @@ github_repo = "kabudu/token-scavenger"
 ```
 
 The admin UI checks `/admin/update/check` and displays an update CTA when a
-newer GitHub release exists. Applying an update downloads the matching platform
+newer GitHub release exists. If GitHub is unreachable or the host has no
+internet access, the check returns no update plus a diagnostic `check_error`
+instead of disrupting the UI. Applying an update downloads the matching platform
 asset, verifies it against `checksums.txt`, replaces the current executable, and
 restarts TokenScavenger with the same command-line arguments. Use a process
 manager such as systemd, launchd, Docker, or Kubernetes for additional restart
