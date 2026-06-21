@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: tokenscavenger
-          image: ghcr.io/kabudu/token-scavenger:REPLACE_WITH_VERSION
+          image: tokenscavenger:0.3.5
           args: ["--config", "/config/tokenscavenger.toml"]
           ports:
             - name: http
