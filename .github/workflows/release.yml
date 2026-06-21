@@ -63,7 +63,8 @@ jobs:
             git push origin HEAD:${{ github.ref_name }}
           fi
 
-          if git rev-parse "v$NEW_VER" >/dev/null 2>&1; then
+          if git rev-parse "v$NEW_VER" >/dev/null 2>&1 \
+            || git ls-remote --exit-code --tags origin "refs/tags/v$NEW_VER" >/dev/null 2>&1; then
             if [ "${{ github.event.inputs.bump_type }}" = "current" ]; then
               echo "Tag v$NEW_VER already exists — reusing for current-version release"
               exit 0
