@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.3.5] - 2026-06-21
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Completed the Homebrew packaging with release artifact checksums and formula
   validation.
 - Replaced the Kubernetes deployment image placeholder with a concrete local
