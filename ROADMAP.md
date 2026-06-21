@@ -68,7 +68,7 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 ## 5. Deployment, Security, And Team Controls
 
-**Status:** In progress. Role-aware admin access and external identity integration are implemented for v0.3.4.
+**Status:** Implemented in v0.3.4.
 
 **Current baseline:** The project already documents static binary builds, Docker, Docker Compose, systemd, reverse proxy deployment, Prometheus scraping, health checks, SQLite backup, and upgrade steps in `documentation/deployment.md`. It also supports bearer auth, CORS controls, query-key opt-in, session-cookie UI auth, secret redaction, and release artifacts with checksums.
 
@@ -77,11 +77,11 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 **What good looks like:**
 
 - [x] Role-aware admin access for read-only operators, config editors, and credential managers.
-- Optional encrypted provider credential storage using OS keychains or an operator-supplied encryption key.
-- Cryptographically signed release artifacts, SBOM generation, and documented verification steps beyond the existing checksum release flow.
-- Self-update support that alerts admins when a new TokenScavenger release is available, offers an admin UI CTA to apply it, installs the new version safely, and reloads the app/UI onto the updated binary by restarting with the same executable arguments and configuration used for the current process.
-- Homebrew packaging and Kubernetes manifests that complement the existing binary, Docker, Docker Compose, and systemd deployment docs.
-- Restore drills, retention policy controls, and migration rollback guidance for SQLite state, extending the current backup and automatic migration docs.
+- [x] Optional encrypted provider credential storage using OS keychains or an operator-supplied encryption key.
+- [x] Cryptographically signed release artifacts, SBOM generation, and documented verification steps beyond the existing checksum release flow.
+- [x] Self-update support that alerts admins when a new TokenScavenger release is available, offers an admin UI CTA to apply it, installs the new version safely, and reloads the app/UI onto the updated binary by restarting with the same executable arguments and configuration used for the current process.
+- [x] Homebrew packaging and Kubernetes manifests that complement the existing binary, Docker, Docker Compose, and systemd deployment docs.
+- [x] Restore drills, retention policy controls, and migration rollback guidance for SQLite state, extending the current backup and automatic migration docs.
 - [x] Optional external identity integration for the admin UI, such as OIDC reverse-proxy headers, while keeping local auth simple.
 
 ## How To Contribute

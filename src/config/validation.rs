@@ -74,6 +74,41 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
             .push("database.max_connections must be > 0".to_string());
     }
 
+    if cfg.security.credential_encryption.enabled
+        && cfg.security.credential_encryption.key_env.trim().is_empty()
+    {
+        v.errors
+            .push("security.credential_encryption.key_env must not be empty".to_string());
+    }
+
+    for (field, value) in [
+        ("retention.usage_days", cfg.retention.usage_days),
+        (
+            "retention.health_event_days",
+            cfg.retention.health_event_days,
+        ),
+        ("retention.audit_days", cfg.retention.audit_days),
+        (
+            "retention.request_trace_days",
+            cfg.retention.request_trace_days,
+        ),
+    ] {
+        if value == 0 {
+            v.errors.push(format!("{field} must be > 0"));
+        }
+    }
+
+    if cfg.updates.enabled {
+        if cfg.updates.github_repo.split('/').count() != 2 {
+            v.errors
+                .push("updates.github_repo must be in owner/repo form".to_string());
+        }
+        if cfg.updates.check_interval_secs < 300 {
+            v.errors
+                .push("updates.check_interval_secs must be at least 300".to_string());
+        }
+    }
+
     // Validate resilience
     if cfg.resilience.max_retries_per_provider > 10 {
         v.warnings

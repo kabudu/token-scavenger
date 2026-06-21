@@ -503,6 +503,7 @@ fn build_reload_payload(config: &Config) -> serde_json::Value {
         "server": {
             "bind": config.server.bind,
             "master_api_key": config.server.master_api_key,
+            "external_identity": config.server.external_identity,
             "allowed_cors_origins": config.server.allowed_cors_origins,
             "allow_query_api_keys": config.server.allow_query_api_keys,
             "ui_session_auth": config.server.ui_session_auth,
@@ -510,6 +511,9 @@ fn build_reload_payload(config: &Config) -> serde_json::Value {
             "ui_path": config.server.ui_path,
             "request_timeout_ms": config.server.request_timeout_ms,
         },
+        "security": config.security,
+        "retention": config.retention,
+        "updates": config.updates,
         "routing": {
             "free_first": config.routing.free_first,
             "allow_paid_fallback": config.routing.allow_paid_fallback,

@@ -872,6 +872,80 @@ async fn test_config_editor_cannot_change_credentials_without_credential_role() 
 }
 
 #[tokio::test]
+async fn test_encrypted_runtime_overrides_do_not_store_plaintext_secrets() {
+    unsafe {
+        std::env::set_var("TOKENSCAVENGER_TEST_KEY", "test-key");
+    }
+    let temp_config =
+        std::env::temp_dir().join(format!("tokenscavenger-test-{}.toml", uuid::Uuid::new_v4()));
+    let config = Config {
+        security: tokenscavenger::config::schema::SecurityConfig {
+            credential_encryption: tokenscavenger::config::schema::CredentialEncryptionConfig {
+                enabled: true,
+                key_env: "TOKENSCAVENGER_TEST_KEY".into(),
+            },
+        },
+        server: ServerConfig {
+            master_api_key: "master-secret".into(),
+            ..Default::default()
+        },
+        providers: vec![tokenscavenger::config::schema::ProviderConfig {
+            id: "groq".into(),
+            api_key: Some("provider-secret".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    tokenscavenger::config::overrides::save_runtime_overrides(&temp_config, &config).unwrap();
+    let overrides_path = tokenscavenger::config::overrides::overrides_path(&temp_config);
+    let stored = std::fs::read_to_string(&overrides_path).unwrap();
+    assert!(!stored.contains("master-secret"));
+    assert!(!stored.contains("provider-secret"));
+    assert!(stored.contains("tsenc:v1:"));
+
+    let loaded = tokenscavenger::config::overrides::load_runtime_overrides(&temp_config).unwrap();
+    assert_eq!(loaded.server.master_api_key, "master-secret");
+    assert_eq!(
+        loaded.providers[0].api_key.as_deref(),
+        Some("provider-secret")
+    );
+    let _ = std::fs::remove_file(overrides_path);
+}
+
+#[tokio::test]
+async fn test_update_check_reports_disabled_by_default() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let router = tokenscavenger::app::startup::build_router(AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    ));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/update/check")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["enabled"], false);
+    assert_eq!(json["update_available"], false);
+}
+
+#[tokio::test]
 async fn test_ui_redirects_to_login_when_session_auth_required() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")

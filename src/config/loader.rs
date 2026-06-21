@@ -13,6 +13,8 @@ pub fn load_config(path: &Path) -> Result<Config, ConfigLoadError> {
 
     // Apply env var expansion
     cfg = env::expand_all(&cfg);
+    crate::util::credentials::decrypt_config(&mut cfg)
+        .map_err(|error| ConfigLoadError::Credentials(error.to_string()))?;
 
     // Validate
     let validation = validate_config(&cfg);
@@ -27,6 +29,8 @@ pub fn load_config(path: &Path) -> Result<Config, ConfigLoadError> {
 pub fn load_config_from_str(s: &str) -> Result<Config, ConfigLoadError> {
     let mut cfg: Config = toml::from_str(s).map_err(|e| ConfigLoadError::Parse(e.to_string()))?;
     cfg = env::expand_all(&cfg);
+    crate::util::credentials::decrypt_config(&mut cfg)
+        .map_err(|error| ConfigLoadError::Credentials(error.to_string()))?;
     let validation = validate_config(&cfg);
     if !validation.errors.is_empty() {
         return Err(ConfigLoadError::Validation(validation));
@@ -42,4 +46,6 @@ pub enum ConfigLoadError {
     Parse(String),
     #[error("Config validation failed")]
     Validation(ConfigValidation),
+    #[error("Credential decryption failed: {0}")]
+    Credentials(String),
 }

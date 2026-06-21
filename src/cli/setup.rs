@@ -184,6 +184,9 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
             enabled: true,
             path: "/metrics".into(),
         },
+        security: Default::default(),
+        retention: Default::default(),
+        updates: Default::default(),
         routing: RoutingConfig {
             free_first,
             allow_paid_fallback: allow_paid,

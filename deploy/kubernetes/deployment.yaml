@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tokenscavenger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tokenscavenger
+  template:
+    metadata:
+      labels:
+        app: tokenscavenger
+    spec:
+      containers:
+        - name: tokenscavenger
+          image: ghcr.io/kabudu/token-scavenger:REPLACE_WITH_VERSION
+          args: ["--config", "/config/tokenscavenger.toml"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: TOKENSCAVENGER_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tokenscavenger-secrets
+                  key: master-api-key
+            - name: TOKENSCAVENGER_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tokenscavenger-secrets
+                  key: credential-encryption-key
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: tokenscavenger-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: tokenscavenger-data

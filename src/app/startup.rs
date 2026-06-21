@@ -40,6 +40,9 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
         config.server = overrides.server;
         config.database = overrides.database;
         config.metrics = overrides.metrics;
+        config.security = overrides.security;
+        config.retention = overrides.retention;
+        config.updates = overrides.updates;
         config.routing = overrides.routing;
         config.resilience = overrides.resilience;
         info!("Runtime overrides merged successfully");
@@ -303,9 +306,23 @@ fn spawn_background_tasks(base_state: AppState) {
             let mut shutdown_rx = s.shutdown_rx.clone();
             tokio::select! {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {
-                    let _ = sqlx::query("DELETE FROM usage_events WHERE timestamp < datetime('now', '-30 days')").execute(&s.db).await;
-                    let _ = sqlx::query("DELETE FROM provider_health_events WHERE recorded_at < datetime('now', '-30 days')").execute(&s.db).await;
-                    let _ = sqlx::query("DELETE FROM config_audit_log WHERE created_at < datetime('now', '-90 days')").execute(&s.db).await;
+                    let retention = s.config().retention.clone();
+                    let usage_window = format!("-{} days", retention.usage_days);
+                    let health_window = format!("-{} days", retention.health_event_days);
+                    let audit_window = format!("-{} days", retention.audit_days);
+                    let trace_window = format!("-{} days", retention.request_trace_days);
+                    let _ = sqlx::query("DELETE FROM usage_events WHERE timestamp < datetime('now', ?)")
+                        .bind(&usage_window)
+                        .execute(&s.db).await;
+                    let _ = sqlx::query("DELETE FROM provider_health_events WHERE recorded_at < datetime('now', ?)")
+                        .bind(&health_window)
+                        .execute(&s.db).await;
+                    let _ = sqlx::query("DELETE FROM config_audit_log WHERE created_at < datetime('now', ?)")
+                        .bind(&audit_window)
+                        .execute(&s.db).await;
+                    let _ = sqlx::query("DELETE FROM request_trace_events WHERE recorded_at < datetime('now', ?)")
+                        .bind(&trace_window)
+                        .execute(&s.db).await;
                     info!("Retention cleanup complete");
                 }
                 _ = shutdown_rx.changed() => { if *shutdown_rx.borrow() { break; } }
@@ -464,6 +481,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/admin/pricing/backfill",
             axum::routing::post(crate::api::routes::admin_pricing_backfill),
+        )
+        .route(
+            "/admin/update/check",
+            axum::routing::get(crate::api::routes::admin_update_check),
+        )
+        .route(
+            "/admin/update/apply",
+            axum::routing::post(crate::api::routes::admin_update_apply),
         )
         .layer(from_fn_with_state(
             state.clone(),

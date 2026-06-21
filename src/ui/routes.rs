@@ -184,6 +184,15 @@ pub fn render_shell(
         </div>
     </div>
     </header>
+    <div id="update-banner" class="mx-8 mt-6 hidden rounded-lg border border-orange-500/30 bg-orange-500/10 px-4 py-3 text-sm text-orange-100">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <span class="font-semibold">Update available</span>
+                <span id="update-banner-text" class="text-orange-100/80"></span>
+            </div>
+            <button id="update-apply-btn" class="btn btn-primary text-xs">Apply Update</button>
+        </div>
+    </div>
     <div class="p-8 space-y-6">
     {}
     </div>
@@ -293,6 +302,34 @@ if (worstState === "Healthy") {{
     bDot.className = "w-2 h-2 rounded-full bg-red-500 animate-pulse";
     bCont.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/10 border border-red-500/20";
 }}
+
+async function checkForUpdate() {{
+    try {{
+        const response = await fetch('/admin/update/check');
+        if (!response.ok) return;
+        const update = await response.json();
+        if (!update.enabled || !update.update_available) return;
+        const banner = document.getElementById('update-banner');
+        const text = document.getElementById('update-banner-text');
+        const button = document.getElementById('update-apply-btn');
+        if (!banner || !text || !button) return;
+        text.innerText = ` v${{update.latest_version}} is available for ${{update.asset_name || 'this platform'}}.`;
+        button.onclick = () => showConfirm('Apply update?', 'TokenScavenger will install the verified release asset, restart with the same arguments, and reload the admin UI.', async () => {{
+            const apply = await fetch('/admin/update/apply', {{ method: 'POST' }});
+            const body = await apply.json().catch(() => ({{}}));
+            if (!apply.ok) {{
+                showModal('Update failed', body, true);
+                return;
+            }}
+            showModal('Restart scheduled', 'The new version is being installed. This page will reload shortly.', false);
+            setTimeout(() => window.location.reload(), 5000);
+        }});
+        banner.classList.remove('hidden');
+    }} catch (_) {{
+        // Update checks are best-effort and should never disturb the admin UI.
+    }}
+}}
+checkForUpdate();
 </script>
 {}
 </body>

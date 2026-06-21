@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tokenscavenger-config
+data:
+  tokenscavenger.toml: |
+    [server]
+    bind = "0.0.0.0:8000"
+    master_api_key = "${TOKENSCAVENGER_MASTER_KEY}"
+
+    [database]
+    path = "/data/tokenscavenger.db"
+
+    [metrics]
+    enabled = true
+
+    [security.credential_encryption]
+    enabled = true
+    key_env = "TOKENSCAVENGER_CREDENTIAL_KEY"
+
+    [updates]
+    enabled = false

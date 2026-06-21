@@ -39,6 +39,8 @@
 - **Embedded web UI** with live dashboard, observability, logs, and config editor
 - **Team-ready admin auth** with role-aware access and external identity headers
   from OIDC-capable reverse proxies
+- **Deployment controls** for encrypted credential persistence, self-update,
+  SBOM/provenance release artifacts, retention, Homebrew, and Kubernetes
 - **SQLite persistence** (WAL mode) for usage accounting and audit log
 - **Interactive setup wizard** and CLI tools
 - **Single static binary** (~15–25 MB)
@@ -345,7 +347,8 @@ The workflow:
 
 - Uses the current `Cargo.toml` version or bumps it, then creates a git tag (`vX.Y.Z`)
 - Builds binaries for Linux (x86_64), signed/notarized macOS (ARM64), and Windows (x86_64)
-- Creates a GitHub release with all binaries and checksums attached
+- Creates a GitHub release with all binaries, checksums, an SPDX SBOM, and
+  GitHub artifact attestations attached
 - Generates release notes from commit history
 
 macOS signing and notarization require these GitHub repository secrets:

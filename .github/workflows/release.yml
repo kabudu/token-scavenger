@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
@@ -202,6 +204,21 @@ jobs:
           done
           cat checksums.txt
 
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: tokenscavenger-${{ needs.prepare.outputs.new_version }}.spdx.json
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/**/tokenscavenger-v*
+            checksums.txt
+            tokenscavenger-${{ needs.prepare.outputs.new_version }}.spdx.json
+
       - name: Build release notes
         run: |
           python3 scripts/changelog_release.py extract \
@@ -228,6 +245,11 @@ jobs:
           ### Checksums (SHA256)
 
           See `checksums.txt` attached below.
+
+          ### SBOM and Provenance
+
+          This release includes an SPDX SBOM and GitHub artifact attestations for
+          the release binaries, checksums, and SBOM.
 
           ### First Run
 
@@ -262,3 +284,4 @@ jobs:
           files: |
             dist/**/tokenscavenger-v*
             checksums.txt
+            tokenscavenger-${{ needs.prepare.outputs.new_version }}.spdx.json
