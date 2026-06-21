@@ -64,6 +64,10 @@ jobs:
           fi
 
           if git rev-parse "v$NEW_VER" >/dev/null 2>&1; then
+            if [ "${{ github.event.inputs.bump_type }}" = "current" ]; then
+              echo "Tag v$NEW_VER already exists — reusing for current-version release"
+              exit 0
+            fi
             echo "Tag v$NEW_VER already exists — aborting"
             exit 1
           fi
@@ -187,6 +191,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
         with:
