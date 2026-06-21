@@ -23,10 +23,14 @@ fn interval_for_period(period: &str) -> &'static str {
 
 fn safe_details(value: serde_json::Value) -> String {
     let redacted = crate::util::redact::redact_json_value(value);
-    let mut text = serde_json::to_string(&redacted).unwrap_or_else(|_| "{}".to_string());
+    let text = serde_json::to_string(&redacted).unwrap_or_else(|_| "{}".to_string());
     if text.len() > 8192 {
-        text.truncate(8192);
-        text.push_str(r#","truncated":true}"#);
+        let preview = text.chars().take(8192).collect::<String>();
+        return serde_json::json!({
+            "truncated": true,
+            "preview": preview,
+        })
+        .to_string();
     }
     text
 }
@@ -484,7 +488,7 @@ pub async fn get_incidents(state: &AppState, limit: i64) -> serde_json::Value {
         "recorded_at": row.0,
         "provider_id": row.1,
         "title": format!("Provider {} {}", row.1, row.3),
-        "details": serde_json::from_str::<serde_json::Value>(row.4.as_deref().unwrap_or("{}")).unwrap_or_else(|_| json!({})),
+        "details": crate::util::redact::redact_json_value(serde_json::from_str::<serde_json::Value>(row.4.as_deref().unwrap_or("{}")).unwrap_or_else(|_| json!({}))),
     })));
     incidents.extend(audit.into_iter().map(|row| {
         json!({

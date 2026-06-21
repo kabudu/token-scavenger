@@ -1309,7 +1309,7 @@ pub async fn render_observability(state: &AppState) -> String {
                         "text-red-400"
                     };
                     format!(
-                        r#"<tr><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono text-xs">{}</td><td>{}</td><td>{}</td><td class="{} font-bold text-xs uppercase">{}</td><td class="font-mono">{}ms</td><td><button class="btn text-xs" onclick="loadTrace('{}')">Open</button></td></tr>"#,
+                        r#"<tr><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono text-xs">{}</td><td>{}</td><td>{}</td><td class="{} font-bold text-xs uppercase">{}</td><td class="font-mono">{}ms</td><td><button class="btn text-xs" data-request-id="{}" onclick="loadTraceFromButton(this)">Open</button></td></tr>"#,
                         request_id, model, provider, trace["endpoint_kind"], status_class, status, latency, request_id
                     )
                 })
@@ -1457,7 +1457,7 @@ pub async fn render_observability(state: &AppState) -> String {
         const status = trace.status || 'unknown';
         const cls = status === 'success' ? 'text-emerald-400' : (trace.http_status === 429 ? 'text-yellow-400' : 'text-red-400');
         const id = htmlEscape(trace.request_id);
-        return `<tr><td class="font-mono text-xs text-cyan-400">${id}</td><td class="font-mono text-xs">${htmlEscape(trace.requested_model)}</td><td>${htmlEscape(trace.selected_provider_id || '-')}</td><td>${htmlEscape(trace.endpoint_kind)}</td><td class="${cls} font-bold text-xs uppercase">${htmlEscape(status)}</td><td class="font-mono">${trace.latency_ms || 0}ms</td><td><button class="btn text-xs" onclick="loadTrace('${id}')">Open</button></td></tr>`;
+        return `<tr><td class="font-mono text-xs text-cyan-400">${id}</td><td class="font-mono text-xs">${htmlEscape(trace.requested_model)}</td><td>${htmlEscape(trace.selected_provider_id || '-')}</td><td>${htmlEscape(trace.endpoint_kind)}</td><td class="${cls} font-bold text-xs uppercase">${htmlEscape(status)}</td><td class="font-mono">${trace.latency_ms || 0}ms</td><td><button class="btn text-xs" data-request-id="${id}" onclick="loadTraceFromButton(this)">Open</button></td></tr>`;
     }
     function incidentRow(incident) {
         const severity = incident.severity || 'info';
@@ -1485,6 +1485,9 @@ pub async fn render_observability(state: &AppState) -> String {
         const detail = await response.json();
         document.getElementById('trace-title').innerText = requestId;
         document.getElementById('trace-detail').innerText = JSON.stringify(detail, null, 2);
+    }
+    function loadTraceFromButton(button) {
+        loadTrace(button.dataset.requestId || '');
     }
     async function downloadDiagnosticBundle() {
         const bundle = await fetch('/admin/diagnostics/bundle').then(r => r.json());
