@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.3.3] - 2026-06-21
+
+### Added
+
 - Added an operator-grade observability workflow with durable request trace
   timelines, time-window success/429/fallback/token/cost analytics, an incident
   feed, redacted diagnostic bundle export, and `/ui/observability`.
