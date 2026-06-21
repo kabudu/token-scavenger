@@ -15,6 +15,19 @@ ui_enabled = true                   # Enable/disable operator dashboard
 ui_path = "/ui"                     # URL prefix for UI
 request_timeout_ms = 120000         # Upstream request timeout
 
+[server.external_identity]
+enabled = false                     # Trust identity headers from a reverse proxy
+user_header = "x-auth-request-user"
+email_header = "x-auth-request-email"
+name_header = "x-auth-request-preferred-username"
+groups_header = "x-auth-request-groups"
+group_delimiter = ","
+read_only_groups = []
+operator_groups = []
+config_editor_groups = []
+credential_manager_groups = []
+admin_groups = []
+
 [database]
 path = "tokenscavenger.db"          # SQLite database file path
 max_connections = 8                 # SQLite pool size
@@ -88,6 +101,44 @@ target = ["groq/llama3-70b-8192", "google/gemini-2.0-flash"]
 | `ui_enabled` | `true` | Whether to serve the operator web UI |
 | `ui_path` | `"/ui"` | URL path prefix for the UI |
 | `request_timeout_ms` | `120000` | Maximum time to wait for an upstream provider response |
+
+#### `[server.external_identity]`
+
+External identity support lets TokenScavenger sit behind an identity-aware
+reverse proxy such as oauth2-proxy, Dex, Authelia, Keycloak, Zitadel, or a cloud
+load balancer. Those systems can authenticate Google, GitHub, Microsoft, or any
+OIDC/SAML provider and forward trusted identity headers to TokenScavenger.
+
+TokenScavenger does not trust these headers unless `enabled = true`. When
+enabled, external identity headers authorize only `/ui` and `/admin/*`; OpenAI
+client endpoints such as `/v1/chat/completions` still require the
+`master_api_key` when one is configured.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Enables trusted reverse-proxy identity headers for admin UI/API access. |
+| `user_header` | `"x-auth-request-user"` | Header containing the stable subject/user id. |
+| `email_header` | `"x-auth-request-email"` | Optional email header used for display and audit actor strings. |
+| `name_header` | `"x-auth-request-preferred-username"` | Optional display-name header. |
+| `groups_header` | `"x-auth-request-groups"` | Header containing group names. |
+| `group_delimiter` | `","` | Delimiter used to split the groups header. |
+| `read_only_groups` | `[]` | Groups allowed to view the UI and read admin APIs. |
+| `operator_groups` | `[]` | Groups allowed to run operational actions such as provider tests and discovery refreshes. |
+| `config_editor_groups` | `[]` | Groups allowed to edit non-secret runtime configuration. |
+| `credential_manager_groups` | `[]` | Groups allowed to update credential-bearing fields such as provider API keys. |
+| `admin_groups` | `[]` | Groups with full admin access. |
+
+Example:
+
+```toml
+[server.external_identity]
+enabled = true
+read_only_groups = ["tokenscavenger-viewers"]
+operator_groups = ["tokenscavenger-operators"]
+config_editor_groups = ["tokenscavenger-editors"]
+credential_manager_groups = ["tokenscavenger-credential-managers"]
+admin_groups = ["tokenscavenger-admins"]
+```
 
 ### `[database]`
 

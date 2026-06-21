@@ -5,38 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="title"
-      content="TokenScavenger v0.3.3 | Observable LLM Routing"
+      content="TokenScavenger v0.3.4 | Team-Ready LLM Routing"
     />
     <meta
       name="description"
-      content="TokenScavenger v0.3.3 adds request traces, incident workflow, redacted diagnostic bundles, and Grafana/Prometheus starters to local-first LLM routing."
+      content="TokenScavenger v0.3.4 adds role-aware admin access and external identity headers for team-operated local-first LLM routing."
     />
     <meta name="robots" content="index, follow" />
     <link rel="icon" type="image/png" href="assets/TokenScavengerLogo.png" />
     <meta property="og:type" content="website" />
     <meta
       property="og:title"
-      content="TokenScavenger v0.3.3 | Observable LLM Routing"
+      content="TokenScavenger v0.3.4 | Team-Ready LLM Routing"
     />
     <meta
       property="og:description"
-      content="Route local, free-tier, and explicit paid fallback models through one self-hosted gateway with request traces and incident diagnostics."
+      content="Route local, free-tier, and explicit paid fallback models through one self-hosted gateway with role-aware admin access."
     />
     <meta
       property="og:image"
       content="/assets/token-scavenger-v0.3.0-local-release.png"
     />
     <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:title" content="TokenScavenger v0.3.3" />
+    <meta property="twitter:title" content="TokenScavenger v0.3.4" />
     <meta
       property="twitter:description"
-      content="Now with request traces, incident workflow, redacted diagnostic bundles, and Grafana/Prometheus starters."
+      content="Now with role-aware admin access and external identity headers for OIDC-capable reverse proxies."
     />
     <meta
       property="twitter:image"
       content="/assets/token-scavenger-v0.3.0-local-release.png"
     />
-    <title>TokenScavenger v0.3.3 | Observable LLM Routing</title>
+    <title>TokenScavenger v0.3.4 | Team-Ready LLM Routing</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -178,9 +178,9 @@
               gateway.
             </h1>
             <p class="mt-6 max-w-xl text-lg leading-8 text-slate-300">
-              TokenScavenger v0.3.3 routes local, free-tier, and explicit paid
-              fallback providers with durable request traces, incident
-              diagnostics, and redacted support bundles.
+              TokenScavenger v0.3.4 routes local, free-tier, and explicit paid
+              fallback providers with role-aware admin access, external
+              identity headers, and durable incident diagnostics.
             </p>
             <div class="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center">
               <a
@@ -349,7 +349,7 @@
               </p>
               <pre
                 class="mt-6 min-w-0 overflow-x-auto rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
-              ><code>VERSION=v0.3.3
+              ><code>VERSION=v0.3.4
 curl -LO https://github.com/kabudu/token-scavenger/releases/download/$VERSION/tokenscavenger-$VERSION-aarch64-apple-darwin.zip
 unzip tokenscavenger-$VERSION-aarch64-apple-darwin.zip
 ./tokenscavenger</code></pre>
@@ -369,7 +369,7 @@ unzip tokenscavenger-$VERSION-aarch64-apple-darwin.zip
               </p>
               <pre
                 class="mt-6 min-w-0 overflow-x-auto rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
-              ><code>VERSION=v0.3.3
+              ><code>VERSION=v0.3.4
 curl -LO https://github.com/kabudu/token-scavenger/releases/download/$VERSION/tokenscavenger-$VERSION-x86_64-unknown-linux-gnu
 chmod +x tokenscavenger-$VERSION-x86_64-unknown-linux-gnu
 ./tokenscavenger-$VERSION-x86_64-unknown-linux-gnu</code></pre>
@@ -389,7 +389,7 @@ chmod +x tokenscavenger-$VERSION-x86_64-unknown-linux-gnu
               </p>
               <pre
                 class="mt-6 min-w-0 max-w-full whitespace-pre-wrap break-all rounded-2xl bg-slate-950/80 p-5 text-sm leading-6 text-slate-200"
-              ><code class="whitespace-pre-wrap break-all">$Version = "v0.3.3"
+              ><code class="whitespace-pre-wrap break-all">$Version = "v0.3.4"
 $Url = "https://github.com/kabudu/token-scavenger/releases/download/$Version/tokenscavenger-$Version-x86_64-pc-windows-msvc.exe"
 Invoke-WebRequest `
   -Uri $Url `

@@ -47,6 +47,16 @@ pub fn expand_provider_config(
 pub fn expand_all(cfg: &crate::config::schema::Config) -> crate::config::schema::Config {
     let mut cfg = cfg.clone();
     cfg.server.master_api_key = expand_env_vars(&cfg.server.master_api_key);
+    cfg.server.external_identity.user_header =
+        expand_env_vars(&cfg.server.external_identity.user_header);
+    cfg.server.external_identity.email_header =
+        expand_env_vars(&cfg.server.external_identity.email_header);
+    cfg.server.external_identity.name_header =
+        expand_env_vars(&cfg.server.external_identity.name_header);
+    cfg.server.external_identity.groups_header =
+        expand_env_vars(&cfg.server.external_identity.groups_header);
+    cfg.server.external_identity.group_delimiter =
+        expand_env_vars(&cfg.server.external_identity.group_delimiter);
     cfg.providers = cfg
         .providers
         .into_iter()

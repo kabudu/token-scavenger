@@ -18,6 +18,7 @@ TokenScavenger exposes OpenAI-compatible HTTP endpoints while routing each reque
 | `GET /admin/request-traces/{request_id}` | Detailed route timeline, usage, and request outcome for one request. |
 | `GET /admin/incidents` | Incident feed derived from provider health events, route failures, and config audit history. |
 | `GET /admin/diagnostics/bundle` | Redacted diagnostic bundle for support and incident handoff. |
+| `GET /admin/whoami` | Current authenticated admin principal, auth source, role, and credential-management permission. |
 
 ## Error Shape
 
@@ -148,3 +149,20 @@ Authorization: Bearer <master-api-key>
 ```
 
 The key is for TokenScavenger itself. Provider API keys remain in TokenScavenger configuration and are never returned in API responses, logs, fixtures, or UI payloads.
+
+For admin UI/API access, TokenScavenger can also trust identity headers from an
+identity-aware reverse proxy when `[server.external_identity] enabled = true`.
+This supports Google, GitHub, Microsoft, and OSS identity providers through
+OIDC-capable proxies such as oauth2-proxy, Dex, Authelia, Keycloak, and Zitadel.
+
+External identity headers authorize only `/ui` and `/admin/*`. They do not
+authorize OpenAI-compatible client endpoints under `/v1/*`; those continue to
+use the `master_api_key` when configured.
+
+Role enforcement:
+
+- `read_only`: view UI and read admin APIs.
+- `operator`: read-only plus operational POSTs such as provider tests and discovery refreshes.
+- `config_editor`: mutate non-secret runtime config.
+- `credential_manager`: update credential-bearing config fields such as provider API keys.
+- `admin`: full admin access.

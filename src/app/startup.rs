@@ -361,6 +361,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(crate::api::routes::admin_providers),
         )
         .route(
+            "/admin/whoami",
+            axum::routing::get(crate::api::routes::admin_whoami),
+        )
+        .route(
             "/admin/config",
             axum::routing::get(crate::api::routes::admin_config),
         )

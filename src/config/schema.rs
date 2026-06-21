@@ -31,6 +31,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub master_api_key: String,
     #[serde(default)]
+    pub external_identity: ExternalIdentityConfig,
+    #[serde(default)]
     pub allowed_cors_origins: Vec<String>,
     #[serde(default)]
     pub allow_query_api_keys: bool,
@@ -49,12 +51,64 @@ impl Default for ServerConfig {
         Self {
             bind: default_bind(),
             master_api_key: String::new(),
+            external_identity: ExternalIdentityConfig::default(),
             allowed_cors_origins: Vec::new(),
             allow_query_api_keys: false,
             ui_session_auth: false,
             ui_enabled: true,
             ui_path: default_ui_path(),
             request_timeout_ms: default_request_timeout_ms(),
+        }
+    }
+}
+
+/// Trusted reverse-proxy identity headers for admin UI/API access.
+///
+/// TokenScavenger does not perform the OAuth/OIDC browser dance itself. Instead,
+/// an operator can place it behind an identity-aware proxy such as oauth2-proxy,
+/// Dex, Authelia, Keycloak, Zitadel, or a cloud load balancer that authenticates
+/// Google, GitHub, Microsoft, or another OIDC provider and forwards identity
+/// headers to TokenScavenger.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalIdentityConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_external_user_header")]
+    pub user_header: String,
+    #[serde(default = "default_external_email_header")]
+    pub email_header: String,
+    #[serde(default = "default_external_name_header")]
+    pub name_header: String,
+    #[serde(default = "default_external_groups_header")]
+    pub groups_header: String,
+    #[serde(default = "default_external_group_delimiter")]
+    pub group_delimiter: String,
+    #[serde(default)]
+    pub read_only_groups: Vec<String>,
+    #[serde(default)]
+    pub operator_groups: Vec<String>,
+    #[serde(default)]
+    pub config_editor_groups: Vec<String>,
+    #[serde(default)]
+    pub credential_manager_groups: Vec<String>,
+    #[serde(default)]
+    pub admin_groups: Vec<String>,
+}
+
+impl Default for ExternalIdentityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            user_header: default_external_user_header(),
+            email_header: default_external_email_header(),
+            name_header: default_external_name_header(),
+            groups_header: default_external_groups_header(),
+            group_delimiter: default_external_group_delimiter(),
+            read_only_groups: Vec::new(),
+            operator_groups: Vec::new(),
+            config_editor_groups: Vec::new(),
+            credential_manager_groups: Vec::new(),
+            admin_groups: Vec::new(),
         }
     }
 }
@@ -242,6 +296,21 @@ fn default_ui_path() -> String {
 }
 fn default_request_timeout_ms() -> u64 {
     120_000
+}
+fn default_external_user_header() -> String {
+    "x-auth-request-user".to_string()
+}
+fn default_external_email_header() -> String {
+    "x-auth-request-email".to_string()
+}
+fn default_external_name_header() -> String {
+    "x-auth-request-preferred-username".to_string()
+}
+fn default_external_groups_header() -> String {
+    "x-auth-request-groups".to_string()
+}
+fn default_external_group_delimiter() -> String {
+    ",".to_string()
 }
 fn default_db_path() -> String {
     "tokenscavenger.db".to_string()
