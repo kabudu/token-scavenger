@@ -914,14 +914,17 @@ async fn test_encrypted_runtime_overrides_do_not_store_plaintext_secrets() {
 }
 
 #[tokio::test]
-async fn test_update_check_reports_disabled_by_default() {
+async fn test_update_check_is_enabled_by_default_and_resilient_to_failures() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
         .await
         .unwrap();
+    let mut config = Config::default();
+    assert!(config.updates.enabled);
+    config.updates.github_repo = "\n".to_string();
     let router = tokenscavenger::app::startup::build_router(AppState::new(
-        Config::default(),
+        config,
         pool,
         Default::default(),
         tokio::sync::broadcast::channel(1).0,
@@ -941,8 +944,9 @@ async fn test_update_check_reports_disabled_by_default() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["enabled"], false);
+    assert_eq!(json["enabled"], true);
     assert_eq!(json["update_available"], false);
+    assert!(json["check_error"].as_str().is_some());
 }
 
 #[tokio::test]

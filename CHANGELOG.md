@@ -13,11 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The release workflow now updates `kabudu/homebrew-tap` automatically after
   publishing release artifacts.
+- Self-update checks are enabled by default and passive check failures now
+  return a diagnostic status instead of disrupting the admin UI.
 
 ### Fixed
 
 - Updated the in-repository Homebrew formula copy to the current v0.3.5 release
   artifact URLs and checksums.
+- Self-update checksum verification now accepts the `dist/...` paths emitted in
+  release `checksums.txt` files.
 
 ## [0.3.5] - 2026-06-21
 

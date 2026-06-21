@@ -51,7 +51,7 @@ audit_days = 90
 request_trace_days = 30
 
 [updates]
-enabled = false                     # Enable admin UI/API self-update checks
+enabled = true                      # Enable admin UI/API self-update checks
 github_repo = "kabudu/token-scavenger"
 check_interval_secs = 21600
 
@@ -209,9 +209,13 @@ variable references there for best hygiene.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `false` | Enables `/admin/update/check`, `/admin/update/apply`, and the admin UI update banner. |
+| `enabled` | `true` | Enables `/admin/update/check`, `/admin/update/apply`, and the admin UI update banner. |
 | `github_repo` | `"kabudu/token-scavenger"` | GitHub repository used for release discovery. |
 | `check_interval_secs` | `21600` | Intended operator polling interval for update checks. |
+
+Update checks are passive and resilient: if GitHub is unreachable or the host
+has no internet access, `/admin/update/check` still returns `200 OK` with
+`update_available = false` and a `check_error` message for diagnostics.
 
 When applying an update, TokenScavenger downloads the platform release asset,
 verifies it against `checksums.txt`, replaces the current executable, and
