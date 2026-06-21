@@ -16,11 +16,83 @@ pub struct Config {
     #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]
+    pub security: SecurityConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
+    #[serde(default)]
+    pub updates: UpdateConfig,
+    #[serde(default)]
     pub routing: RoutingConfig,
     #[serde(default)]
     pub resilience: ResilienceConfig,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub credential_encryption: CredentialEncryptionConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialEncryptionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_credential_key_env")]
+    pub key_env: String,
+}
+
+impl Default for CredentialEncryptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            key_env: default_credential_key_env(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    #[serde(default = "default_usage_retention_days")]
+    pub usage_days: u32,
+    #[serde(default = "default_health_retention_days")]
+    pub health_event_days: u32,
+    #[serde(default = "default_audit_retention_days")]
+    pub audit_days: u32,
+    #[serde(default = "default_trace_retention_days")]
+    pub request_trace_days: u32,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            usage_days: default_usage_retention_days(),
+            health_event_days: default_health_retention_days(),
+            audit_days: default_audit_retention_days(),
+            request_trace_days: default_trace_retention_days(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_update_repo")]
+    pub github_repo: String,
+    #[serde(default = "default_update_check_interval_secs")]
+    pub check_interval_secs: u64,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            github_repo: default_update_repo(),
+            check_interval_secs: default_update_check_interval_secs(),
+        }
+    }
 }
 
 /// HTTP server binding and auth settings.
@@ -296,6 +368,27 @@ fn default_ui_path() -> String {
 }
 fn default_request_timeout_ms() -> u64 {
     120_000
+}
+fn default_credential_key_env() -> String {
+    "TOKENSCAVENGER_CREDENTIAL_KEY".to_string()
+}
+fn default_usage_retention_days() -> u32 {
+    30
+}
+fn default_health_retention_days() -> u32 {
+    30
+}
+fn default_audit_retention_days() -> u32 {
+    90
+}
+fn default_trace_retention_days() -> u32 {
+    30
+}
+fn default_update_repo() -> String {
+    "kabudu/token-scavenger".to_string()
+}
+fn default_update_check_interval_secs() -> u64 {
+    21_600
 }
 fn default_external_user_header() -> String {
     "x-auth-request-user".to_string()

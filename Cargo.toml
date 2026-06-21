@@ -21,6 +21,9 @@ sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runti
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "1.1"
+base64 = "0.22"
+aes-gcm = "0.10"
+sha2 = "0.10"
 
 # CLI
 clap = { version = "4.6", features = ["derive"] }
@@ -57,6 +60,7 @@ url = "2.5"
 rand = "0.10"
 regex-lite = "0.1"
 async-stream = "0.3"
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
 
 # Templating for UI
 askama = "0.15"

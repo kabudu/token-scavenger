@@ -40,6 +40,21 @@ level = "info"                      # trace | debug | info | warn | error
 enabled = true                      # Enable Prometheus metrics endpoint
 path = "/metrics"                   # Metrics endpoint path
 
+[security.credential_encryption]
+enabled = false                     # Encrypt credential-bearing runtime overrides
+key_env = "TOKENSCAVENGER_CREDENTIAL_KEY"
+
+[retention]
+usage_days = 30
+health_event_days = 30
+audit_days = 90
+request_trace_days = 30
+
+[updates]
+enabled = false                     # Enable admin UI/API self-update checks
+github_repo = "kabudu/token-scavenger"
+check_interval_secs = 21600
+
 [routing]
 free_first = true                   # Always prefer free tier first
 allow_paid_fallback = false         # Allow fallback to paid providers
@@ -160,6 +175,47 @@ admin_groups = ["tokenscavenger-admins"]
 |-------|---------|-------------|
 | `enabled` | `true` | Whether to expose Prometheus metrics. |
 | `path` | `"/metrics"` | HTTP endpoint path for Prometheus scrape. |
+
+### `[security.credential_encryption]`
+
+When enabled, TokenScavenger encrypts credential-bearing values before writing
+runtime override files created by the admin UI or CLI hot-reload flow. Runtime
+memory still holds decrypted values so provider adapters can authenticate
+normally.
+
+The key is supplied by the environment variable named in `key_env`. TokenScavenger
+derives a 256-bit AES-GCM key from that value. Keep this key stable across
+restarts; encrypted override files cannot be decrypted without it.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Encrypts persisted runtime override secrets when true. |
+| `key_env` | `"TOKENSCAVENGER_CREDENTIAL_KEY"` | Environment variable containing the operator-supplied encryption key. |
+
+Encrypted values are stored with the `tsenc:v1:` prefix. Base config files may
+still contain plaintext secrets if operators write them manually; use environment
+variable references there for best hygiene.
+
+### `[retention]`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `usage_days` | `30` | Retention window for usage events. |
+| `health_event_days` | `30` | Retention window for provider health events. |
+| `audit_days` | `90` | Retention window for config audit entries. |
+| `request_trace_days` | `30` | Retention window for request trace events. |
+
+### `[updates]`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Enables `/admin/update/check`, `/admin/update/apply`, and the admin UI update banner. |
+| `github_repo` | `"kabudu/token-scavenger"` | GitHub repository used for release discovery. |
+| `check_interval_secs` | `21600` | Intended operator polling interval for update checks. |
+
+When applying an update, TokenScavenger downloads the platform release asset,
+verifies it against `checksums.txt`, replaces the current executable, and
+restarts with the same executable arguments.
 
 ### `[routing]`
 

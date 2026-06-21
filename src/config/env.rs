@@ -47,6 +47,9 @@ pub fn expand_provider_config(
 pub fn expand_all(cfg: &crate::config::schema::Config) -> crate::config::schema::Config {
     let mut cfg = cfg.clone();
     cfg.server.master_api_key = expand_env_vars(&cfg.server.master_api_key);
+    cfg.security.credential_encryption.key_env =
+        expand_env_vars(&cfg.security.credential_encryption.key_env);
+    cfg.updates.github_repo = expand_env_vars(&cfg.updates.github_repo);
     cfg.server.external_identity.user_header =
         expand_env_vars(&cfg.server.external_identity.user_header);
     cfg.server.external_identity.email_header =

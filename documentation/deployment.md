@@ -172,6 +172,38 @@ setting its own trusted values. TokenScavenger expects these default headers:
 Use `GET /admin/whoami` after deployment to verify the resolved identity source,
 subject, role, and credential-management permission.
 
+### Credential Encryption
+
+Enable encrypted runtime override storage when admins will enter provider keys
+through the UI or CLI hot-reload flow:
+
+```toml
+[security.credential_encryption]
+enabled = true
+key_env = "TOKENSCAVENGER_CREDENTIAL_KEY"
+```
+
+Set `TOKENSCAVENGER_CREDENTIAL_KEY` in the service manager, container secret, or
+Kubernetes Secret. Keep it stable and backed up; encrypted `*.overrides.toml`
+files cannot be restored without the same key.
+
+### Self-Update
+
+Self-update is opt-in:
+
+```toml
+[updates]
+enabled = true
+github_repo = "kabudu/token-scavenger"
+```
+
+The admin UI checks `/admin/update/check` and displays an update CTA when a
+newer GitHub release exists. Applying an update downloads the matching platform
+asset, verifies it against `checksums.txt`, replaces the current executable, and
+restarts TokenScavenger with the same command-line arguments. Use a process
+manager such as systemd, launchd, Docker, or Kubernetes for additional restart
+supervision.
+
 ### Reverse Proxy (Nginx)
 
 ```nginx
@@ -233,7 +265,29 @@ sqlite3 tokenscavenger.db ".backup 'backup-$(date +%Y%m%d).db'"
 
 ### Retention
 
-Usage and health event data accumulates over time. The default schema includes timestamp fields for implementing retention cleanup. Configure retention via config in a future release.
+Usage, health, audit, and request trace data are cleaned up by the background
+retention task. Configure windows in days:
+
+```toml
+[retention]
+usage_days = 30
+health_event_days = 30
+audit_days = 90
+request_trace_days = 30
+```
+
+### Restore Drill
+
+1. Stop TokenScavenger.
+2. Copy the backup database into place.
+3. Restore the matching config and overrides files.
+4. Ensure `TOKENSCAVENGER_CREDENTIAL_KEY` matches the value used when encrypted overrides were created.
+5. Start TokenScavenger and verify `/readyz`, `/admin/whoami`, `/admin/config`, and `/ui/observability`.
+
+Migration rollback is file-based: restore the database backup taken before the
+upgrade and run the previous binary with the same config. Runtime config
+snapshots can also be rolled back through `/admin/config/rollback` when the
+database itself is healthy.
 
 ## Monitoring
 
@@ -269,6 +323,14 @@ Ready-to-import monitoring starters live in `monitoring/`:
 
 - `monitoring/grafana-dashboard.json`
 - `monitoring/prometheus-alerts.yml`
+
+Release artifacts also include `checksums.txt`, an SPDX SBOM, and GitHub
+artifact attestations for provenance verification.
+
+## Packaging Starters
+
+- Homebrew formula template: `packaging/homebrew/tokenscavenger.rb`
+- Kubernetes manifests: `deploy/kubernetes/`
 
 ### Logging
 

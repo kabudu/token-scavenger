@@ -23,8 +23,12 @@ pub fn save_runtime_overrides(
     config_path: &Path,
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if config_path.as_os_str().is_empty() {
+        return Ok(());
+    }
     let path = overrides_path(config_path);
-    let toml_str = toml::to_string_pretty(config)?;
+    let stored = crate::util::credentials::encrypted_for_storage(config)?;
+    let toml_str = toml::to_string_pretty(&stored)?;
 
     let header = "# TokenScavenger Runtime Overrides\n".to_string();
     std::fs::write(&path, header + &toml_str)?;
@@ -42,6 +46,15 @@ pub fn load_runtime_overrides(config_path: &Path) -> Option<Config> {
         Ok(s) => match toml::from_str::<Config>(&s) {
             Ok(raw_cfg) => {
                 let cfg = env::expand_all(&raw_cfg);
+                let mut cfg = cfg;
+                if let Err(error) = crate::util::credentials::decrypt_config(&mut cfg) {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "Runtime overrides failed credential decryption and will be ignored"
+                    );
+                    return None;
+                }
                 let validation = validate_config(&cfg);
                 if !validation.errors.is_empty() {
                     tracing::warn!(

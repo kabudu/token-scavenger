@@ -614,6 +614,28 @@ pub async fn admin_config_save(
         }
     }
 
+    // --- Security, retention, and update settings ---
+    if let Some(security) = body.get("security") {
+        config.security = serde_json::from_value(security.clone()).map_err(|error| {
+            ApiError::InvalidRequest(format!("Invalid security config: {error}"))
+        })?;
+        changed = true;
+    }
+
+    if let Some(retention) = body.get("retention") {
+        config.retention = serde_json::from_value(retention.clone()).map_err(|error| {
+            ApiError::InvalidRequest(format!("Invalid retention config: {error}"))
+        })?;
+        changed = true;
+    }
+
+    if let Some(updates) = body.get("updates") {
+        config.updates = serde_json::from_value(updates.clone()).map_err(|error| {
+            ApiError::InvalidRequest(format!("Invalid updates config: {error}"))
+        })?;
+        changed = true;
+    }
+
     // --- Routing settings ---
     if let Some(routing) = body.get("routing") {
         if let Some(free) = routing.get("free_first").and_then(|v| v.as_bool()) {
@@ -982,7 +1004,8 @@ pub async fn admin_config_save(
         }
 
         // Persist runtime overrides to disk
-        let _ = crate::config::overrides::save_runtime_overrides(config_path, &config);
+        crate::config::overrides::save_runtime_overrides(config_path, &config)
+            .map_err(|error| ApiError::InternalError(error.to_string()))?;
 
         // Record audit entry
         let _ = sqlx::query(
@@ -1066,7 +1089,8 @@ pub async fn admin_config_rollback(
     if let Ok(mut engine) = state.route_engine.write() {
         engine.update_config(config.clone());
     }
-    let _ = crate::config::overrides::save_runtime_overrides(&state.boot_config_file, &config);
+    crate::config::overrides::save_runtime_overrides(&state.boot_config_file, &config)
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
     let _ = sqlx::query(
         "INSERT INTO config_audit_log (actor, action, target_type, target_id) VALUES (?, ?, ?, ?)",
     )
@@ -1270,4 +1294,25 @@ pub async fn admin_pricing_backfill(
         .await
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
     Ok(Json(result))
+}
+
+pub async fn admin_update_check(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let status = crate::update::check_for_update(&state.config().updates)
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+    Ok(Json(serde_json::to_value(status).unwrap_or_default()))
+}
+
+pub async fn admin_update_apply(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let status = crate::update::apply_update(state)
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "status": "restart_scheduled",
+        "update": status
+    })))
 }

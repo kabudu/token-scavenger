@@ -17,8 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Zitadel.
 - Added `GET /admin/whoami` for validating the authenticated admin principal,
   auth source, resolved role, and credential-management permission.
+- Added encrypted credential persistence for runtime overrides using an
+  operator-supplied AES-GCM key.
+- Added opt-in self-update checks and apply flow through the admin API/UI, with
+  checksum verification and same-argument restart.
+- Added configurable retention windows for usage, health, audit, and request
+  trace data.
+- Added Homebrew formula and Kubernetes manifest starters.
+- Added release SBOM generation and GitHub artifact provenance attestations.
 
 ### Changed
+
+- Documented restore drills, migration rollback guidance, and release
+  verification surfaces for deployment operators.
 
 ### Fixed
 

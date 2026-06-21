@@ -15,5 +15,6 @@ pub mod providers;
 pub mod resilience;
 pub mod router;
 pub mod ui;
+pub mod update;
 pub mod usage;
 pub mod util;
