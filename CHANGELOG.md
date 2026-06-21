@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+## [0.3.6] - 2026-06-21
+
+### Added
+
+### Changed
+
 - The release workflow now updates `kabudu/homebrew-tap` automatically after
   publishing release artifacts.
 - Self-update checks are enabled by default and passive check failures now
