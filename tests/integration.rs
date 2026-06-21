@@ -950,6 +950,42 @@ async fn test_update_check_is_enabled_by_default_and_resilient_to_failures() {
 }
 
 #[tokio::test]
+async fn test_chat_tester_default_resolves_to_discovered_model() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO providers (provider_id, display_name, enabled, free_only)
+         VALUES ('local', 'Local', 1, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO models
+         (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, discovered_at, updated_at)
+         VALUES ('local', 'llama3.2', 'llama3.2', 1, 1, 1, 0, datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    let html = tokenscavenger::ui::routes::render_chat(&state).await;
+
+    assert!(html.contains("function resolveSelectedModel()"));
+    assert!(html.contains("const model = resolveSelectedModel();"));
+    assert!(!html.contains("model: model || 'default'"));
+}
+
+#[tokio::test]
 async fn test_ui_redirects_to_login_when_session_auth_required() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")

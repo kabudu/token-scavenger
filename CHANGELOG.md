@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refreshed README and deployment guidance for Homebrew-first installs,
+  self-update testing, and current v0.3.6 deployment examples.
+
 ### Fixed
+
+- Fixed the admin Chat Tester so the `Default` model selection resolves to an
+  enabled discovered chat model instead of sending the literal model `default`.
 
 ## [0.3.6] - 2026-06-21
 

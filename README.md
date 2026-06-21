@@ -62,10 +62,19 @@ Error responses use the OpenAI-style `{"error": ...}` envelope. Upstream rate-li
 
 ## Quick Start
 
-### 1. Download the latest release
+### 1. Install TokenScavenger
 
-The simplest way to run TokenScavenger is to download the prebuilt binary for
-your platform from the [latest GitHub release](https://github.com/kabudu/token-scavenger/releases/latest).
+The simplest install path on macOS or Linux with Homebrew is:
+
+```bash
+brew tap kabudu/tap
+brew install tokenscavenger
+tokenscavenger setup
+tokenscavenger -c ~/.config/tokenscavenger/tokenscavenger.toml
+```
+
+You can also download a prebuilt binary for your platform from the
+[latest GitHub release](https://github.com/kabudu/token-scavenger/releases/latest).
 
 Each release includes self-contained binaries and SHA256 checksums. Download the
 matching artifact and start it:
@@ -159,7 +168,8 @@ cargo build --release
 ```
 
 See [documentation/deployment.md](documentation/deployment.md) for Docker,
-systemd, reverse proxy, and cross-compilation options.
+systemd, Kubernetes manifests, reverse proxy, Homebrew tap automation,
+self-update, retention, restore, and migration rollback options.
 
 ### 5. Use it
 
@@ -310,6 +320,18 @@ OIDC-capable reverse proxy such as oauth2-proxy, Dex, Authelia, Keycloak, Zitade
 or a cloud identity proxy. Groups map to read-only, operator, config editor,
 credential manager, and admin roles for the operator UI and admin API.
 
+Self-update is enabled by default in current releases. The admin UI checks
+GitHub releases in the background and shows an update CTA when a newer compatible
+artifact is available for the running platform. Update checks are best-effort:
+network failures never break the admin UI, and the diagnostic error is exposed
+from `/admin/update/check`.
+
+For self-update testing, start from a release that already contains the
+self-update UI and API. Very old binaries, including v0.3.4, predate the admin
+update CTA, so changing `[updates]` in their config cannot make the button
+appear. Use a later pre-v0.3.6 binary or a versioned Homebrew formula when you
+need an older install that can update itself to the latest release.
+
 ## Operator UI
 
 Open `http://localhost:8000/ui` in your browser for the operator dashboard with views for:
@@ -349,12 +371,15 @@ The workflow:
 - Builds binaries for Linux (x86_64), signed/notarized macOS (ARM64), and Windows (x86_64)
 - Creates a GitHub release with all binaries, checksums, an SPDX SBOM, and
   GitHub artifact attestations attached
+- Updates `kabudu/homebrew-tap` when `HOMEBREW_TAP_TOKEN` is configured with
+  write access to that tap repository
 - Generates release notes from commit history
 
 macOS signing and notarization require these GitHub repository secrets:
 `APPLE_DEVELOPER_ID_CERTIFICATE_BASE64`,
 `APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD`, `APPLE_CODESIGN_IDENTITY`,
 `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_SPECIFIC_PASSWORD`.
+Homebrew tap publishing requires `HOMEBREW_TAP_TOKEN`.
 
 Each release binary is self-contained — download the one for your platform and run
 it. On first execution the built-in setup wizard guides you through configuration.
