@@ -65,7 +65,7 @@ CMD ["-c", "/tokenscavenger.toml"]
 Build and run:
 
 ```bash
-docker build -t tokenscavenger:0.3.5 .
+docker build -t tokenscavenger:0.3.6 .
 docker run -d \
   --name tokenscavenger \
   -p 8000:8000 \
@@ -73,7 +73,7 @@ docker run -d \
   -v /path/to/data:/data \
   -e GROQ_API_KEY=... \
   -e GEMINI_API_KEY=... \
-  tokenscavenger:0.3.5
+  tokenscavenger:0.3.6
 ```
 
 Or use Docker Compose:
@@ -343,7 +343,7 @@ updates `kabudu/homebrew-tap` after publishing a release by reading the generate
 branch. That cross-repository push requires a repository secret named
 `HOMEBREW_TAP_TOKEN` with `contents:write` access to `kabudu/homebrew-tap`.
 
-The Kubernetes deployment references `tokenscavenger:0.3.5`, matching the local
+The Kubernetes deployment references `tokenscavenger:0.3.6`, matching the local
 Docker build tag above. For a remote cluster, retag and push that image to your
 registry, then update `deploy/kubernetes/deployment.yaml` to the registry image
 your cluster can pull.

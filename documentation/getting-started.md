@@ -161,7 +161,7 @@ You should see:
  INFO tokenscavenger: Config loaded from tokenscavenger.toml: server.bind=0.0.0.0:8000, providers=3
  INFO tokenscavenger: Database initialized at tokenscavenger.db
  INFO tokenscavenger: AppState created
- INFO tokenscavenger: TokenScavenger v0.1.2 starting on 0.0.0.0:8000
+ INFO tokenscavenger: TokenScavenger v0.3.6 starting on 0.0.0.0:8000
 ```
 
 ## Step 5: Test

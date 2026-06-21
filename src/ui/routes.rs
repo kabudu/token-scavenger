@@ -1996,7 +1996,7 @@ pub async fn render_chat(state: &AppState) -> String {
     function onProviderChange() {{
         const prov = providerSel.value;
         modelSel.innerHTML = '<option value="">Default</option>';
-        const filtered = prov ? allModels.filter(m => m.provider_id === prov && m.enabled !== false) : allModels.filter(m => m.enabled !== false);
+        const filtered = modelsForCurrentSelection();
         filtered.forEach(m => {{
             const opt = document.createElement('option');
             opt.value = m.upstream_model_id || '';
@@ -2004,6 +2004,23 @@ pub async fn render_chat(state: &AppState) -> String {
             modelSel.appendChild(opt);
         }});
     }}
+
+    function modelsForCurrentSelection() {{
+        const prov = providerSel.value;
+        return allModels.filter(m =>
+            m.enabled !== false &&
+            m.supports_chat !== false &&
+            (!prov || m.provider_id === prov)
+        );
+    }}
+
+    function resolveSelectedModel() {{
+        const explicit = modelSel.value;
+        if (explicit) return explicit;
+        const fallback = modelsForCurrentSelection()[0];
+        return fallback?.upstream_model_id || fallback?.public_model_id || '';
+    }}
+
     onProviderChange();
 
     let messages = []; // {{role, content}}
@@ -2051,7 +2068,11 @@ pub async fn render_chat(state: &AppState) -> String {
         const userText = input.value.trim();
         if (!userText) return;
 
-        const model = modelSel.value || undefined;
+        const model = resolveSelectedModel();
+        if (!model) {{
+            setStatus('No enabled chat models are available for the current provider filter.');
+            return;
+        }}
         const systemPrompt = document.getElementById('systemPrompt').value.trim();
         const temperature = parseFloat(document.getElementById('temperature').value);
         const maxTokens = parseInt(document.getElementById('maxTokens').value, 10);
@@ -2075,7 +2096,7 @@ pub async fn render_chat(state: &AppState) -> String {
         const t0 = Date.now();
         try {{
             const body = {{
-                model: model || 'default',
+                model,
                 messages: reqMessages,
                 temperature,
                 max_tokens: maxTokens,
