@@ -10,6 +10,7 @@ pub mod config;
 pub mod db;
 pub mod discovery;
 pub mod metrics;
+pub mod observability;
 pub mod providers;
 pub mod resilience;
 pub mod router;

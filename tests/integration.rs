@@ -913,6 +913,182 @@ async fn test_route_plan_endpoint_explains_attempts() {
 }
 
 #[tokio::test]
+async fn test_observability_endpoints_return_traces_incidents_and_redacted_bundle() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut config = Config::default();
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "local".into(),
+        enabled: true,
+        base_url: Some("http://127.0.0.1:11434/v1".into()),
+        api_key: Some("sk-secret-observability-key".into()),
+        free_only: true,
+        discover_models: false,
+        embedding_support: Default::default(),
+    }];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+
+    sqlx::query(
+        "INSERT INTO request_log
+         (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, fallback_count)
+         VALUES ('req-ok', 'chat', 'fast:chat', 'local', 'llama3.2', 'success', 200, 42, 1)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO usage_events
+         (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, cost_confidence, free_tier)
+         VALUES ('req-ok', 'local', 'llama3.2', 12, 8, 0.0, 'free_tier', 1)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    tokenscavenger::observability::record_event(
+        &state,
+        tokenscavenger::observability::TraceEventRecord {
+            request_id: "req-ok",
+            event_type: "route_plan",
+            provider_id: None,
+            model_id: None,
+            outcome: Some("planned"),
+            latency_ms: None,
+            details: json!({"api_key": "sk-never-return-this", "candidate_count": 1}),
+        },
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO request_log
+         (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms)
+         VALUES ('req-429', 'chat', 'fast:chat', 'local', 'llama3.2', 'rate_limited', 429, 13)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO provider_health_events (provider_id, health_state, breaker_state, event_type, details_json)
+         VALUES ('local', 'unhealthy', 'open', 'passive_failure', '{\"reason\":\"boom\"}')",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO config_audit_log (actor, action, target_type) VALUES ('operator', 'config_update', 'config')",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let router = tokenscavenger::app::startup::build_router(state);
+
+    let summary_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/observability/summary?period=24h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary_response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(summary_response.into_body(), 65536)
+        .await
+        .unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(summary["request_count"], 2);
+    assert_eq!(summary["rate_limit_count"], 1);
+    assert_eq!(summary["fallback_count"], 1);
+    assert_eq!(summary["total_tokens"], 20);
+
+    let traces_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/request-traces?limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(traces_response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(traces_response.into_body(), 65536)
+        .await
+        .unwrap();
+    let traces: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(traces["traces"].as_array().unwrap().len() >= 2);
+
+    let trace_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/request-traces/req-ok")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(trace_response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(trace_response.into_body(), 65536)
+        .await
+        .unwrap();
+    let trace: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(trace["request"]["request_id"], "req-ok");
+    assert_eq!(trace["usage"][0]["input_tokens"], 12);
+    assert_eq!(trace["events"][0]["details"]["api_key"], "****this");
+
+    let incidents_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/incidents?limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(incidents_response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(incidents_response.into_body(), 65536)
+        .await
+        .unwrap();
+    let incidents: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        incidents["incidents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|incident| {
+                incident["kind"] == "provider_health" || incident["kind"] == "request_failure"
+            })
+    );
+
+    let bundle_response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/diagnostics/bundle")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bundle_response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(bundle_response.into_body(), 262144)
+        .await
+        .unwrap();
+    let bundle_text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!bundle_text.contains("sk-secret-observability-key"));
+    assert!(bundle_text.contains("****-key"));
+}
+
+#[tokio::test]
 async fn test_config_save_creates_snapshot_and_rollback_restores_it() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")

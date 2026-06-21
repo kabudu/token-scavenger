@@ -186,6 +186,7 @@ pub async fn create_chat_stream(
     request: NormalizedChatRequest,
     request_id: String,
 ) -> Result<impl Stream<Item = Result<Event, Infallible>>, ApiError> {
+    let started_at = Instant::now();
     let config = state.config();
     let registry = &state.provider_registry;
     let policy = RoutePolicy::from_config(&config);
@@ -203,6 +204,7 @@ pub async fn create_chat_stream(
         .iter()
         .map(|target| target.label())
         .collect::<Vec<_>>();
+    let resolved_model_label = resolved_models.join(", ");
 
     // Build attempt plan
     let mut plan = Vec::new();
@@ -215,6 +217,30 @@ pub async fn create_chat_stream(
     assign_attempt_priorities(&mut plan);
 
     if plan.is_empty() {
+        crate::observability::record_route_plan(
+            &state,
+            &request_id,
+            "chat",
+            &request.model,
+            &resolved_models,
+            &plan,
+        )
+        .await;
+        let _ = crate::usage::accounting::record_failure(
+            &state,
+            crate::usage::accounting::FailureRecord {
+                request_id: &request_id,
+                endpoint_kind: "chat",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: None,
+                status: "route_exhausted",
+                http_status: 503,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                streaming: true,
+            },
+        )
+        .await;
         return Err(ApiError::RouteExhausted(format!(
             "No available providers for streaming model(s): {:?}",
             resolved_models
@@ -249,6 +275,30 @@ pub async fn create_chat_stream(
     .await;
 
     if plan.is_empty() {
+        crate::observability::record_route_plan(
+            &state,
+            &request_id,
+            "chat",
+            &request.model,
+            &resolved_models,
+            &plan,
+        )
+        .await;
+        let _ = crate::usage::accounting::record_failure(
+            &state,
+            crate::usage::accounting::FailureRecord {
+                request_id: &request_id,
+                endpoint_kind: "chat",
+                requested_model: &request.model,
+                selected_provider_id: None,
+                selected_model_id: Some(&resolved_model_label),
+                status: "route_exhausted",
+                http_status: 503,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                streaming: true,
+            },
+        )
+        .await;
         return Err(ApiError::RouteExhausted(format!(
             "All providers for streaming model(s) '{:?}' are unavailable, disabled, or paid fallback is disabled",
             resolved_models
@@ -261,6 +311,15 @@ pub async fn create_chat_stream(
         plan = ?plan.iter().map(|p| p.label()).collect::<Vec<_>>(),
         "Stream route plan built"
     );
+    crate::observability::record_route_plan(
+        &state,
+        &request_id,
+        "chat",
+        &request.model,
+        &resolved_models,
+        &plan,
+    )
+    .await;
 
     // Create a channel for streaming events
     let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(256);
@@ -272,6 +331,8 @@ pub async fn create_chat_stream(
     let usage_context: Arc<Mutex<Option<StreamUsageContext>>> = Arc::new(Mutex::new(None));
     let task_usage_context = usage_context.clone();
     let usage_state = state.clone();
+    let task_request_id = request_id.clone();
+    let task_started_at = started_at;
 
     tokio::spawn(async move {
         let pre_content_timeout =
@@ -281,12 +342,36 @@ pub async fn create_chat_stream(
             let provider_id = &attempt.provider_id;
             let model_id = &attempt.model_id;
             if should_skip_for_context_hint(&state, attempt, prompt_size_hint) {
+                crate::observability::record_skip(
+                    &state,
+                    &task_request_id,
+                    "chat",
+                    attempt,
+                    "recent context budget failure hint",
+                )
+                .await;
                 continue;
             }
             if should_skip_for_stream_silence_hint(&state, attempt, prompt_size_hint) {
+                crate::observability::record_skip(
+                    &state,
+                    &task_request_id,
+                    "chat",
+                    attempt,
+                    "recent stream silence hint",
+                )
+                .await;
                 continue;
             }
             if should_skip_for_rate_limit_hint(&state, attempt) {
+                crate::observability::record_skip(
+                    &state,
+                    &task_request_id,
+                    "chat",
+                    attempt,
+                    "recent rate limit hint",
+                )
+                .await;
                 continue;
             }
 
@@ -297,18 +382,46 @@ pub async fn create_chat_stream(
                         model = %model_id,
                         "Skipping streaming: circuit breaker open"
                     );
+                    crate::observability::record_skip(
+                        &state,
+                        &task_request_id,
+                        "chat",
+                        attempt,
+                        "circuit breaker open",
+                    )
+                    .await;
                     continue;
                 }
             }
 
             let adapter = match registry_clone.get(provider_id).await {
                 Some(a) => a,
-                None => continue,
+                None => {
+                    crate::observability::record_skip(
+                        &state,
+                        &task_request_id,
+                        "chat",
+                        attempt,
+                        "provider adapter missing from registry",
+                    )
+                    .await;
+                    continue;
+                }
             };
 
             let provider_cfg = match config_clone.providers.iter().find(|p| p.id == *provider_id) {
                 Some(c) => c.clone(),
-                None => continue,
+                None => {
+                    crate::observability::record_skip(
+                        &state,
+                        &task_request_id,
+                        "chat",
+                        attempt,
+                        "provider config missing",
+                    )
+                    .await;
+                    continue;
+                }
             };
 
             let ctx = ProviderContext {
@@ -338,6 +451,8 @@ pub async fn create_chat_stream(
                 timeout_ms = pre_content_timeout.as_millis(),
                 "Starting streaming attempt"
             );
+            crate::observability::record_attempt_started(&state, &task_request_id, "chat", attempt)
+                .await;
             let attempt_ctx = ctx.clone();
             let attempt_adapter = adapter.clone();
             let mut attempt_task = tokio::spawn(async move {
@@ -361,6 +476,16 @@ pub async fn create_chat_stream(
                                 model = %model_id,
                                 "Streaming completed"
                             );
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "stream_completed",
+                                None,
+                                None,
+                            )
+                            .await;
                             let _ = tx.send(StreamEvent::Done).await;
                             return;
                         }
@@ -372,6 +497,16 @@ pub async fn create_chat_stream(
                                         model = %model_id,
                                         "Streaming attempt completed without content; trying next planned attempt"
                                     );
+                                    crate::observability::record_attempt_result(
+                                        &state,
+                                        &task_request_id,
+                                        "chat",
+                                        attempt,
+                                        "empty_stream",
+                                        None,
+                                        Some("completed without content"),
+                                    )
+                                    .await;
                                 }
                                 Ok(Err(e)) => {
                                     warn!(
@@ -397,15 +532,35 @@ pub async fn create_chat_stream(
                                         );
                                     }
                                     record_streaming_provider_error(&state, provider_id, &e).await;
+                                    crate::observability::record_attempt_result(
+                                        &state,
+                                        &task_request_id,
+                                        "chat",
+                                        attempt,
+                                        "stream_failed_pre_content",
+                                        None,
+                                        Some(&e.to_string()),
+                                    )
+                                    .await;
                                 }
                                 Err(e) => {
                                     warn!(
                                         provider = %provider_id,
                                         model = %model_id,
                                         error = %e,
-                                        "Streaming attempt task failed before content; trying next planned attempt"
+                                    "Streaming attempt task failed before content; trying next planned attempt"
                                     );
                                     crate::resilience::health::record_failure(&state, provider_id).await;
+                                    crate::observability::record_attempt_result(
+                                        &state,
+                                        &task_request_id,
+                                        "chat",
+                                        attempt,
+                                        "stream_task_failed",
+                                        None,
+                                        Some(&e.to_string()),
+                                    )
+                                    .await;
                                 }
                             }
                         } else {
@@ -428,6 +583,16 @@ pub async fn create_chat_stream(
                                 model = %model_id,
                                 "Streaming completed"
                             );
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "stream_completed",
+                                None,
+                                None,
+                            )
+                            .await;
                             return;
                         }
                         continue;
@@ -451,6 +616,16 @@ pub async fn create_chat_stream(
                                 model_id,
                                 prompt_size_hint,
                             );
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "empty_stream",
+                                None,
+                                Some("ended without content"),
+                            )
+                            .await;
                             attempt_task.abort();
                             break;
                         } else {
@@ -465,6 +640,16 @@ pub async fn create_chat_stream(
                                 model = %model_id,
                                 "Streaming completed"
                             );
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "stream_completed",
+                                None,
+                                None,
+                            )
+                            .await;
                             let _ = tx.send(StreamEvent::Done).await;
                             return;
                         }
@@ -474,6 +659,16 @@ pub async fn create_chat_stream(
                                 model = %model_id,
                                 "Streaming attempt completed without content; trying next planned attempt"
                             );
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "empty_stream",
+                                None,
+                                Some("completed without content"),
+                            )
+                            .await;
                         }
                         Ok(Err(e)) => {
                             warn!(
@@ -499,15 +694,35 @@ pub async fn create_chat_stream(
                                 );
                             }
                             record_streaming_provider_error(&state, provider_id, &e).await;
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "stream_failed_pre_content",
+                                None,
+                                Some(&e.to_string()),
+                            )
+                            .await;
                         }
                         Err(e) => {
                             warn!(
                                 provider = %provider_id,
                                 model = %model_id,
                                 error = %e,
-                                "Streaming attempt task failed before content; trying next planned attempt"
+                            "Streaming attempt task failed before content; trying next planned attempt"
                             );
                             crate::resilience::health::record_failure(&state, provider_id).await;
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "stream_task_failed",
+                                None,
+                                Some(&e.to_string()),
+                            )
+                            .await;
                         }
                     }
                     break;
@@ -525,6 +740,16 @@ pub async fn create_chat_stream(
                             model_id,
                             prompt_size_hint,
                         );
+                        crate::observability::record_attempt_result(
+                            &state,
+                            &task_request_id,
+                            "chat",
+                            attempt,
+                            "stream_timeout_pre_content",
+                            Some(pre_content_timeout.as_millis() as i64),
+                            Some("timed out before content"),
+                        )
+                        .await;
                         attempt_task.abort();
                         break;
                     }
@@ -533,6 +758,34 @@ pub async fn create_chat_stream(
         }
 
         // All providers failed pre-stream or streaming failed
+        let _ = crate::usage::accounting::record_failure(
+            &state,
+            crate::usage::accounting::FailureRecord {
+                request_id: &task_request_id,
+                endpoint_kind: "chat",
+                requested_model: &request_clone.model,
+                selected_provider_id: plan.last().map(|attempt| attempt.provider_id.as_str()),
+                selected_model_id: plan.last().map(|attempt| attempt.model_id.as_str()),
+                status: "route_exhausted",
+                http_status: 503,
+                latency_ms: task_started_at.elapsed().as_millis() as i64,
+                streaming: true,
+            },
+        )
+        .await;
+        crate::observability::record_event(
+            &state,
+            crate::observability::TraceEventRecord {
+                request_id: &task_request_id,
+                event_type: "route_exhausted",
+                provider_id: plan.last().map(|attempt| attempt.provider_id.as_str()),
+                model_id: plan.last().map(|attempt| attempt.model_id.as_str()),
+                outcome: Some("route_exhausted"),
+                latency_ms: Some(task_started_at.elapsed().as_millis() as i64),
+                details: serde_json::json!({"endpoint_kind": "chat", "streaming": true}),
+            },
+        )
+        .await;
         let _ = tx.send(StreamEvent::Done).await;
     });
 

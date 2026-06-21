@@ -35,8 +35,8 @@
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
 - **18 built-in providers** with automatic model discovery, including local OpenAI-compatible upstreams
 - **Circuit breakers, retries & health monitoring**
-- **Prometheus metrics** + per-provider token usage tracking
-- **Embedded web UI** with live dashboard, logs, and config editor
+- **Prometheus metrics**, request traces, incident feed, and diagnostic bundles
+- **Embedded web UI** with live dashboard, observability, logs, and config editor
 - **SQLite persistence** (WAL mode) for usage accounting and audit log
 - **Interactive setup wizard** and CLI tools
 - **Single static binary** (~15–25 MB)
@@ -51,6 +51,8 @@
 | `GET /healthz`, `GET /readyz` | Health and readiness probes                                 |
 | `GET /metrics`                | Prometheus metrics                                          |
 | `GET /ui`                     | Embedded operator dashboard                                 |
+| `GET /admin/request-traces`   | Recent request trace summaries                              |
+| `GET /admin/incidents`        | Incident feed from health, config, and routing events       |
 
 Error responses use the OpenAI-style `{"error": ...}` envelope. Upstream rate-limit exhaustion returns `429` with `rate_limit_exceeded` and `Retry-After` when known; non-rate-limit route exhaustion remains `503 route_exhausted`. See [API behavior](documentation/api-behavior.md) for the full status-code contract.
 
@@ -308,6 +310,7 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 - Models — compare discovered and curated models with intelligence metadata
 - Routing — view fallback order and smart/custom model group configuration
 - Usage — token counts and estimated costs
+- Observability — request traces, incident feed, and diagnostic bundle export
 - Health — per-provider health states
 - Logs — real-time log stream via SSE
 - Config — view and edit current effective configuration

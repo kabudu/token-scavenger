@@ -1,0 +1,40 @@
+groups:
+  - name: tokenscavenger.incidents
+    rules:
+      - alert: TokenScavengerHighRateLimitRate
+        expr: |
+          sum(rate(tokenscavenger_requests_total{status=~"rate_limited|quota_exhausted"}[5m]))
+          / clamp_min(sum(rate(tokenscavenger_requests_total[5m])), 0.001) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: TokenScavenger is seeing elevated 429/quota responses
+          description: More than 10% of recent requests are rate-limited or quota-exhausted.
+
+      - alert: TokenScavengerProviderBreakerOpen
+        expr: sum by (provider) (tokenscavenger_provider_breaker_state{state=~"open|half_open"}) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: TokenScavenger provider circuit breaker is open
+          description: Provider {{ $labels.provider }} has an open or half-open breaker.
+
+      - alert: TokenScavengerNoSuccessfulRequests
+        expr: sum(rate(tokenscavenger_requests_total{status="success"}[10m])) == 0 and sum(rate(tokenscavenger_requests_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: TokenScavenger has traffic but no successful requests
+          description: All recent routed requests are failing.
+
+      - alert: TokenScavengerUnknownPaidPricing
+        expr: increase(tokenscavenger_usage_unknown_price_total[1h]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: TokenScavenger recorded paid usage without known pricing
+          description: Cost accounting is using fallback estimates for at least one paid provider/model.

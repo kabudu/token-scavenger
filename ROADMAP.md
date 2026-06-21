@@ -6,7 +6,7 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 ## 1. Policy Engine For Cost, Latency, And Quality
 
-**Status:** Implemented in `feature/policy-engine-cost-latency-quality`.
+**Status:** Implemented in v0.2.0.
 
 **Current baseline:** TokenScavenger already has provider ordering, model enablement, free-first routing, explicit paid fallback gating, retries, health checks, circuit breakers, usage accounting, and estimated cost surfaces.
 
@@ -52,17 +52,19 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 
 ## 4. Operator-Grade Observability And Incident Workflow
 
+**Status:** Implemented in v0.3.3.
+
 **Current baseline:** TokenScavenger already exposes Prometheus metrics, structured logs, usage views, health views, audit history, route-plan explanations, live log streaming, and documented 429/503 response behavior.
 
 **Why it matters:** A router is only as useful as its explanations. When an app sees slow requests, 429s, or degraded quality, TokenScavenger should make the cause obvious in seconds.
 
 **What good looks like:**
 
-- A request trace view that shows model group resolution, candidate providers, skip reasons, retries, selected route, upstream response class, latency, and token usage.
-- Deeper time-window analytics for success rate, 429 rate, cost estimate, token volume, fallback count, and provider saturation.
-- Incident annotations for provider outages, quota exhaustion, config changes, and breaker transitions.
-- Exportable diagnostic bundles with secrets redacted.
-- Ready-to-import Grafana dashboards and alerting rules built on the existing Prometheus metrics.
+- [x] A request trace view that shows model group resolution, candidate providers, skip reasons, retries, selected route, upstream response class, latency, and token usage.
+- [x] Deeper time-window analytics for success rate, 429 rate, cost estimate, token volume, fallback count, and provider saturation.
+- [x] Incident annotations for provider outages, quota exhaustion, config changes, and breaker transitions.
+- [x] Exportable diagnostic bundles with secrets redacted.
+- [x] Ready-to-import Grafana dashboards and alerting rules built on the existing Prometheus metrics.
 
 ## 5. Deployment, Security, And Team Controls
 

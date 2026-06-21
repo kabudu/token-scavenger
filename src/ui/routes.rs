@@ -98,6 +98,7 @@ pub fn render_shell(
         {}
         {}
         {}
+        {}
         </nav>"#,
         nav_item("dashboard", "/ui", "fas fa-th-large", "Dashboard"),
         nav_item("providers", "/ui/providers", "fas fa-server", "Providers"),
@@ -105,6 +106,12 @@ pub fn render_shell(
         nav_item("routing", "/ui/routing", "fas fa-route", "Routing"),
         nav_item("usage", "/ui/usage", "fas fa-chart-line", "Usage"),
         nav_item("chat", "/ui/chat", "fas fa-comment-dots", "Chat Tester"),
+        nav_item(
+            "observability",
+            "/ui/observability",
+            "fas fa-wave-square",
+            "Observability"
+        ),
         nav_item("health", "/ui/health", "fas fa-heartbeat", "Health"),
         nav_item("logs", "/ui/logs", "fas fa-terminal", "Logs"),
         nav_item("config", "/ui/config", "fas fa-cog", "Config"),
@@ -1250,6 +1257,251 @@ pub async fn render_health(state: &AppState) -> String {
         rows
     );
     render_shell("Health", "health", &content, "", state)
+}
+
+/// Render the observability and incident workflow view.
+pub async fn render_observability(state: &AppState) -> String {
+    let summary = crate::observability::get_observability_summary(state, "24h").await;
+    let traces = crate::observability::get_request_traces(state, 20).await;
+    let incidents = crate::observability::get_incidents(state, 20).await;
+
+    let trace_rows = traces
+        .get("traces")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|trace| {
+                    let request_id = escape_html(
+                        trace
+                            .get("request_id")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("?"),
+                    );
+                    let status = escape_html(
+                        trace
+                            .get("status")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("unknown"),
+                    );
+                    let model = escape_html(
+                        trace
+                            .get("requested_model")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("?"),
+                    );
+                    let provider = escape_html(
+                        trace
+                            .get("selected_provider_id")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("-"),
+                    );
+                    let latency = trace
+                        .get("latency_ms")
+                        .and_then(|value| value.as_i64())
+                        .unwrap_or(0);
+                    let status_class = if status == "success" {
+                        "text-emerald-400"
+                    } else if trace.get("http_status").and_then(|value| value.as_i64()) == Some(429)
+                    {
+                        "text-yellow-400"
+                    } else {
+                        "text-red-400"
+                    };
+                    format!(
+                        r#"<tr><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono text-xs">{}</td><td>{}</td><td>{}</td><td class="{} font-bold text-xs uppercase">{}</td><td class="font-mono">{}ms</td><td><button class="btn text-xs" data-request-id="{}" onclick="loadTraceFromButton(this)">Open</button></td></tr>"#,
+                        request_id, model, provider, trace["endpoint_kind"], status_class, status, latency, request_id
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| {
+            r#"<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">No request traces yet</td></tr>"#
+                .to_string()
+        });
+
+    let incident_rows = incidents
+        .get("incidents")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|incident| {
+                    let severity = incident
+                        .get("severity")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("info");
+                    let severity_class = match severity {
+                        "critical" => "text-red-400 bg-red-500/10",
+                        "warning" => "text-yellow-400 bg-yellow-500/10",
+                        _ => "text-cyan-300 bg-cyan-500/10",
+                    };
+                    let title = escape_html(
+                        incident
+                            .get("title")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("incident"),
+                    );
+                    let kind = escape_html(
+                        incident
+                            .get("kind")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("event"),
+                    );
+                    let recorded_at = escape_html(
+                        incident
+                            .get("recorded_at")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("-"),
+                    );
+                    format!(
+                        r#"<tr><td class="font-mono text-xs">{}</td><td><span class="px-2 py-0.5 rounded text-[10px] uppercase {}">{}</span></td><td class="text-xs text-slate-400">{}</td><td class="font-bold">{}</td></tr>"#,
+                        recorded_at, severity_class, severity, kind, title
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| {
+            r#"<tr><td colspan="4" class="px-6 py-4 text-center text-slate-500">No incidents recorded</td></tr>"#
+                .to_string()
+        });
+
+    let request_count = summary
+        .get("request_count")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0);
+    let success_rate = summary
+        .get("success_rate")
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0)
+        * 100.0;
+    let rate_limit_rate = summary
+        .get("rate_limit_rate")
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0)
+        * 100.0;
+    let fallback_count = summary
+        .get("fallback_count")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0);
+    let total_tokens = summary
+        .get("total_tokens")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0);
+    let estimated_cost = summary
+        .get("estimated_cost_usd")
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0);
+
+    let content = format!(
+        r#"
+        <div class="flex items-center justify-between gap-4 mb-2">
+            <div class="text-xs font-bold text-slate-500 uppercase tracking-widest">Incident Console</div>
+            <div class="flex gap-2">
+                <select id="observability-period" class="bg-white/5 border border-white/10 rounded px-3 py-2 text-sm" onchange="refreshObservability()">
+                    <option value="24h">24H</option>
+                    <option value="7d">7D</option>
+                    <option value="30d">30D</option>
+                </select>
+                <button class="btn" onclick="downloadDiagnosticBundle()">Export Bundle</button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+            <div class="glass-card p-5"><div class="text-xs font-bold text-slate-500 uppercase">Requests</div><div id="obs-requests" class="text-3xl font-bold mt-2">{}</div></div>
+            <div class="glass-card p-5"><div class="text-xs font-bold text-slate-500 uppercase">Success</div><div id="obs-success" class="text-3xl font-bold mt-2 text-emerald-400">{:.1}%</div></div>
+            <div class="glass-card p-5"><div class="text-xs font-bold text-slate-500 uppercase">429 Rate</div><div id="obs-rate-limit" class="text-3xl font-bold mt-2 text-yellow-400">{:.1}%</div></div>
+            <div class="glass-card p-5"><div class="text-xs font-bold text-slate-500 uppercase">Fallbacks</div><div id="obs-fallbacks" class="text-3xl font-bold mt-2">{}</div></div>
+            <div class="glass-card p-5"><div class="text-xs font-bold text-slate-500 uppercase">Tokens</div><div id="obs-tokens" class="text-3xl font-bold mt-2">{}</div></div>
+            <div class="glass-card p-5"><div class="text-xs font-bold text-slate-500 uppercase">Cost</div><div id="obs-cost" class="text-3xl font-bold mt-2">{}</div></div>
+        </div>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Request Traces</h3></div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Request</th><th>Model</th><th>Provider</th><th>Endpoint</th><th>Status</th><th>Latency</th><th>Trace</th></tr></thead><tbody id="trace-rows" class="divide-y divide-white/5">{}</tbody></table>
+                </div>
+            </div>
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Incident Feed</h3></div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left"><thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]"><tr><th>Time</th><th>Severity</th><th>Kind</th><th>Event</th></tr></thead><tbody id="incident-rows" class="divide-y divide-white/5">{}</tbody></table>
+                </div>
+            </div>
+        </div>
+        <div class="glass-card overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between"><h3 class="font-bold">Trace Timeline</h3><span id="trace-title" class="font-mono text-xs text-slate-500">Select a request</span></div>
+            <pre id="trace-detail" class="p-4 bg-[#010409] font-mono text-[11px] leading-relaxed overflow-x-auto text-slate-300 min-h-[220px]"></pre>
+        </div>"#,
+        format_number(request_count),
+        success_rate,
+        rate_limit_rate,
+        format_number(fallback_count),
+        format_number(total_tokens),
+        format_currency(estimated_cost),
+        trace_rows,
+        incident_rows
+    );
+
+    let scripts = r#"<script>
+    function htmlEscape(value) {
+        return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function money(value) {
+        return new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', minimumFractionDigits:2, maximumFractionDigits:4}).format(Number(value || 0));
+    }
+    function traceRow(trace) {
+        const status = trace.status || 'unknown';
+        const cls = status === 'success' ? 'text-emerald-400' : (trace.http_status === 429 ? 'text-yellow-400' : 'text-red-400');
+        const id = htmlEscape(trace.request_id);
+        return `<tr><td class="font-mono text-xs text-cyan-400">${id}</td><td class="font-mono text-xs">${htmlEscape(trace.requested_model)}</td><td>${htmlEscape(trace.selected_provider_id || '-')}</td><td>${htmlEscape(trace.endpoint_kind)}</td><td class="${cls} font-bold text-xs uppercase">${htmlEscape(status)}</td><td class="font-mono">${trace.latency_ms || 0}ms</td><td><button class="btn text-xs" data-request-id="${id}" onclick="loadTraceFromButton(this)">Open</button></td></tr>`;
+    }
+    function incidentRow(incident) {
+        const severity = incident.severity || 'info';
+        const cls = severity === 'critical' ? 'text-red-400 bg-red-500/10' : (severity === 'warning' ? 'text-yellow-400 bg-yellow-500/10' : 'text-cyan-300 bg-cyan-500/10');
+        return `<tr><td class="font-mono text-xs">${htmlEscape(incident.recorded_at || '-')}</td><td><span class="px-2 py-0.5 rounded text-[10px] uppercase ${cls}">${htmlEscape(severity)}</span></td><td class="text-xs text-slate-400">${htmlEscape(incident.kind)}</td><td class="font-bold">${htmlEscape(incident.title)}</td></tr>`;
+    }
+    async function refreshObservability() {
+        const period = document.getElementById('observability-period').value;
+        const [summary, traces, incidents] = await Promise.all([
+            fetch(`/admin/observability/summary?period=${period}`).then(r => r.json()),
+            fetch('/admin/request-traces?limit=20').then(r => r.json()),
+            fetch('/admin/incidents?limit=20').then(r => r.json())
+        ]);
+        document.getElementById('obs-requests').innerText = Number(summary.request_count || 0).toLocaleString();
+        document.getElementById('obs-success').innerText = ((summary.success_rate || 0) * 100).toFixed(1) + '%';
+        document.getElementById('obs-rate-limit').innerText = ((summary.rate_limit_rate || 0) * 100).toFixed(1) + '%';
+        document.getElementById('obs-fallbacks').innerText = Number(summary.fallback_count || 0).toLocaleString();
+        document.getElementById('obs-tokens').innerText = Number(summary.total_tokens || 0).toLocaleString();
+        document.getElementById('obs-cost').innerText = money(summary.estimated_cost_usd);
+        document.getElementById('trace-rows').innerHTML = (traces.traces || []).map(traceRow).join('') || '<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">No request traces yet</td></tr>';
+        document.getElementById('incident-rows').innerHTML = (incidents.incidents || []).map(incidentRow).join('') || '<tr><td colspan="4" class="px-6 py-4 text-center text-slate-500">No incidents recorded</td></tr>';
+    }
+    async function loadTrace(requestId) {
+        const response = await fetch('/admin/request-traces/' + encodeURIComponent(requestId));
+        const detail = await response.json();
+        document.getElementById('trace-title').innerText = requestId;
+        document.getElementById('trace-detail').innerText = JSON.stringify(detail, null, 2);
+    }
+    function loadTraceFromButton(button) {
+        loadTrace(button.dataset.requestId || '');
+    }
+    async function downloadDiagnosticBundle() {
+        const bundle = await fetch('/admin/diagnostics/bundle').then(r => r.json());
+        const blob = new Blob([JSON.stringify(bundle, null, 2)], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tokenscavenger-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+    setInterval(refreshObservability, 30000);
+    </script>"#;
+    render_shell("Observability", "observability", &content, scripts, state)
 }
 
 /// Render the logs view.

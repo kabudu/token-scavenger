@@ -77,6 +77,15 @@ pub async fn route_chat_request(
     assign_attempt_priorities(&mut plan);
 
     if plan.is_empty() {
+        crate::observability::record_route_plan(
+            &state,
+            &request_id,
+            "chat",
+            &request.model,
+            &resolved_models,
+            &plan,
+        )
+        .await;
         record_route_failure(
             &state,
             RouteFailure {
@@ -121,6 +130,15 @@ pub async fn route_chat_request(
     .await;
 
     if plan.is_empty() {
+        crate::observability::record_route_plan(
+            &state,
+            &request_id,
+            "chat",
+            &request.model,
+            &resolved_models,
+            &plan,
+        )
+        .await;
         record_route_failure(
             &state,
             RouteFailure {
@@ -149,16 +167,42 @@ pub async fn route_chat_request(
         plan = ?plan.iter().map(|p| p.label()).collect::<Vec<_>>(),
         "Route plan built"
     );
+    crate::observability::record_route_plan(
+        &state,
+        &request_id,
+        "chat",
+        &request.model,
+        &resolved_models,
+        &plan,
+    )
+    .await;
 
     // Execute the plan: try providers in order
     let mut last_error = None;
     let prompt_size_hint = request.prompt_size_hint();
     for attempt in &plan {
+        let attempt_started_at = std::time::Instant::now();
         let provider_id = &attempt.provider_id;
         if should_skip_for_context_hint(&state, attempt, prompt_size_hint) {
+            crate::observability::record_skip(
+                &state,
+                &request_id,
+                "chat",
+                attempt,
+                "recent context budget failure hint",
+            )
+            .await;
             continue;
         }
         if should_skip_for_rate_limit_hint(&state, attempt) {
+            crate::observability::record_skip(
+                &state,
+                &request_id,
+                "chat",
+                attempt,
+                "recent rate limit hint",
+            )
+            .await;
             continue;
         }
 
@@ -166,6 +210,14 @@ pub async fn route_chat_request(
         if let Some(breaker) = state.breaker_states.get(provider_id) {
             if breaker.is_open() {
                 info!(provider = %provider_id, "Skipping: circuit breaker open");
+                crate::observability::record_skip(
+                    &state,
+                    &request_id,
+                    "chat",
+                    attempt,
+                    "circuit breaker open",
+                )
+                .await;
                 continue;
             }
         }
@@ -175,6 +227,14 @@ pub async fn route_chat_request(
             Some(a) => a,
             None => {
                 warn!(provider = %provider_id, "Provider not found in registry");
+                crate::observability::record_skip(
+                    &state,
+                    &request_id,
+                    "chat",
+                    attempt,
+                    "provider adapter missing from registry",
+                )
+                .await;
                 continue;
             }
         };
@@ -182,10 +242,26 @@ pub async fn route_chat_request(
         let capabilities = adapter.capabilities();
         if request.tools.is_some() && !capabilities.supports_tools {
             info!(provider = %provider_id, "Skipping: tools not supported");
+            crate::observability::record_skip(
+                &state,
+                &request_id,
+                "chat",
+                attempt,
+                "tools not supported",
+            )
+            .await;
             continue;
         }
         if request.response_format.is_some() && !capabilities.supports_json_mode {
             info!(provider = %provider_id, "Skipping: response_format/json mode not supported");
+            crate::observability::record_skip(
+                &state,
+                &request_id,
+                "chat",
+                attempt,
+                "json mode not supported",
+            )
+            .await;
             continue;
         }
 
@@ -206,6 +282,7 @@ pub async fn route_chat_request(
         };
 
         // Attempt the request
+        crate::observability::record_attempt_started(&state, &request_id, "chat", attempt).await;
         match adapter
             .chat_completions(
                 &ctx,
@@ -222,6 +299,16 @@ pub async fn route_chat_request(
                     latency_ms = response.latency_ms,
                     "Chat completion succeeded"
                 );
+                crate::observability::record_attempt_result(
+                    &state,
+                    &request_id,
+                    "chat",
+                    attempt,
+                    "success",
+                    Some(response.latency_ms),
+                    None,
+                )
+                .await;
 
                 // Record usage and metrics
                 let usage_ref = response.usage.as_ref().map(provider_usage_to_openai_usage);
@@ -261,6 +348,16 @@ pub async fn route_chat_request(
             }
             Err(e) => {
                 warn!(provider = %provider_id, error = %e, "Provider attempt failed");
+                crate::observability::record_attempt_result(
+                    &state,
+                    &request_id,
+                    "chat",
+                    attempt,
+                    failure_status_for_error(Some(&e)),
+                    Some(attempt_started_at.elapsed().as_millis() as i64),
+                    Some(&e.to_string()),
+                )
+                .await;
 
                 // Record provider-health failures only for errors that indicate
                 // provider instability rather than request-specific capacity.
@@ -289,6 +386,23 @@ pub async fn route_chat_request(
                         let mut retries = 0;
                         while retries < max_attempts {
                             warn!(provider = %provider_id, retry = retries + 1, "Retrying same provider");
+                            crate::observability::record_event(
+                                &state,
+                                crate::observability::TraceEventRecord {
+                                    request_id: &request_id,
+                                    event_type: "attempt_retry",
+                                    provider_id: Some(provider_id),
+                                    model_id: Some(&attempt.model_id),
+                                    outcome: Some("retrying"),
+                                    latency_ms: None,
+                                    details: serde_json::json!({
+                                        "endpoint_kind": "chat",
+                                        "retry": retries + 1,
+                                        "max_attempts": max_attempts,
+                                    }),
+                                },
+                            )
+                            .await;
                             match adapter
                                 .chat_completions(
                                     &ctx,
@@ -301,6 +415,16 @@ pub async fn route_chat_request(
                             {
                                 Ok(response) => {
                                     info!(provider = %provider_id, "Retry succeeded");
+                                    crate::observability::record_attempt_result(
+                                        &state,
+                                        &request_id,
+                                        "chat",
+                                        attempt,
+                                        "success_after_retry",
+                                        Some(response.latency_ms),
+                                        None,
+                                    )
+                                    .await;
                                     let usage_ref =
                                         response.usage.as_ref().map(provider_usage_to_openai_usage);
                                     let _ = crate::usage::accounting::record_usage(
@@ -341,6 +465,16 @@ pub async fn route_chat_request(
                                 }
                                 Err(e2) => {
                                     warn!(provider = %provider_id, error = %e2, "Retry failed");
+                                    crate::observability::record_attempt_result(
+                                        &state,
+                                        &request_id,
+                                        "chat",
+                                        attempt,
+                                        failure_status_for_error(Some(&e2)),
+                                        None,
+                                        Some(&e2.to_string()),
+                                    )
+                                    .await;
                                     if let ProviderError::RateLimited { retry_after, .. } = &e2 {
                                         record_rate_limit_hint(
                                             &state,
@@ -356,6 +490,22 @@ pub async fn route_chat_request(
                         }
                     }
                     FallbackDecision::RetryWithDelay { delay_ms } => {
+                        crate::observability::record_event(
+                            &state,
+                            crate::observability::TraceEventRecord {
+                                request_id: &request_id,
+                                event_type: "attempt_retry_delay",
+                                provider_id: Some(provider_id),
+                                model_id: Some(&attempt.model_id),
+                                outcome: Some("delayed_retry"),
+                                latency_ms: None,
+                                details: serde_json::json!({
+                                    "endpoint_kind": "chat",
+                                    "delay_ms": delay_ms,
+                                }),
+                            },
+                        )
+                        .await;
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         match adapter
                             .chat_completions(
@@ -369,6 +519,16 @@ pub async fn route_chat_request(
                         {
                             Ok(response) => {
                                 info!(provider = %provider_id, "Retry after delay succeeded");
+                                crate::observability::record_attempt_result(
+                                    &state,
+                                    &request_id,
+                                    "chat",
+                                    attempt,
+                                    "success_after_delay",
+                                    Some(response.latency_ms),
+                                    None,
+                                )
+                                .await;
                                 let usage_ref =
                                     response.usage.as_ref().map(provider_usage_to_openai_usage);
                                 let _ = crate::usage::accounting::record_usage(
@@ -408,6 +568,16 @@ pub async fn route_chat_request(
                                 });
                             }
                             Err(e2) => {
+                                crate::observability::record_attempt_result(
+                                    &state,
+                                    &request_id,
+                                    "chat",
+                                    attempt,
+                                    failure_status_for_error(Some(&e2)),
+                                    None,
+                                    Some(&e2.to_string()),
+                                )
+                                .await;
                                 if let ProviderError::RateLimited { retry_after, .. } = &e2 {
                                     record_rate_limit_hint(
                                         &state,
@@ -421,7 +591,21 @@ pub async fn route_chat_request(
                             }
                         }
                     }
-                    FallbackDecision::TryNextProvider => { /* continue to next provider */ }
+                    FallbackDecision::TryNextProvider => {
+                        crate::observability::record_event(
+                            &state,
+                            crate::observability::TraceEventRecord {
+                                request_id: &request_id,
+                                event_type: "fallback_decision",
+                                provider_id: Some(provider_id),
+                                model_id: Some(&attempt.model_id),
+                                outcome: Some("try_next_provider"),
+                                latency_ms: None,
+                                details: serde_json::json!({"endpoint_kind": "chat"}),
+                            },
+                        )
+                        .await;
+                    }
                     FallbackDecision::Fail => {
                         record_route_failure(
                             &state,
@@ -508,6 +692,15 @@ pub async fn route_embeddings_request(
     assign_attempt_priorities(&mut plan);
 
     if plan.is_empty() {
+        crate::observability::record_route_plan(
+            &state,
+            &request_id,
+            "embeddings",
+            &request.model,
+            &resolved_models,
+            &plan,
+        )
+        .await;
         record_route_failure(
             &state,
             RouteFailure {
@@ -545,6 +738,15 @@ pub async fn route_embeddings_request(
     )
     .await;
     if plan.is_empty() {
+        crate::observability::record_route_plan(
+            &state,
+            &request_id,
+            "embeddings",
+            &request.model,
+            &resolved_models,
+            &plan,
+        )
+        .await;
         record_route_failure(
             &state,
             RouteFailure {
@@ -562,21 +764,57 @@ pub async fn route_embeddings_request(
         .await;
     }
     let mut last_error = None;
+    crate::observability::record_route_plan(
+        &state,
+        &request_id,
+        "embeddings",
+        &request.model,
+        &resolved_models,
+        &plan,
+    )
+    .await;
     for attempt in &plan {
+        let attempt_started_at = std::time::Instant::now();
         let provider_id = &attempt.provider_id;
 
         if let Some(breaker) = state.breaker_states.get(provider_id) {
             if breaker.is_open() {
+                crate::observability::record_skip(
+                    &state,
+                    &request_id,
+                    "embeddings",
+                    attempt,
+                    "circuit breaker open",
+                )
+                .await;
                 continue;
             }
         }
 
         let adapter = match registry.get(provider_id).await {
             Some(a) => a,
-            None => continue,
+            None => {
+                crate::observability::record_skip(
+                    &state,
+                    &request_id,
+                    "embeddings",
+                    attempt,
+                    "provider adapter missing from registry",
+                )
+                .await;
+                continue;
+            }
         };
 
         if !adapter.supports_endpoint(&EndpointKind::Embeddings) {
+            crate::observability::record_skip(
+                &state,
+                &request_id,
+                "embeddings",
+                attempt,
+                "embeddings not supported",
+            )
+            .await;
             continue;
         }
 
@@ -595,6 +833,8 @@ pub async fn route_embeddings_request(
             client: state.http_client.clone(),
         };
 
+        crate::observability::record_attempt_started(&state, &request_id, "embeddings", attempt)
+            .await;
         match adapter
             .embeddings(
                 &ctx,
@@ -606,6 +846,16 @@ pub async fn route_embeddings_request(
             .await
         {
             Ok(response) => {
+                crate::observability::record_attempt_result(
+                    &state,
+                    &request_id,
+                    "embeddings",
+                    attempt,
+                    "success",
+                    Some(response.latency_ms),
+                    None,
+                )
+                .await;
                 let usage = crate::api::openai::chat::UsageResponse {
                     prompt_tokens: response.usage.prompt_tokens,
                     completion_tokens: response.usage.completion_tokens,
@@ -637,6 +887,16 @@ pub async fn route_embeddings_request(
                 });
             }
             Err(e) => {
+                crate::observability::record_attempt_result(
+                    &state,
+                    &request_id,
+                    "embeddings",
+                    attempt,
+                    failure_status_for_error(Some(&e)),
+                    Some(attempt_started_at.elapsed().as_millis() as i64),
+                    Some(&e.to_string()),
+                )
+                .await;
                 last_error = Some(e);
                 if let Some(error) = last_error.as_ref() {
                     if crate::resilience::health::should_record_provider_failure(error) {
