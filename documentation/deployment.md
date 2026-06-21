@@ -65,7 +65,7 @@ CMD ["-c", "/tokenscavenger.toml"]
 Build and run:
 
 ```bash
-docker build -t tokenscavenger .
+docker build -t tokenscavenger:0.3.5 .
 docker run -d \
   --name tokenscavenger \
   -p 8000:8000 \
@@ -73,7 +73,7 @@ docker run -d \
   -v /path/to/data:/data \
   -e GROQ_API_KEY=... \
   -e GEMINI_API_KEY=... \
-  tokenscavenger
+  tokenscavenger:0.3.5
 ```
 
 Or use Docker Compose:
@@ -327,10 +327,21 @@ Ready-to-import monitoring starters live in `monitoring/`:
 Release artifacts also include `checksums.txt`, an SPDX SBOM, and GitHub
 artifact attestations for provenance verification.
 
-## Packaging Starters
+## Packaging
 
-- Homebrew formula template: `packaging/homebrew/tokenscavenger.rb`
+- Homebrew formula: `packaging/homebrew/tokenscavenger.rb`
 - Kubernetes manifests: `deploy/kubernetes/`
+
+The Homebrew formula points at the signed/notarized macOS ARM64 and Linux x86_64
+release artifacts and pins their SHA256 checksums. To distribute through
+`brew install kabudu/tap/tokenscavenger`, publish the formula into a Homebrew tap
+repository such as `kabudu/homebrew-tap`; no Homebrew account signup is required
+for a GitHub-hosted tap.
+
+The Kubernetes deployment references `tokenscavenger:0.3.5`, matching the local
+Docker build tag above. For a remote cluster, retag and push that image to your
+registry, then update `deploy/kubernetes/deployment.yaml` to the registry image
+your cluster can pull.
 
 ### Logging
 

@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completed the Homebrew packaging with release artifact checksums and formula
+  validation.
+- Replaced the Kubernetes deployment image placeholder with a concrete local
+  image tag and documented registry retagging for remote clusters.
+
 ## [0.3.4] - 2026-06-21
 
 ### Added
