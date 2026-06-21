@@ -333,10 +333,11 @@ artifact attestations for provenance verification.
 - Kubernetes manifests: `deploy/kubernetes/`
 
 The Homebrew formula points at the signed/notarized macOS ARM64 and Linux x86_64
-release artifacts and pins their SHA256 checksums. To distribute through
-`brew install kabudu/tap/tokenscavenger`, publish the formula into a Homebrew tap
-repository such as `kabudu/homebrew-tap`; no Homebrew account signup is required
-for a GitHub-hosted tap.
+release artifacts and pins their SHA256 checksums. The GitHub release workflow
+updates `kabudu/homebrew-tap` after publishing a release by reading the generated
+`checksums.txt` asset and committing the new formula to the tap's `master`
+branch. That cross-repository push requires a repository secret named
+`HOMEBREW_TAP_TOKEN` with `contents:write` access to `kabudu/homebrew-tap`.
 
 The Kubernetes deployment references `tokenscavenger:0.3.5`, matching the local
 Docker build tag above. For a remote cluster, retag and push that image to your

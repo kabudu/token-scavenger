@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The release workflow now updates `kabudu/homebrew-tap` automatically after
+  publishing release artifacts.
+
 ### Fixed
+
+- Updated the in-repository Homebrew formula copy to the current v0.3.5 release
+  artifact URLs and checksums.
 
 ## [0.3.5] - 2026-06-21
 

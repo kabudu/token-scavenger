@@ -292,3 +292,122 @@ jobs:
             dist/**/tokenscavenger-v*
             checksums.txt
             tokenscavenger-${{ needs.prepare.outputs.new_version }}.spdx.json
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require tap token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN is required to update kabudu/homebrew-tap."
+            echo "Create a fine-grained GitHub token with contents:write on kabudu/homebrew-tap."
+            exit 1
+          fi
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v6
+        with:
+          repository: kabudu/homebrew-tap
+          ref: master
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Download release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${{ needs.prepare.outputs.new_version }}" \
+            --repo "${{ github.repository }}" \
+            --pattern checksums.txt \
+            --output checksums.txt \
+            --clobber
+          cat checksums.txt
+
+      - name: Update formula
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          version = "${{ needs.prepare.outputs.new_version }}"
+          checksums = Path("checksums.txt").read_text().splitlines()
+
+          def checksum_for(name: str) -> str:
+              matches = [
+                  line.split()[0]
+                  for line in checksums
+                  if line.split(maxsplit=1)[1].endswith(name)
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(f"Expected exactly one checksum for {name}, found {len(matches)}")
+              return matches[0]
+
+          mac_name = f"tokenscavenger-v{version}-aarch64-apple-darwin.zip"
+          linux_name = f"tokenscavenger-v{version}-x86_64-unknown-linux-gnu"
+          mac_sha = checksum_for(mac_name)
+          linux_sha = checksum_for(linux_name)
+
+          formula = Path("homebrew-tap/Formula/tokenscavenger.rb")
+          formula.write_text(dedent(f'''\
+          class Tokenscavenger < Formula
+            desc "Self-hosted OpenAI-compatible LLM proxy/router"
+            homepage "https://github.com/kabudu/token-scavenger"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/kabudu/token-scavenger/releases/download/v{version}/{mac_name}"
+                sha256 "{mac_sha}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/kabudu/token-scavenger/releases/download/v{version}/{linux_name}"
+                sha256 "{linux_sha}"
+              end
+            end
+
+            def install
+              candidate = Dir["tokenscavenger*"].find {{ |path| File.file?(path) }}
+              odie "tokenscavenger release binary was not found" unless candidate
+
+              bin.install candidate => "tokenscavenger"
+            end
+
+            service do
+              run [opt_bin/"tokenscavenger", "--config", "#{{etc}}/tokenscavenger/tokenscavenger.toml"]
+              keep_alive true
+              working_dir var
+              log_path var/"log/tokenscavenger.log"
+              error_log_path var/"log/tokenscavenger.err.log"
+            end
+
+            test do
+              assert_match "tokenscavenger", shell_output("#{{bin}}/tokenscavenger --help")
+            end
+          end
+          '''))
+          PY
+
+      - name: Validate formula syntax
+        working-directory: homebrew-tap
+        run: ruby -c Formula/tokenscavenger.rb
+
+      - name: Commit and push formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Formula/tokenscavenger.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula already points at v${{ needs.prepare.outputs.new_version }}"
+            exit 0
+          fi
+          git commit -m "tokenscavenger ${{ needs.prepare.outputs.new_version }}"
+          git push origin HEAD:master
