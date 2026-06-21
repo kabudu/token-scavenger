@@ -1597,6 +1597,10 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
             .unwrap();
         let html = String::from_utf8(body.to_vec()).unwrap();
         assert!(html.contains("<aside"));
+        assert!(html.contains("id=\"update-widget\""));
+        assert!(html.contains("id=\"update-widget-version\""));
+        assert!(html.contains("id=\"update-widget-asset\""));
+        assert!(!html.contains("id=\"update-banner\""));
         if path == "/ui/routing" {
             assert!(html.contains("Route Plan"));
         }

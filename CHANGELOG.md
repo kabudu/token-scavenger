@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced the admin UI's full-width update banner with a compact
+  TokenScavenger-orange header widget beside the health status pill.
+
 ### Fixed
+
+- Release `checksums.txt` files now list bare asset filenames so v0.3.5
+  self-update clients can verify and apply newer releases.
 
 ## [0.3.7] - 2026-06-21
 
