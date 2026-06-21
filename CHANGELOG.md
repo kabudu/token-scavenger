@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+## [0.3.8] - 2026-06-21
+
+### Added
+
+### Changed
+
 - Replaced the admin UI's full-width update banner with a compact
   TokenScavenger-orange header widget beside the health status pill.
 
