@@ -1520,13 +1520,12 @@ pub async fn render_projects(state: &AppState) -> String {
             <p class="project-key-warning">Store this key now. It will not be shown again.</p>
             <div class="project-key-secret" role="group" aria-label="Issued project API key">
                 <code id="issued-project-key" class="project-key-value">${escapeProjectHtml(apiKey)}</code>
+                <button type="button" class="project-key-copy-btn" id="project-key-copy-btn" onclick="copyIssuedProjectKey()" aria-label="Copy project API key" title="Copy project API key">
+                    <i class="fas fa-copy" aria-hidden="true"></i>
+                </button>
             </div>
         `;
         actionsEl.innerHTML = `
-            <button class="btn project-key-copy-btn" id="project-key-copy-btn" onclick="copyIssuedProjectKey()">
-                <i class="fas fa-copy" aria-hidden="true"></i>
-                <span>Copy key</span>
-            </button>
             <button class="btn" style="background:#334155;" onclick="hideModal()">Close</button>
         `;
         const modal = document.getElementById('global-modal');
@@ -1551,10 +1550,14 @@ pub async fn render_projects(state: &AppState) -> String {
                 document.execCommand('copy');
                 textarea.remove();
             }
-            button.innerHTML = '<i class="fas fa-check" aria-hidden="true"></i><span>Copied</span>';
+            button.innerHTML = '<i class="fas fa-check" aria-hidden="true"></i>';
+            button.setAttribute('aria-label', 'Project API key copied');
+            button.setAttribute('title', 'Copied');
             button.classList.add('project-key-copy-success');
         } catch (e) {
-            button.innerHTML = '<i class="fas fa-exclamation-triangle" aria-hidden="true"></i><span>Copy failed</span>';
+            button.innerHTML = '<i class="fas fa-exclamation-triangle" aria-hidden="true"></i>';
+            button.setAttribute('aria-label', 'Copy project API key failed');
+            button.setAttribute('title', 'Copy failed');
         }
     }
     async function issueKey(projectId) {

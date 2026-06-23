@@ -51,9 +51,12 @@ body.sidebar-open { overflow: hidden; }
 .project-combobox-option:hover, .project-combobox-option.active { color: #fff; background: rgba(255,255,255,0.07); }
 .project-key-modal-content { max-width: min(720px, calc(100vw - 32px)) !important; }
 .project-key-warning { margin-bottom: 12px; color: #cbd5e1; font-weight: 700; }
-.project-key-secret { max-width: 100%; padding: 12px 14px; border: 1px solid rgba(148,163,184,0.24); border-radius: 8px; background: rgba(2,6,23,0.55); }
-.project-key-value { display: block; max-height: 120px; overflow: auto; color: #dbeafe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
-.project-key-copy-btn { display: inline-flex; align-items: center; gap: 8px; }
+.project-key-secret { max-width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 56px; align-items: stretch; overflow: hidden; border: 1px solid rgba(148,163,184,0.24); border-radius: 8px; background: rgba(2,6,23,0.55); }
+.project-key-value { display: block; min-width: 0; max-height: 120px; overflow: auto; padding: 12px 14px; color: #dbeafe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
+.project-key-copy-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; min-height: 100%; color: #fff; background: var(--color-fox); border-left: 1px solid rgba(255,255,255,0.16); cursor: pointer; transition: filter 0.2s, background-color 0.2s; }
+.project-key-copy-btn:hover { filter: brightness(1.16); }
+.project-key-copy-btn:focus-visible { outline: 2px solid rgba(255,255,255,0.9); outline-offset: -4px; }
+.project-key-copy-btn i { font-size: 18px; line-height: 1; }
 .project-key-copy-success { background: #059669 !important; }
 .provider-add-btn { min-height: 42px; white-space: nowrap; padding-inline: 18px; }
 @media (max-width: 1180px) { .provider-add-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .provider-add-btn { width: 100%; } }
