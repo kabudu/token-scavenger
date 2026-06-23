@@ -202,6 +202,9 @@ Projects and project API keys are operator-managed SQLite state, not TOML
 configuration. Manage them from `/ui/projects` or the `/admin/projects` API.
 This keeps show-once client keys out of config files and lets TokenScavenger
 track revocation, expiration, grace periods, ownership, and last-used timestamps.
+The Projects UI summarizes model-group, provider, privacy, paid-fallback, and
+budget policy inline, and its usage panel shows attributed requests, tokens,
+estimated cost, and key prefixes per project.
 
 Project records support:
 

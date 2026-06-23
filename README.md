@@ -307,6 +307,11 @@ environment caps, and key-level caps. Request traces, usage events, exports, and
 Prometheus project metrics carry `project_id` and a key prefix, never plaintext
 keys.
 
+The Projects UI shows each project's active model-group, provider, privacy, and
+paid-fallback policy at a glance. Operators can open an in-app usage panel for
+per-project request attribution, token totals, estimated spend, key prefixes,
+and the same CSV or redacted diagnostic exports exposed by the admin API.
+
 ## Model Intelligence
 
 TokenScavenger normalizes model families, task tags, modality flags, context
@@ -359,7 +364,8 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 - Models — compare discovered and curated models with intelligence metadata
 - Routing — view fallback order and smart/custom model group configuration
 - Usage — token counts and estimated costs
-- Projects — project keys, budgets, usage exports, and scoped diagnostics
+- Projects — project keys, policy restrictions, budget caps, usage attribution,
+  CSV exports, and scoped diagnostics
 - Observability — request traces, incident feed, and diagnostic bundle export
 - Health — per-provider health states
 - Logs — real-time log stream via SSE

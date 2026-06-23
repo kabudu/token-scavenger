@@ -1049,6 +1049,98 @@ fn escape_html(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+fn escape_url_path_segment(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+fn json_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn render_project_policy_chips(items: &[String], empty_label: &str, class_name: &str) -> String {
+    if items.is_empty() {
+        return format!(
+            r#"<span class="project-policy-chip project-policy-chip-empty">{}</span>"#,
+            escape_html(empty_label)
+        );
+    }
+    items
+        .iter()
+        .map(|item| {
+            format!(
+                r#"<span class="project-policy-chip {}">{}</span>"#,
+                class_name,
+                escape_html(item)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn render_project_policy_summary(project: &serde_json::Value) -> String {
+    let model_groups = json_string_list(project.get("allowed_model_groups"));
+    let provider_allowlist = json_string_list(project.get("provider_allowlist"));
+    let provider_denylist = json_string_list(project.get("provider_denylist"));
+    let privacy = project
+        .get("privacy_profile")
+        .and_then(|value| value.as_str())
+        .unwrap_or("default");
+    let allow_paid = project
+        .get("allow_paid_fallback")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    format!(
+        r#"<div class="project-policy-stack">
+            <div class="project-policy-row"><span>Groups</span><div>{}</div></div>
+            <div class="project-policy-row"><span>Privacy</span><div><span class="project-policy-chip project-policy-chip-privacy">{}</span><span class="project-policy-chip {}">{}</span></div></div>
+            <div class="project-policy-row"><span>Allow</span><div>{}</div></div>
+            <div class="project-policy-row"><span>Deny</span><div>{}</div></div>
+        </div>"#,
+        render_project_policy_chips(
+            &model_groups,
+            "All model groups",
+            "project-policy-chip-group"
+        ),
+        escape_html(privacy),
+        if allow_paid {
+            "project-policy-chip-paid"
+        } else {
+            "project-policy-chip-free"
+        },
+        if allow_paid {
+            "paid fallback"
+        } else {
+            "free/local only"
+        },
+        render_project_policy_chips(
+            &provider_allowlist,
+            "All providers",
+            "project-policy-chip-provider"
+        ),
+        render_project_policy_chips(
+            &provider_denylist,
+            "No denylist",
+            "project-policy-chip-deny"
+        ),
+    )
+}
+
 /// Render the routing view.
 pub async fn render_routing(state: &AppState) -> String {
     let config = state.config();
@@ -1293,10 +1385,10 @@ pub async fn render_projects(state: &AppState) -> String {
                 .iter()
                 .map(|project| {
                     let id = escape_html(project.get("project_id").and_then(|v| v.as_str()).unwrap_or("?"));
+                    let id_url = escape_url_path_segment(project.get("project_id").and_then(|v| v.as_str()).unwrap_or("?"));
                     let name = escape_html(project.get("display_name").and_then(|v| v.as_str()).unwrap_or("?"));
                     let enabled = project.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let privacy = escape_html(project.get("privacy_profile").and_then(|v| v.as_str()).unwrap_or("default"));
-                    let allow_paid = project.get("allow_paid_fallback").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let policy = render_project_policy_summary(project);
                     let keys = project.get("keys").and_then(|v| v.as_array()).map(|keys| keys.len()).unwrap_or(0);
                     let cost_day = project.get("max_cost_per_day_usd").and_then(|v| v.as_f64()).map(|v| format!("${v:.2}")).unwrap_or_else(|| "-".into());
                     let status = if enabled { "Enabled" } else { "Disabled" };
@@ -1304,22 +1396,22 @@ pub async fn render_projects(state: &AppState) -> String {
                     format!(r#"<tr>
                         <td><div class="font-bold">{}</div><div class="font-mono text-[10px] text-slate-500">{}</div></td>
                         <td><span class="{} text-xs font-bold uppercase">{}</span></td>
-                        <td class="font-mono text-xs">{}</td>
-                        <td class="font-mono text-xs">{}</td>
+                        <td>{}</td>
                         <td class="font-mono text-xs">{}</td>
                         <td class="font-mono text-xs">{}</td>
                         <td class="text-right">
-                            <button class="btn text-xs" onclick="issueKey('{}')">Issue key</button>
+                            <button class="btn text-xs" data-project-id="{}" onclick="issueKeyFromButton(this)">Issue key</button>
+                            <button class="btn text-xs" style="background:#334155;" data-project-id="{}" data-project-name="{}" onclick="loadProjectUsageFromButton(this)">Usage</button>
                             <a class="btn text-xs" href="/admin/projects/{}/export.csv">CSV</a>
                             <a class="btn text-xs" href="/admin/projects/{}/diagnostics/bundle">Diagnostics</a>
                         </td>
-                    </tr>"#, name, id, status_class, status, privacy, if allow_paid { "paid ok" } else { "free/local" }, keys, cost_day, id, id, id)
+                    </tr>"#, name, id, status_class, status, policy, keys, cost_day, id, id, name, id_url, id_url)
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
         })
         .filter(|rows| !rows.is_empty())
-        .unwrap_or_else(|| "<tr><td colspan=\"7\" class=\"px-6 py-4 text-center text-slate-500\">No projects configured</td></tr>".into());
+        .unwrap_or_else(|| "<tr><td colspan=\"6\" class=\"px-6 py-4 text-center text-slate-500\">No projects configured</td></tr>".into());
 
     let content = format!(
         r#"
@@ -1331,7 +1423,7 @@ pub async fn render_projects(state: &AppState) -> String {
                 <div class="p-0 overflow-x-auto">
                     <table class="w-full text-left">
                         <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
-                            <tr><th>Project</th><th>Status</th><th>Privacy</th><th>Paid</th><th>Keys</th><th>Daily Cost Cap</th><th class="text-right">Actions</th></tr>
+                            <tr><th>Project</th><th>Status</th><th>Policy</th><th>Keys</th><th>Daily Cost Cap</th><th class="text-right">Actions</th></tr>
                         </thead>
                         <tbody class="divide-y divide-white/5">{}</tbody>
                     </table>
@@ -1367,6 +1459,35 @@ pub async fn render_projects(state: &AppState) -> String {
                 <div class="flex justify-end pt-2">
                     <button class="btn" onclick="createProject()">Create Project</button>
                 </div>
+            </div>
+        </div>
+        <div id="project-usage-panel" class="glass-card overflow-hidden hidden">
+            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                    <h3 class="font-bold">Project Usage</h3>
+                    <div id="project-usage-title" class="font-mono text-[11px] text-slate-500 mt-1">Select a project</div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a id="project-usage-csv" class="btn text-xs" href="/admin/projects">CSV</a>
+                    <a id="project-usage-diagnostics" class="btn text-xs" href="/admin/projects">Diagnostics</a>
+                    <button class="btn text-xs" style="background:#334155;" onclick="hideProjectUsage()">Close</button>
+                </div>
+            </div>
+            <div class="p-5 grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="project-usage-metric"><span>Requests Today</span><strong id="project-usage-requests">0</strong></div>
+                <div class="project-usage-metric"><span>Input Tokens</span><strong id="project-usage-input">0</strong></div>
+                <div class="project-usage-metric"><span>Output Tokens</span><strong id="project-usage-output">0</strong></div>
+                <div class="project-usage-metric"><span>Estimated Cost</span><strong id="project-usage-cost">$0.00</strong></div>
+            </div>
+            <div class="overflow-x-auto border-t border-white/5">
+                <table class="w-full text-left">
+                    <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
+                        <tr><th>Request</th><th>Endpoint</th><th>Requested Model</th><th>Provider</th><th>Status</th><th>Key</th><th>Tokens</th><th>Cost</th></tr>
+                    </thead>
+                    <tbody id="project-usage-rows" class="divide-y divide-white/5">
+                        <tr><td colspan="8" class="px-6 py-4 text-center text-slate-500">Select a project to load usage attribution</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
         "#,
@@ -1568,6 +1689,61 @@ pub async fn render_projects(state: &AppState) -> String {
         if (!r.ok) { showModal('Key issue failed', data, true); return; }
         if (!data.api_key) { showModal('Key issue failed', 'The server did not return an API key.', true); return; }
         showProjectApiKeyModal(data.api_key);
+    }
+    function issueKeyFromButton(button) {
+        issueKey(encodeURIComponent(button.dataset.projectId || ''));
+    }
+    function projectUsageNumber(value) {
+        return Number(value || 0).toLocaleString();
+    }
+    function projectUsageMoney(value) {
+        return new Intl.NumberFormat('en-US', {style:'currency', currency:'USD', minimumFractionDigits:2, maximumFractionDigits:4}).format(Number(value || 0));
+    }
+    function projectUsageRow(row) {
+        const status = row.status || 'unknown';
+        const statusClass = status === 'success' ? 'text-emerald-400' : (row.http_status === 429 ? 'text-yellow-400' : 'text-red-400');
+        const requestId = escapeProjectHtml(row.request_id || '-');
+        const input = Number(row.input_tokens || 0);
+        const output = Number(row.output_tokens || 0);
+        return `<tr>
+            <td><div class="font-mono text-[10px] text-cyan-300">${requestId}</div><div class="text-[10px] text-slate-500 mt-1">${escapeProjectHtml(row.received_at || '-')}</div></td>
+            <td class="font-mono text-xs">${escapeProjectHtml(row.endpoint_kind || '-')}</td>
+            <td class="font-mono text-xs">${escapeProjectHtml(row.requested_model || '-')}</td>
+            <td><div class="font-mono text-xs">${escapeProjectHtml(row.selected_provider_id || '-')}</div><div class="font-mono text-[10px] text-slate-500 mt-1">${escapeProjectHtml(row.selected_model_id || '-')}</div></td>
+            <td class="${statusClass} text-xs font-bold uppercase">${escapeProjectHtml(status)}</td>
+            <td class="font-mono text-[10px] text-slate-400">${escapeProjectHtml(row.api_key_prefix || '-')}</td>
+            <td class="font-mono text-xs">${projectUsageNumber(input + output)}<div class="text-[10px] text-slate-500 mt-1">${projectUsageNumber(input)} in / ${projectUsageNumber(output)} out</div></td>
+            <td class="font-mono text-xs">${projectUsageMoney(row.estimated_cost_usd)}</td>
+        </tr>`;
+    }
+    function hideProjectUsage() {
+        document.getElementById('project-usage-panel').classList.add('hidden');
+    }
+    async function loadProjectUsageFromButton(button) {
+        const projectId = button.dataset.projectId;
+        const projectName = button.dataset.projectName || projectId;
+        const panel = document.getElementById('project-usage-panel');
+        const rows = document.getElementById('project-usage-rows');
+        panel.classList.remove('hidden');
+        document.getElementById('project-usage-title').innerText = `${projectName} · ${projectId}`;
+        document.getElementById('project-usage-csv').href = `/admin/projects/${encodeURIComponent(projectId)}/export.csv`;
+        document.getElementById('project-usage-diagnostics').href = `/admin/projects/${encodeURIComponent(projectId)}/diagnostics/bundle`;
+        rows.innerHTML = '<tr><td colspan="8" class="px-6 py-4 text-center text-slate-500">Loading project usage...</td></tr>';
+        try {
+            const r = await fetch(`/admin/projects/${encodeURIComponent(projectId)}/usage`);
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error?.message || 'Project usage failed');
+            const today = data.today || {};
+            document.getElementById('project-usage-requests').innerText = projectUsageNumber(today.requests);
+            document.getElementById('project-usage-input').innerText = projectUsageNumber(today.input_tokens);
+            document.getElementById('project-usage-output').innerText = projectUsageNumber(today.output_tokens);
+            document.getElementById('project-usage-cost').innerText = projectUsageMoney(today.estimated_cost_usd);
+            const recent = data.recent || [];
+            rows.innerHTML = recent.map(projectUsageRow).join('') || '<tr><td colspan="8" class="px-6 py-4 text-center text-slate-500">No attributed requests for this project yet</td></tr>';
+            panel.scrollIntoView({behavior:'smooth', block:'start'});
+        } catch (e) {
+            rows.innerHTML = `<tr><td colspan="8" class="px-6 py-4 text-center text-red-400">${escapeProjectHtml(e.message || 'Project usage failed')}</td></tr>`;
+        }
     }
     loadProjectModelGroupOptions();
     </script>"#;

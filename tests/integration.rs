@@ -1656,7 +1656,14 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         Default::default(),
         tokio::sync::broadcast::channel(1).0,
     ));
-    for path in ["/ui", "/ui/routing", "/ui/models", "/ui/config", "/ui/logs"] {
+    for path in [
+        "/ui",
+        "/ui/routing",
+        "/ui/models",
+        "/ui/projects",
+        "/ui/config",
+        "/ui/logs",
+    ] {
         let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -1681,6 +1688,11 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         if path == "/ui/models" {
             assert!(html.contains("Model Catalog"));
             assert!(html.contains("fetch('/admin/models'"));
+        }
+        if path == "/ui/projects" {
+            assert!(html.contains("Project Usage"));
+            assert!(html.contains("Allowed Model Groups"));
+            assert!(html.contains("loadProjectUsageFromButton"));
         }
         if path == "/ui/logs" {
             assert!(html.contains("aria-live"));
