@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.3.9] - 2026-06-23
+
+### Added
+
 - Added project-scoped OpenAI-compatible API keys with show-once key issuance,
   hash-only storage, revocation, expiration/grace rotation metadata, per-project
   and key-level budgets, provider/model-group/privacy restrictions, usage
