@@ -1325,7 +1325,6 @@ pub async fn render_projects(state: &AppState) -> String {
             <div class="glass-card overflow-hidden">
                 <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4 flex-wrap">
                     <h3 class="font-bold">Projects</h3>
-                    <button class="btn" onclick="createProject()">Create Project</button>
                 </div>
                 <div class="p-0 overflow-x-auto">
                     <table class="w-full text-left">
@@ -1363,6 +1362,9 @@ pub async fn render_projects(state: &AppState) -> String {
                         <small>Project paid providers</small>
                     </span>
                 </label>
+                <div class="flex justify-end pt-2">
+                    <button class="btn" onclick="createProject()">Create Project</button>
+                </div>
             </div>
         </div>
         "#,
