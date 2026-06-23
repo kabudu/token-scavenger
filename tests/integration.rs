@@ -1153,6 +1153,74 @@ discover_models = false
 }
 
 #[tokio::test]
+async fn test_discovery_refresh_upserts_models_without_replacing_operator_fields() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        model_ids: vec!["operator-disabled-model".into()],
+        ..Default::default()
+    })
+    .await;
+    let (_app, state) = build_test_app().await;
+
+    let mut config = (*state.config()).clone();
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "groq".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: Some("test-key".into()),
+        free_only: false,
+        discover_models: true,
+        embedding_support: Default::default(),
+    }];
+    state.runtime_config.store(std::sync::Arc::new(config));
+    state
+        .provider_registry
+        .register(std::sync::Arc::new(
+            tokenscavenger::providers::groq::GroqAdapter,
+        ))
+        .await;
+
+    sqlx::query(
+        "INSERT INTO providers (provider_id, display_name, enabled, free_only)
+         VALUES ('groq', 'Groq', 1, 0)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO models
+         (provider_id, upstream_model_id, public_model_id, enabled, free_tier, paid_fallback, supports_tools, supports_json_mode, priority, metadata_json, discovered_at)
+         VALUES ('groq', 'operator-disabled-model', 'operator-disabled-model', 0, 1, 1, 0, 0, 7, '{\"source\":\"operator\"}', datetime('now'))",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    tokenscavenger::discovery::refresh::refresh_all(&state).await;
+
+    let row = sqlx::query_as::<_, (bool, bool, bool, bool, i64, String)>(
+        "SELECT enabled, paid_fallback, supports_tools, supports_json_mode, priority, metadata_json
+         FROM models
+         WHERE provider_id = 'groq' AND upstream_model_id = 'operator-disabled-model'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    assert!(
+        !row.0,
+        "discovery must not re-enable operator-disabled models"
+    );
+    assert!(row.1, "discovery must preserve paid fallback policy");
+    assert!(!row.2, "discovery must preserve tool support override");
+    assert!(!row.3, "discovery must preserve JSON mode override");
+    assert_eq!(row.4, 7, "discovery must preserve operator priority");
+    let metadata: serde_json::Value = serde_json::from_str(&row.5).unwrap();
+    assert_eq!(metadata["source"], "discovered");
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn test_chat_completions_no_config_returns_error() {
     let (app, _state) = build_test_app().await;
 

@@ -10,7 +10,7 @@ use moka::future::Cache;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Mutex, broadcast, watch};
 
 #[derive(Debug, Clone)]
 pub struct ContextFailureHint {
@@ -44,6 +44,10 @@ pub struct AppState {
 
     /// Per-provider model catalog cache (provider_id -> cached models JSON).
     pub model_cache: Arc<Cache<String, String>>,
+
+    /// Serializes model discovery persistence so SQLite's single-writer queue
+    /// stays outside individual SQL statements.
+    pub discovery_write_lock: Arc<Mutex<()>>,
 
     /// Per-provider health state.
     pub health_states: Arc<DashMap<String, ProviderHealthState>>,
@@ -129,6 +133,7 @@ impl AppState {
             provider_registry,
             route_engine,
             model_cache: Arc::new(Cache::new(10_000)),
+            discovery_write_lock: Arc::new(Mutex::new(())),
             health_states: Arc::new(DashMap::new()),
             breaker_states: Arc::new(DashMap::new()),
             context_failure_hints: Arc::new(DashMap::new()),
