@@ -41,11 +41,13 @@ pub async fn metrics() -> Result<String, ApiError> {
 /// POST /v1/chat/completions — OpenAI-compatible chat completions.
 pub async fn chat_completions(
     State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
     headers: HeaderMap,
     axum::Json(req): axum::Json<crate::api::openai::chat::ChatRequest>,
 ) -> Result<axum::response::Response, ApiError> {
     let normalized = crate::api::openai::chat::NormalizedChatRequest::from_request(req);
     let request_id = request_id_from_headers(&headers);
+    register_project_for_request(&state, &request_id, auth.as_ref().map(|Extension(ctx)| ctx));
 
     if normalized.stream {
         // Streaming path
@@ -63,14 +65,27 @@ pub async fn chat_completions(
 /// POST /v1/embeddings — OpenAI-compatible embeddings.
 pub async fn embeddings(
     State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
     headers: HeaderMap,
     axum::Json(req): axum::Json<crate::api::openai::embeddings::EmbeddingsRequest>,
 ) -> Result<Json<crate::api::openai::embeddings::EmbeddingsResponse>, ApiError> {
     let normalized = crate::api::openai::embeddings::NormalizedEmbeddingsRequest::from_request(req);
     let request_id = request_id_from_headers(&headers);
+    register_project_for_request(&state, &request_id, auth.as_ref().map(|Extension(ctx)| ctx));
     let response =
         crate::router::engine::route_embeddings_request(state, normalized, request_id).await?;
     Ok(Json(response))
+}
+
+fn register_project_for_request(
+    state: &AppState,
+    request_id: &str,
+    auth: Option<&crate::api::auth::AuthContext>,
+) {
+    let project = auth
+        .and_then(|context| context.project.clone())
+        .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
+    crate::projects::register_request_project(state, request_id, project);
 }
 
 fn request_id_from_headers(headers: &HeaderMap) -> String {
@@ -112,6 +127,7 @@ pub async fn ui_static(
         "models" => crate::ui::routes::render_models(&state).await,
         "routing" => crate::ui::routes::render_routing(&state).await,
         "usage" => crate::ui::routes::render_usage(&state).await,
+        "projects" => crate::ui::routes::render_projects(&state).await,
         "health" => crate::ui::routes::render_health(&state).await,
         "observability" => crate::ui::routes::render_observability(&state).await,
         "logs" => crate::ui::routes::render_logs(&state).await,
@@ -170,12 +186,18 @@ pub async fn admin_whoami(
             crate::api::auth::AuthSource::MasterKey => "master_key",
             crate::api::auth::AuthSource::UiSession => "ui_session",
             crate::api::auth::AuthSource::ExternalIdentity => "external_identity",
+            crate::api::auth::AuthSource::ProjectKey => "project_key",
         },
         "subject": context.subject,
         "email": context.email,
         "display_name": context.display_name,
         "role": context.role.as_str(),
-        "can_manage_credentials": context.role.can_manage_credentials()
+        "can_manage_credentials": context.role.can_manage_credentials(),
+        "project": context.project.as_ref().map(|project| serde_json::json!({
+            "project_id": project.project_id,
+            "display_name": project.display_name,
+            "api_key_prefix": project.api_key_prefix,
+        }))
     })))
 }
 
@@ -358,6 +380,10 @@ pub async fn admin_route_plan(
             u64::from(token_estimate.input_tokens) + u64::from(token_estimate.output_tokens),
         ),
     };
+    let project_policy = match params.get("project_id") {
+        Some(project_id) => crate::projects::load_project_policy(&state.db, project_id).await?,
+        None => None,
+    };
     let explanations = crate::router::selection::explain_policy_plan(
         raw_plan,
         &state,
@@ -415,7 +441,19 @@ pub async fn admin_route_plan(
             && health != "Unhealthy"
             && breaker != "Open"
             && breaker != "HalfOpen";
-        let included = base_included && explanation.included;
+        let mut project_reasons = Vec::new();
+        if let Some(project_policy) = project_policy.as_ref() {
+            project_reasons = crate::projects::project_policy_skip_reasons(
+                &state,
+                project_policy,
+                None,
+                &model,
+                &attempt,
+                token_estimate,
+            )
+            .await?;
+        }
+        let included = base_included && explanation.included && project_reasons.is_empty();
         let base_reason = if base_included {
             None
         } else if !paid_allowed {
@@ -429,6 +467,10 @@ pub async fn admin_route_plan(
         };
         let mut reasons = explanation.reasons;
         reasons.extend(compatibility.reasons);
+        if !project_reasons.is_empty() {
+            reasons.retain(|reason| reason != "eligible");
+            reasons.extend(project_reasons);
+        }
         if let Some(base_reason) = base_reason {
             if base_reason == "filtered by model intelligence compatibility" {
                 reasons.retain(|reason| reason != "eligible");
@@ -472,6 +514,7 @@ pub async fn admin_route_plan(
         "free_first": config.routing.free_first,
         "allow_paid_fallback": config.routing.allow_paid_fallback,
         "objective": format!("{:?}", policy.objective_for_model_group(&model)),
+        "project_id": project_policy.as_ref().map(|policy| policy.project_id.clone()),
         "token_estimate": {
             "input_tokens": token_estimate.input_tokens,
             "output_tokens": token_estimate.output_tokens
@@ -1107,6 +1150,123 @@ pub async fn admin_config_rollback(
         "snapshot_id": snapshot_id
     })))
 }
+
+pub async fn admin_projects(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(crate::projects::list_projects(&state).await?))
+}
+
+pub async fn admin_project_create(
+    State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
+    axum::Json(body): axum::Json<crate::projects::ProjectUpsert>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth_context = auth.as_ref().map(|Extension(context)| context);
+    if auth_context.is_some_and(|context| context.role < crate::api::auth::AdminRole::ConfigEditor)
+    {
+        return Err(ApiError::Forbidden);
+    }
+    let actor = audit_actor(auth.as_ref().map(|Extension(context)| context));
+    Ok(Json(
+        crate::projects::create_project(&state, body, &actor).await?,
+    ))
+}
+
+pub async fn admin_project_update(
+    State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+    axum::Json(body): axum::Json<crate::projects::ProjectPatch>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth_context = auth.as_ref().map(|Extension(context)| context);
+    if !crate::projects::can_manage_project(&state, auth_context, &project_id).await? {
+        return Err(ApiError::Forbidden);
+    }
+    let actor = audit_actor(auth_context);
+    Ok(Json(
+        crate::projects::update_project(&state, &project_id, body, &actor).await?,
+    ))
+}
+
+pub async fn admin_project_delete(
+    State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth_context = auth.as_ref().map(|Extension(context)| context);
+    if !crate::projects::can_manage_project(&state, auth_context, &project_id).await? {
+        return Err(ApiError::Forbidden);
+    }
+    let actor = audit_actor(auth_context);
+    Ok(Json(
+        crate::projects::delete_project(&state, &project_id, &actor).await?,
+    ))
+}
+
+pub async fn admin_project_issue_key(
+    State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+    axum::Json(body): axum::Json<crate::projects::IssueKeyRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth_context = auth.as_ref().map(|Extension(context)| context);
+    if !crate::projects::can_manage_project(&state, auth_context, &project_id).await? {
+        return Err(ApiError::Forbidden);
+    }
+    let actor = audit_actor(auth_context);
+    let issued = crate::projects::issue_project_key(&state, &project_id, body, &actor).await?;
+    Ok(Json(serde_json::json!({
+        "project_id": issued.project_id,
+        "key_prefix": issued.key_prefix,
+        "api_key": issued.api_key,
+        "message": "Store this API key now; TokenScavenger will not show it again."
+    })))
+}
+
+pub async fn admin_project_revoke_key(
+    State(state): State<AppState>,
+    auth: Option<Extension<crate::api::auth::AuthContext>>,
+    axum::extract::Path((project_id, key_prefix)): axum::extract::Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let auth_context = auth.as_ref().map(|Extension(context)| context);
+    if !crate::projects::can_manage_project(&state, auth_context, &project_id).await? {
+        return Err(ApiError::Forbidden);
+    }
+    let actor = audit_actor(auth_context);
+    Ok(Json(
+        crate::projects::revoke_project_key(&state, &project_id, &key_prefix, &actor).await?,
+    ))
+}
+
+pub async fn admin_project_usage(
+    State(state): State<AppState>,
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        crate::projects::project_usage(&state, &project_id).await?,
+    ))
+}
+
+pub async fn admin_project_export(
+    State(state): State<AppState>,
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let csv = crate::projects::project_export_csv(&state, &project_id).await?;
+    Ok(([(header::CONTENT_TYPE, "text/csv; charset=utf-8")], csv).into_response())
+}
+
+pub async fn admin_project_diagnostic_bundle(
+    State(state): State<AppState>,
+    axum::extract::Path(project_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let bundle = crate::projects::project_diagnostic_bundle(&state, &project_id).await?;
+    Ok(Json(serde_json::json!({
+        "bundle": bundle,
+        "encoded": crate::projects::encode_diagnostic_bundle(&bundle)
+    })))
+}
+
 pub async fn admin_model_groups_list(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, ApiError> {

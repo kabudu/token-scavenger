@@ -203,6 +203,8 @@ pub async fn get_request_traces(state: &AppState, limit: i64) -> serde_json::Val
             i64,
             i64,
             f64,
+            Option<String>,
+            Option<String>,
         ),
     >(
         "SELECT
@@ -215,7 +217,9 @@ pub async fn get_request_traces(state: &AppState, limit: i64) -> serde_json::Val
             r.http_status,
             COALESCE(r.latency_ms, 0),
             COALESCE(r.fallback_count, 0),
-            COALESCE(SUM(u.estimated_cost_usd), 0.0)
+            COALESCE(SUM(u.estimated_cost_usd), 0.0),
+            r.project_id,
+            r.api_key_prefix
          FROM request_log r
          LEFT JOIN usage_events u ON u.request_id = r.request_id
          GROUP BY r.request_id
@@ -239,6 +243,8 @@ pub async fn get_request_traces(state: &AppState, limit: i64) -> serde_json::Val
             "latency_ms": row.7,
             "fallback_count": row.8,
             "estimated_cost_usd": row.9,
+            "project_id": row.10,
+            "api_key_prefix": row.11,
         })).collect::<Vec<_>>()
     })
 }
@@ -261,11 +267,13 @@ pub async fn get_request_trace(state: &AppState, request_id: &str) -> Option<ser
             i64,
             Option<String>,
             Option<String>,
+            Option<String>,
+            Option<String>,
         ),
     >(
         "SELECT request_id, received_at, endpoint_kind, requested_model, resolved_model_group,
                 selected_provider_id, status, http_status, latency_ms, streaming, retry_count,
-                fallback_count, error_code, error_summary
+                fallback_count, error_code, error_summary, project_id, api_key_prefix
          FROM request_log
          WHERE request_id = ?",
     )
@@ -360,6 +368,8 @@ pub async fn get_request_trace(state: &AppState, request_id: &str) -> Option<ser
             "fallback_count": request.11,
             "error_code": request.12,
             "error_summary": request.13,
+            "project_id": request.14,
+            "api_key_prefix": request.15,
         },
         "usage": usage_values,
         "events": event_values,

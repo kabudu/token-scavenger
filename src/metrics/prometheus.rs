@@ -19,6 +19,9 @@ struct MetricsRegistry {
     pricing_refresh: BTreeMap<(String, String), u64>,
     pricing_age_seconds: BTreeMap<String, f64>,
     unknown_price: BTreeMap<(String, String), u64>,
+    project_requests: BTreeMap<(String, String, String), u64>,
+    project_tokens: BTreeMap<(String, String), u64>,
+    project_estimated_cost: BTreeMap<String, f64>,
 }
 
 /// Register a request metric.
@@ -138,6 +141,35 @@ pub fn record_unknown_price(provider: &str, model: &str) {
             .unknown_price
             .entry((provider.into(), model.into()))
             .or_default() += 1;
+    }
+}
+
+/// Record project-attributed request usage without exposing API keys.
+pub fn record_project_usage(
+    project_id: &str,
+    endpoint: &str,
+    status: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    amount_usd: f64,
+) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .project_requests
+            .entry((project_id.into(), endpoint.into(), status.into()))
+            .or_default() += 1;
+        *metrics
+            .project_tokens
+            .entry((project_id.into(), "input".into()))
+            .or_default() += input_tokens as u64;
+        *metrics
+            .project_tokens
+            .entry((project_id.into(), "output".into()))
+            .or_default() += output_tokens as u64;
+        *metrics
+            .project_estimated_cost
+            .entry(project_id.into())
+            .or_default() += amount_usd;
     }
 }
 
@@ -314,6 +346,50 @@ pub fn render_metrics() -> String {
     if let Some(metrics) = metrics.as_ref() {
         for ((provider, model), value) in &metrics.unknown_price {
             writeln!(output, "tokenscavenger_usage_unknown_price_total{{provider=\"{provider}\",model=\"{model}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_project_requests_total Total number of project-attributed requests"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_project_requests_total counter"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((project_id, endpoint, status), value) in &metrics.project_requests {
+            writeln!(output, "tokenscavenger_project_requests_total{{project_id=\"{project_id}\",endpoint=\"{endpoint}\",status=\"{status}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_project_tokens_total Total project-attributed tokens"
+    )
+    .ok();
+    writeln!(output, "# TYPE tokenscavenger_project_tokens_total counter").ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((project_id, token_type), value) in &metrics.project_tokens {
+            writeln!(output, "tokenscavenger_project_tokens_total{{project_id=\"{project_id}\",type=\"{token_type}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_project_estimated_cost_usd_total Estimated project-attributed request cost in USD"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_project_estimated_cost_usd_total counter"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for (project_id, value) in &metrics.project_estimated_cost {
+            writeln!(output, "tokenscavenger_project_estimated_cost_usd_total{{project_id=\"{project_id}\"}} {value}").ok();
         }
     }
 

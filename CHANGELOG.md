@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added project-scoped OpenAI-compatible API keys with show-once key issuance,
+  hash-only storage, revocation, expiration/grace rotation metadata, per-project
+  and key-level budgets, provider/model-group/privacy restrictions, usage
+  attribution, CSV exports, project diagnostics, Prometheus project metrics, and
+  an admin UI Projects view.
+- Added an in-app Projects usage panel and inline policy summaries so operators
+  can see model-group, provider, privacy, paid-fallback, and usage attribution
+  without opening raw JSON exports.
+
 ### Changed
 
 ### Fixed

@@ -33,6 +33,8 @@ pub struct FailureRecord<'a> {
 
 /// Record a usage event for a completed request.
 pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(), sqlx::Error> {
+    let project = crate::projects::remove_request_project(state, record.request_id)
+        .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
     let usage = record.usage.unwrap_or(&UsageResponse {
         prompt_tokens: 0,
         completion_tokens: 0,
@@ -71,8 +73,8 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
     };
 
     sqlx::query(
-        "INSERT INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming)
-         VALUES (?, ?, ?, ?, ?, 'success', 200, ?, ?)"
+        "INSERT INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, project_id, api_key_prefix)
+         VALUES (?, ?, ?, ?, ?, 'success', 200, ?, ?, ?, ?)"
     )
     .bind(record.request_id)
     .bind(record.endpoint_kind)
@@ -81,13 +83,15 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
     .bind(record.model_id)
     .bind(record.latency_ms)
     .bind(record.streaming)
+    .bind(&project.project_id)
+    .bind(&project.api_key_prefix)
     .execute(&state.db)
     .await?;
 
     sqlx::query(
         "INSERT INTO usage_events
-         (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, cost_confidence, free_tier, cached_input_tokens, cache_miss_input_tokens, reasoning_tokens, pricing_model_id, cost_formula_json, cost_calculated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+         (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, cost_confidence, free_tier, cached_input_tokens, cache_miss_input_tokens, reasoning_tokens, pricing_model_id, cost_formula_json, cost_calculated_at, project_id, api_key_prefix)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)",
     )
     .bind(record.request_id)
     .bind(record.provider_id)
@@ -102,6 +106,8 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
     .bind(usage.reasoning_tokens.map(|v| v as i64))
     .bind(cost.pricing_model_id)
     .bind(cost.formula_json.to_string())
+    .bind(&project.project_id)
+    .bind(&project.api_key_prefix)
     .execute(&state.db)
     .await?;
 
@@ -130,9 +136,19 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
         &cost.confidence,
         cost.amount_usd,
     );
+    crate::metrics::prometheus::record_project_usage(
+        &project.project_id,
+        record.endpoint_kind,
+        "success",
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        cost.amount_usd,
+    );
 
     info!(
         request_id = %record.request_id,
+        project_id = %project.project_id,
+        api_key_prefix = %project.api_key_prefix,
         provider = %record.provider_id,
         model = %record.model_id,
         prompt_tokens = usage.prompt_tokens,
@@ -151,9 +167,11 @@ pub async fn record_failure(
     state: &AppState,
     record: FailureRecord<'_>,
 ) -> Result<(), sqlx::Error> {
+    let project = crate::projects::remove_request_project(state, record.request_id)
+        .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
     sqlx::query(
-        "INSERT OR IGNORE INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT OR IGNORE INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, project_id, api_key_prefix)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(record.request_id)
     .bind(record.endpoint_kind)
@@ -164,6 +182,8 @@ pub async fn record_failure(
     .bind(record.http_status)
     .bind(record.latency_ms)
     .bind(record.streaming)
+    .bind(&project.project_id)
+    .bind(&project.api_key_prefix)
     .execute(&state.db)
     .await?;
 
@@ -173,9 +193,18 @@ pub async fn record_failure(
         record.endpoint_kind,
         record.status,
     );
+    crate::metrics::prometheus::record_project_usage(
+        &project.project_id,
+        record.endpoint_kind,
+        record.status,
+        0,
+        0,
+        0.0,
+    );
 
     info!(
         request_id = %record.request_id,
+        project_id = %project.project_id,
         provider = record.selected_provider_id.unwrap_or("none"),
         model = record.requested_model,
         status = record.status,

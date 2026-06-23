@@ -617,6 +617,7 @@ async fn test_optional_ui_session_cookie_authenticates_browser_requests() {
     assert!(cookie.contains("HttpOnly"));
 
     let response = router
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/ui")
@@ -657,6 +658,7 @@ async fn test_external_identity_headers_authenticate_admin_ui_with_role() {
     ));
 
     let response = router
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/admin/whoami")
@@ -707,6 +709,7 @@ async fn test_external_identity_headers_do_not_authorize_openai_api() {
     ));
 
     let response = router
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/v1/models")
@@ -1150,6 +1153,74 @@ discover_models = false
 }
 
 #[tokio::test]
+async fn test_discovery_refresh_upserts_models_without_replacing_operator_fields() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        model_ids: vec!["operator-disabled-model".into()],
+        ..Default::default()
+    })
+    .await;
+    let (_app, state) = build_test_app().await;
+
+    let mut config = (*state.config()).clone();
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "groq".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: Some("test-key".into()),
+        free_only: false,
+        discover_models: true,
+        embedding_support: Default::default(),
+    }];
+    state.runtime_config.store(std::sync::Arc::new(config));
+    state
+        .provider_registry
+        .register(std::sync::Arc::new(
+            tokenscavenger::providers::groq::GroqAdapter,
+        ))
+        .await;
+
+    sqlx::query(
+        "INSERT INTO providers (provider_id, display_name, enabled, free_only)
+         VALUES ('groq', 'Groq', 1, 0)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO models
+         (provider_id, upstream_model_id, public_model_id, enabled, free_tier, paid_fallback, supports_tools, supports_json_mode, priority, metadata_json, discovered_at)
+         VALUES ('groq', 'operator-disabled-model', 'operator-disabled-model', 0, 1, 1, 0, 0, 7, '{\"source\":\"operator\"}', datetime('now'))",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    tokenscavenger::discovery::refresh::refresh_all(&state).await;
+
+    let row = sqlx::query_as::<_, (bool, bool, bool, bool, i64, String)>(
+        "SELECT enabled, paid_fallback, supports_tools, supports_json_mode, priority, metadata_json
+         FROM models
+         WHERE provider_id = 'groq' AND upstream_model_id = 'operator-disabled-model'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    assert!(
+        !row.0,
+        "discovery must not re-enable operator-disabled models"
+    );
+    assert!(row.1, "discovery must preserve paid fallback policy");
+    assert!(!row.2, "discovery must preserve tool support override");
+    assert!(!row.3, "discovery must preserve JSON mode override");
+    assert_eq!(row.4, 7, "discovery must preserve operator priority");
+    let metadata: serde_json::Value = serde_json::from_str(&row.5).unwrap();
+    assert_eq!(metadata["source"], "discovered");
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn test_chat_completions_no_config_returns_error() {
     let (app, _state) = build_test_app().await;
 
@@ -1585,7 +1656,14 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         Default::default(),
         tokio::sync::broadcast::channel(1).0,
     ));
-    for path in ["/ui", "/ui/routing", "/ui/models", "/ui/config", "/ui/logs"] {
+    for path in [
+        "/ui",
+        "/ui/routing",
+        "/ui/models",
+        "/ui/projects",
+        "/ui/config",
+        "/ui/logs",
+    ] {
         let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -1610,6 +1688,11 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         if path == "/ui/models" {
             assert!(html.contains("Model Catalog"));
             assert!(html.contains("fetch('/admin/models'"));
+        }
+        if path == "/ui/projects" {
+            assert!(html.contains("Project Usage"));
+            assert!(html.contains("Allowed Model Groups"));
+            assert!(html.contains("loadProjectUsageFromButton"));
         }
         if path == "/ui/logs" {
             assert!(html.contains("aria-live"));
@@ -3250,6 +3333,354 @@ async fn seed_success_usage(
     .execute(&state.db)
     .await
     .unwrap();
+}
+
+async fn build_project_test_router(base_url: &str, master_key: &str) -> (axum::Router, AppState) {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut config = Config::default();
+    config.server.master_api_key = master_key.into();
+    config.routing.provider_order = vec!["local".into()];
+    config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+        id: "local".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: None,
+        free_only: true,
+        discover_models: false,
+        embedding_support: Default::default(),
+    }];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    state.provider_registry.init_from_config(&state).await;
+    sqlx::query(
+        "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
+         VALUES ('local', 'Local', 1, ?, 1)",
+    )
+    .bind(format!("{base_url}/v1"))
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, discovered_at, updated_at)
+         VALUES ('local', 'test-model', 'test-model', 1, 1, 1, 0, datetime('now'), datetime('now'))",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let router = tokenscavenger::app::startup::build_router(state.clone());
+    (router, state)
+}
+
+async fn create_project_key(
+    state: &AppState,
+    project_id: &str,
+    allowed_model_groups: Vec<String>,
+    max_requests_per_day: Option<i64>,
+) -> String {
+    let body = tokenscavenger::projects::ProjectUpsert {
+        project_id: Some(project_id.into()),
+        display_name: project_id.into(),
+        description: None,
+        enabled: true,
+        organization_id: None,
+        environment: None,
+        owner_subject: None,
+        owner_email: None,
+        allowed_model_groups,
+        allow_paid_fallback: false,
+        provider_allowlist: Vec::new(),
+        provider_denylist: Vec::new(),
+        privacy_profile: Some(tokenscavenger::projects::PrivacyProfile::Default),
+        max_cost_per_request_usd: None,
+        max_cost_per_org_per_day_usd: None,
+        max_cost_per_environment_per_day_usd: None,
+        max_cost_per_day_usd: None,
+        max_requests_per_day,
+        max_input_tokens_per_day: None,
+        max_output_tokens_per_day: None,
+        sliding_window_seconds: None,
+        max_requests_per_window: None,
+        max_tokens_per_window: None,
+        webhook_url: None,
+        webhook_events: Vec::new(),
+    };
+    tokenscavenger::projects::create_project(state, body, "test")
+        .await
+        .unwrap();
+    tokenscavenger::projects::issue_project_key(
+        state,
+        project_id,
+        tokenscavenger::projects::IssueKeyRequest {
+            label: "test-key".into(),
+            owner_subject: None,
+            expires_at: None,
+            rotation_grace_until: None,
+            max_requests_per_day: None,
+            max_tokens_per_day: None,
+            max_cost_per_day_usd: None,
+        },
+        "test",
+    )
+    .await
+    .unwrap()
+    .api_key
+}
+
+async fn create_project_key_with_key_request_limit(
+    state: &AppState,
+    project_id: &str,
+    max_requests_per_day: i64,
+) -> String {
+    let body = tokenscavenger::projects::ProjectUpsert {
+        project_id: Some(project_id.into()),
+        display_name: project_id.into(),
+        description: None,
+        enabled: true,
+        organization_id: None,
+        environment: None,
+        owner_subject: None,
+        owner_email: None,
+        allowed_model_groups: vec!["test-model".into()],
+        allow_paid_fallback: false,
+        provider_allowlist: Vec::new(),
+        provider_denylist: Vec::new(),
+        privacy_profile: Some(tokenscavenger::projects::PrivacyProfile::Default),
+        max_cost_per_request_usd: None,
+        max_cost_per_org_per_day_usd: None,
+        max_cost_per_environment_per_day_usd: None,
+        max_cost_per_day_usd: None,
+        max_requests_per_day: None,
+        max_input_tokens_per_day: None,
+        max_output_tokens_per_day: None,
+        sliding_window_seconds: None,
+        max_requests_per_window: None,
+        max_tokens_per_window: None,
+        webhook_url: None,
+        webhook_events: Vec::new(),
+    };
+    tokenscavenger::projects::create_project(state, body, "test")
+        .await
+        .unwrap();
+    tokenscavenger::projects::issue_project_key(
+        state,
+        project_id,
+        tokenscavenger::projects::IssueKeyRequest {
+            label: "limited-key".into(),
+            owner_subject: None,
+            expires_at: None,
+            rotation_grace_until: None,
+            max_requests_per_day: Some(max_requests_per_day),
+            max_tokens_per_day: None,
+            max_cost_per_day_usd: None,
+        },
+        "test",
+    )
+    .await
+    .unwrap()
+    .api_key
+}
+
+#[tokio::test]
+async fn test_project_key_authenticates_v1_and_records_project_usage() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        usage_tokens: (12, 5),
+        ..Default::default()
+    })
+    .await;
+    let (router, state) = build_project_test_router(&base_url, "master-secret").await;
+    let api_key =
+        create_project_key(&state, "pubtrackr-prod", vec!["test-model".into()], None).await;
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "project-success-1")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hello"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let row = sqlx::query_as::<_, (String, String, i64, i64)>(
+        "SELECT r.project_id, r.api_key_prefix, u.input_tokens, u.output_tokens
+         FROM request_log r
+         JOIN usage_events u ON u.request_id = r.request_id
+         WHERE r.request_id = 'project-success-1'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "pubtrackr-prod");
+    assert!(row.1.starts_with("tsproj_"));
+    assert_eq!(row.2, 12);
+    assert_eq!(row.3, 5);
+
+    let admin_response = router
+        .oneshot(
+            Request::builder()
+                .uri("/admin/projects")
+                .header("Authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_response.status(), StatusCode::FORBIDDEN);
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_revoked_project_key_is_rejected() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState::default()).await;
+    let (router, state) = build_project_test_router(&base_url, "master-secret").await;
+    let api_key = create_project_key(&state, "staging", vec!["test-model".into()], None).await;
+    let prefix = tokenscavenger::projects::key_prefix(&api_key);
+    tokenscavenger::projects::revoke_project_key(&state, "staging", &prefix, "test")
+        .await
+        .unwrap();
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hello"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_project_model_group_and_request_budget_block_before_provider_call() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState::default()).await;
+    let (router, state) = build_project_test_router(&base_url, "master-secret").await;
+    let model_block_key =
+        create_project_key(&state, "model-block", vec!["other-model".into()], None).await;
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("Authorization", format!("Bearer {model_block_key}"))
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "project-model-block")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hello"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let status = sqlx::query_as::<_, (String, String)>(
+        "SELECT project_id, status FROM request_log WHERE request_id = 'project-model-block'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(status.0, "model-block");
+    assert_eq!(status.1, "route_exhausted");
+
+    let budget_block_key =
+        create_project_key(&state, "budget-block", vec!["test-model".into()], Some(0)).await;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("Authorization", format!("Bearer {budget_block_key}"))
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "project-budget-block")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hello"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let status = sqlx::query_as::<_, (String, String)>(
+        "SELECT project_id, status FROM request_log WHERE request_id = 'project-budget-block'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(status.0, "budget-block");
+    assert_eq!(status.1, "route_exhausted");
+
+    let key_budget_block_key =
+        create_project_key_with_key_request_limit(&state, "key-budget-block", 0).await;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("Authorization", format!("Bearer {key_budget_block_key}"))
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "project-key-budget-block")
+                .body(Body::from(
+                    json!({
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hello"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let status = sqlx::query_as::<_, (String, String)>(
+        "SELECT project_id, status FROM request_log WHERE request_id = 'project-key-budget-block'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(status.0, "key-budget-block");
+    assert_eq!(status.1, "route_exhausted");
+    handle.abort();
 }
 
 #[tokio::test]

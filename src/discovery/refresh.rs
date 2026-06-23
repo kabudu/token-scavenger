@@ -66,6 +66,18 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
                 .filter(|model| !provider_cfg.free_only || model.free_tier)
                 .collect::<Vec<_>>();
             let mut stored_count = 0_i64;
+            let _write_guard = state.discovery_write_lock.lock().await;
+            let mut tx = match state.db.begin().await {
+                Ok(tx) => tx,
+                Err(error) => {
+                    warn!(
+                        provider = %provider_cfg.id,
+                        %error,
+                        "Failed to start model discovery persistence transaction"
+                    );
+                    return;
+                }
+            };
             for m in &models_to_store {
                 let supports_chat = m.endpoint_compatibility.iter().any(|kind| kind == "chat");
                 let supports_embeddings = m
@@ -79,9 +91,22 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
                     supports_embeddings,
                 );
                 metadata["source"] = serde_json::json!("discovered");
+                let supports_vision = metadata
+                    .get("supports_vision")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
                 match sqlx::query(
-                    "INSERT OR REPLACE INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, metadata_json, discovered_at, updated_at)
-                     VALUES (?, ?, ?, 1, ?, ?, ?, ?, datetime('now'), datetime('now'))"
+                    "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_embeddings, supports_vision, metadata_json, discovered_at, updated_at)
+                     VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                     ON CONFLICT(provider_id, upstream_model_id) DO UPDATE SET
+                         public_model_id = excluded.public_model_id,
+                         free_tier = excluded.free_tier,
+                         supports_chat = excluded.supports_chat,
+                         supports_embeddings = excluded.supports_embeddings,
+                         supports_vision = excluded.supports_vision,
+                         metadata_json = excluded.metadata_json,
+                         discovered_at = COALESCE(models.discovered_at, excluded.discovered_at),
+                         updated_at = excluded.updated_at"
                 )
                 .bind(&m.provider_id)
                 .bind(&m.upstream_model_id)
@@ -89,8 +114,9 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
                 .bind(m.free_tier)
                 .bind(supports_chat)
                 .bind(supports_embeddings)
+                .bind(supports_vision)
                 .bind(metadata.to_string())
-                .execute(&state.db)
+                .execute(&mut *tx)
                 .await
                 {
                     Ok(_) => stored_count += 1,
@@ -114,15 +140,22 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
                 "UPDATE providers SET discovery_state = 'fresh', last_discovery_at = datetime('now'), last_success_at = datetime('now') WHERE provider_id = ?"
             )
             .bind(&provider_cfg.id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await;
             let _ = sqlx::query(
                 "UPDATE discovery_runs SET finished_at = datetime('now'), status = 'success', models_found = ? WHERE provider_id = ? AND status = 'in_progress'"
             )
             .bind(stored_count)
             .bind(&provider_cfg.id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await;
+            if let Err(error) = tx.commit().await {
+                warn!(
+                    provider = %provider_cfg.id,
+                    %error,
+                    "Failed to commit model discovery persistence transaction"
+                );
+            }
         }
         Err(e) => {
             warn!(provider = %provider_cfg.id, error = %e, "Discovery failed");

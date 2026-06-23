@@ -10,7 +10,7 @@ use moka::future::Cache;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Mutex, broadcast, watch};
 
 #[derive(Debug, Clone)]
 pub struct ContextFailureHint {
@@ -45,6 +45,10 @@ pub struct AppState {
     /// Per-provider model catalog cache (provider_id -> cached models JSON).
     pub model_cache: Arc<Cache<String, String>>,
 
+    /// Serializes model discovery persistence so SQLite's single-writer queue
+    /// stays outside individual SQL statements.
+    pub discovery_write_lock: Arc<Mutex<()>>,
+
     /// Per-provider health state.
     pub health_states: Arc<DashMap<String, ProviderHealthState>>,
 
@@ -64,6 +68,10 @@ pub struct AppState {
 
     /// In-memory UI browser sessions for optional cookie auth.
     pub ui_sessions: Arc<DashMap<String, i64>>,
+
+    /// Per-request project context captured after client key authentication.
+    /// Accounting removes entries when the request reaches a terminal state.
+    pub request_projects: Arc<DashMap<String, crate::projects::ClientProjectContext>>,
 
     /// Broadcast channel for live log events (UI streaming).
     /// Wrapped in Option so shutdown can take-and-drop the sender to close
@@ -125,12 +133,14 @@ impl AppState {
             provider_registry,
             route_engine,
             model_cache: Arc::new(Cache::new(10_000)),
+            discovery_write_lock: Arc::new(Mutex::new(())),
             health_states: Arc::new(DashMap::new()),
             breaker_states: Arc::new(DashMap::new()),
             context_failure_hints: Arc::new(DashMap::new()),
             stream_silence_hints: Arc::new(DashMap::new()),
             route_rate_limit_hints: Arc::new(DashMap::new()),
             ui_sessions: Arc::new(DashMap::new()),
+            request_projects: Arc::new(DashMap::new()),
             log_tx: Arc::new(std::sync::Mutex::new(Some(log_tx))),
             health_event_tx,
             config_watch_tx,
