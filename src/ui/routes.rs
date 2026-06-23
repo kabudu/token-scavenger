@@ -1348,7 +1348,14 @@ pub async fn render_projects(state: &AppState) -> String {
                         <option value="local_only">local_only</option>
                     </select>
                 </label>
-                <label class="flex items-center gap-2 text-sm"><input id="project-paid" type="checkbox"> Allow paid fallback for this project</label>
+                <label class="toggle-row">
+                    <input id="project-paid" class="toggle-input" type="checkbox">
+                    <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+                    <span class="toggle-copy">
+                        <span>Allow paid fallback</span>
+                        <small>Project paid providers</small>
+                    </span>
+                </label>
             </div>
         </div>
         "#,
