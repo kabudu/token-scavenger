@@ -1339,7 +1339,14 @@ pub async fn render_projects(state: &AppState) -> String {
             <div class="glass-card p-5 space-y-4">
                 <h3 class="font-bold">New Project</h3>
                 <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Name</span><input id="project-name" class="mt-2 w-full" placeholder="staging"></label>
-                <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Allowed Model Groups</span><input id="project-models" class="mt-2 w-full" placeholder="fast:chat,cheap:code"></label>
+                <label class="block project-model-group-field">
+                    <span class="text-xs font-bold text-slate-500 uppercase">Allowed Model Groups</span>
+                    <div id="project-model-group-select" class="project-combobox mt-2" onclick="focusProjectModelSearch()">
+                        <div id="project-model-chips" class="project-combobox-chips"></div>
+                        <input id="project-model-search" class="project-combobox-input" type="text" placeholder="Search model groups" autocomplete="off" role="combobox" aria-controls="project-model-options" aria-expanded="false" onfocus="filterProjectModelGroups()" oninput="filterProjectModelGroups()" onkeydown="handleProjectModelKeydown(event)">
+                    </div>
+                    <div id="project-model-options" class="project-combobox-options hidden" role="listbox"></div>
+                </label>
                 <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Daily Cost Cap USD</span><input id="project-cost-day" type="number" min="0" step="0.01" class="mt-2 w-full" placeholder="2.00"></label>
                 <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Privacy Profile</span>
                     <select id="project-privacy" class="mt-2 w-full">
@@ -1362,16 +1369,129 @@ pub async fn render_projects(state: &AppState) -> String {
         rows
     );
     let scripts = r#"<script>
-    function listValue(id) {
-        return document.getElementById(id).value.split(',').map(v => v.trim()).filter(Boolean);
+    let projectModelGroups = [];
+    let selectedProjectModelGroups = [];
+    let highlightedProjectModelIndex = -1;
+
+    function escapeProjectHtml(value) {
+        return String(value).replace(/[&<>"']/g, ch => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        })[ch]);
     }
+    function focusProjectModelSearch() {
+        document.getElementById('project-model-search').focus();
+    }
+    function projectModelCandidates() {
+        const query = document.getElementById('project-model-search').value.trim().toLowerCase();
+        return projectModelGroups
+            .filter(group => !selectedProjectModelGroups.includes(group))
+            .filter(group => !query || group.toLowerCase().includes(query))
+            .slice(0, 12);
+    }
+    function renderProjectModelChips() {
+        const chips = document.getElementById('project-model-chips');
+        chips.innerHTML = selectedProjectModelGroups.map(group => `
+            <span class="project-combobox-chip">
+                <span>${escapeProjectHtml(group)}</span>
+                <button type="button" onclick="removeProjectModelGroup('${encodeURIComponent(group)}')" aria-label="Remove ${escapeProjectHtml(group)}">&times;</button>
+            </span>
+        `).join('');
+    }
+    function renderProjectModelOptions(candidates) {
+        const options = document.getElementById('project-model-options');
+        const search = document.getElementById('project-model-search');
+        if (candidates.length === 0) {
+            options.classList.add('hidden');
+            search.setAttribute('aria-expanded', 'false');
+            highlightedProjectModelIndex = -1;
+            return;
+        }
+        if (highlightedProjectModelIndex >= candidates.length) highlightedProjectModelIndex = candidates.length - 1;
+        options.innerHTML = candidates.map((group, index) => `
+            <button type="button" class="project-combobox-option ${index === highlightedProjectModelIndex ? 'active' : ''}" role="option" onclick="selectProjectModelGroup('${encodeURIComponent(group)}')">
+                <span>${escapeProjectHtml(group)}</span>
+            </button>
+        `).join('');
+        options.classList.remove('hidden');
+        search.setAttribute('aria-expanded', 'true');
+    }
+    function filterProjectModelGroups() {
+        highlightedProjectModelIndex = -1;
+        renderProjectModelOptions(projectModelCandidates());
+    }
+    function selectProjectModelGroup(encodedGroup) {
+        const group = decodeURIComponent(encodedGroup);
+        if (!selectedProjectModelGroups.includes(group)) {
+            selectedProjectModelGroups.push(group);
+            selectedProjectModelGroups.sort();
+        }
+        document.getElementById('project-model-search').value = '';
+        renderProjectModelChips();
+        renderProjectModelOptions(projectModelCandidates());
+        focusProjectModelSearch();
+    }
+    function removeProjectModelGroup(encodedGroup) {
+        const group = decodeURIComponent(encodedGroup);
+        selectedProjectModelGroups = selectedProjectModelGroups.filter(item => item !== group);
+        renderProjectModelChips();
+        renderProjectModelOptions(projectModelCandidates());
+    }
+    function handleProjectModelKeydown(event) {
+        const candidates = projectModelCandidates();
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            highlightedProjectModelIndex = Math.min(candidates.length - 1, highlightedProjectModelIndex + 1);
+            renderProjectModelOptions(candidates);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            highlightedProjectModelIndex = Math.max(0, highlightedProjectModelIndex - 1);
+            renderProjectModelOptions(candidates);
+        } else if (event.key === 'Enter') {
+            if (highlightedProjectModelIndex >= 0 && candidates[highlightedProjectModelIndex]) {
+                event.preventDefault();
+                selectProjectModelGroup(encodeURIComponent(candidates[highlightedProjectModelIndex]));
+            }
+        } else if (event.key === 'Backspace' && event.target.value === '' && selectedProjectModelGroups.length > 0) {
+            selectedProjectModelGroups.pop();
+            renderProjectModelChips();
+        } else if (event.key === 'Escape') {
+            document.getElementById('project-model-options').classList.add('hidden');
+            event.target.setAttribute('aria-expanded', 'false');
+        }
+    }
+    async function loadProjectModelGroupOptions() {
+        try {
+            const resp = await fetch('/admin/model-groups');
+            if (!resp.ok) return;
+            const groups = await resp.json();
+            projectModelGroups = groups
+                .filter(group => group.enabled !== false)
+                .map(group => group.name)
+                .filter(Boolean)
+                .sort();
+        } catch (e) {
+            projectModelGroups = [];
+        }
+        renderProjectModelChips();
+    }
+    document.addEventListener('click', (event) => {
+        const field = document.querySelector('.project-model-group-field');
+        if (field && !field.contains(event.target)) {
+            document.getElementById('project-model-options').classList.add('hidden');
+            document.getElementById('project-model-search').setAttribute('aria-expanded', 'false');
+        }
+    });
     async function createProject() {
         const name = document.getElementById('project-name').value.trim();
         if (!name) { showModal('Project name required', 'Enter a project name.', true); return; }
         const cap = document.getElementById('project-cost-day').value;
         const body = {
             display_name: name,
-            allowed_model_groups: listValue('project-models'),
+            allowed_model_groups: selectedProjectModelGroups,
             privacy_profile: document.getElementById('project-privacy').value,
             allow_paid_fallback: document.getElementById('project-paid').checked
         };
@@ -1389,6 +1509,7 @@ pub async fn render_projects(state: &AppState) -> String {
         if (!r.ok) { showModal('Key issue failed', data, true); return; }
         showModal('Project API key', data.api_key + '\n\nStore it now. It will not be shown again.', false);
     }
+    loadProjectModelGroupOptions();
     </script>"#;
     render_shell("Projects", "projects", &content, scripts, state)
 }
