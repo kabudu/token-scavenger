@@ -65,6 +65,10 @@ pub struct AppState {
     /// In-memory UI browser sessions for optional cookie auth.
     pub ui_sessions: Arc<DashMap<String, i64>>,
 
+    /// Per-request project context captured after client key authentication.
+    /// Accounting removes entries when the request reaches a terminal state.
+    pub request_projects: Arc<DashMap<String, crate::projects::ClientProjectContext>>,
+
     /// Broadcast channel for live log events (UI streaming).
     /// Wrapped in Option so shutdown can take-and-drop the sender to close
     /// the channel, which breaks the SSE circular dependency during drain.
@@ -131,6 +135,7 @@ impl AppState {
             stream_silence_hints: Arc::new(DashMap::new()),
             route_rate_limit_hints: Arc::new(DashMap::new()),
             ui_sessions: Arc::new(DashMap::new()),
+            request_projects: Arc::new(DashMap::new()),
             log_tx: Arc::new(std::sync::Mutex::new(Some(log_tx))),
             health_event_tx,
             config_watch_tx,

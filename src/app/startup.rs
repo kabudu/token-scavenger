@@ -409,6 +409,36 @@ pub fn build_router(state: AppState) -> Router {
             "/admin/audit",
             axum::routing::get(crate::api::routes::admin_audit),
         )
+        .route(
+            "/admin/projects",
+            axum::routing::get(crate::api::routes::admin_projects)
+                .post(crate::api::routes::admin_project_create),
+        )
+        .route(
+            "/admin/projects/{project_id}",
+            axum::routing::put(crate::api::routes::admin_project_update)
+                .delete(crate::api::routes::admin_project_delete),
+        )
+        .route(
+            "/admin/projects/{project_id}/keys",
+            axum::routing::post(crate::api::routes::admin_project_issue_key),
+        )
+        .route(
+            "/admin/projects/{project_id}/keys/{key_prefix}",
+            axum::routing::delete(crate::api::routes::admin_project_revoke_key),
+        )
+        .route(
+            "/admin/projects/{project_id}/usage",
+            axum::routing::get(crate::api::routes::admin_project_usage),
+        )
+        .route(
+            "/admin/projects/{project_id}/export.csv",
+            axum::routing::get(crate::api::routes::admin_project_export),
+        )
+        .route(
+            "/admin/projects/{project_id}/diagnostics/bundle",
+            axum::routing::get(crate::api::routes::admin_project_diagnostic_bundle),
+        )
         // Admin POST routes (mutations)
         .route(
             "/admin/providers/discovery/refresh",

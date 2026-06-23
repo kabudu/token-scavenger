@@ -39,6 +39,9 @@
 - **Embedded web UI** with live dashboard, observability, logs, and config editor
 - **Team-ready admin auth** with role-aware access and external identity headers
   from OIDC-capable reverse proxies
+- **Project-scoped API keys and budgets** for per-app usage attribution,
+  model-group permissions, paid-fallback controls, hierarchical caps, and key
+  revocation
 - **Deployment controls** for encrypted credential persistence, self-update,
   SBOM/provenance release artifacts, retention, Homebrew, and Kubernetes
 - **SQLite persistence** (WAL mode) for usage accounting and audit log
@@ -57,6 +60,7 @@
 | `GET /ui`                     | Embedded operator dashboard                                 |
 | `GET /admin/request-traces`   | Recent request trace summaries                              |
 | `GET /admin/incidents`        | Incident feed from health, config, and routing events       |
+| `GET /admin/projects`         | Project-scoped client keys, budgets, usage, and exports     |
 
 Error responses use the OpenAI-style `{"error": ...}` envelope. Upstream rate-limit exhaustion returns `429` with `rate_limit_exceeded` and `Retry-After` when known; non-rate-limit route exhaustion remains `503 route_exhausted`. See [API behavior](documentation/api-behavior.md) for the full status-code contract.
 
@@ -289,6 +293,20 @@ budgets can cap estimated spend per request, per day, per provider/day, or per
 model-group/day. Route-plan diagnostics show score components, estimated cost,
 latency, failure rate, and budget skip reasons.
 
+## Project-Scoped API Keys
+
+Operators can create named projects for applications, teams, or environments and
+issue OpenAI-compatible bearer keys for each one. Project keys are shown once,
+stored only as hashes, and can be revoked independently from the instance master
+key.
+
+Project policy is enforced before provider calls. It can restrict model groups,
+paid fallback, providers, local/free-only privacy profiles, per-request cost,
+daily request/token/cost budgets, sliding-window quotas, organization and
+environment caps, and key-level caps. Request traces, usage events, exports, and
+Prometheus project metrics carry `project_id` and a key prefix, never plaintext
+keys.
+
 ## Model Intelligence
 
 TokenScavenger normalizes model families, task tags, modality flags, context
@@ -309,7 +327,7 @@ See [documentation/provider-matrix.md](documentation/provider-matrix.md) for det
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for five high-value future enhancements that can push TokenScavenger toward an operator-grade LLM traffic control plane.
+See [ROADMAP.md](ROADMAP.md) for six high-value enhancements that can push TokenScavenger toward an operator-grade LLM traffic control plane.
 
 ## Deployment
 
@@ -341,6 +359,7 @@ Open `http://localhost:8000/ui` in your browser for the operator dashboard with 
 - Models — compare discovered and curated models with intelligence metadata
 - Routing — view fallback order and smart/custom model group configuration
 - Usage — token counts and estimated costs
+- Projects — project keys, budgets, usage exports, and scoped diagnostics
 - Observability — request traces, incident feed, and diagnostic bundle export
 - Health — per-provider health states
 - Logs — real-time log stream via SSE

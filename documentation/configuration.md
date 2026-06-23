@@ -196,6 +196,41 @@ Encrypted values are stored with the `tsenc:v1:` prefix. Base config files may
 still contain plaintext secrets if operators write them manually; use environment
 variable references there for best hygiene.
 
+### Project-Scoped API Keys
+
+Projects and project API keys are operator-managed SQLite state, not TOML
+configuration. Manage them from `/ui/projects` or the `/admin/projects` API.
+This keeps show-once client keys out of config files and lets TokenScavenger
+track revocation, expiration, grace periods, ownership, and last-used timestamps.
+
+Project records support:
+
+| Field | Description |
+|-------|-------------|
+| `project_id` | Stable project identifier used in request logs, usage events, exports, and Prometheus labels. |
+| `display_name` | Human-readable app, team, or environment name. |
+| `organization_id` | Optional organization scope used by hierarchical daily cost caps. |
+| `environment` | Optional environment scope, such as `prod`, `staging`, or `dev`, used by environment daily cost caps. |
+| `owner_subject` / `owner_email` | Optional delegated owner metadata from external identity headers. |
+| `allowed_model_groups` | Optional allowlist of requested models/model groups this project may use. Empty allows all normal routes. |
+| `allow_paid_fallback` | Project-level paid fallback permission. Paid providers still also require global `routing.allow_paid_fallback = true`. |
+| `provider_allowlist` / `provider_denylist` | Optional provider restrictions enforced before upstream calls. |
+| `privacy_profile` | `default`, `free_only`, or `local_only`. |
+| `max_cost_per_request_usd` | Per-request estimated cost cap. Unknown paid pricing is blocked when a matching hard budget exists. |
+| `max_cost_per_day_usd` | Project daily estimated cost cap. |
+| `max_cost_per_org_per_day_usd` | Shared daily estimated cost cap for projects with the same `organization_id`. |
+| `max_cost_per_environment_per_day_usd` | Shared daily estimated cost cap for projects with the same `environment`. |
+| `max_requests_per_day` | Calendar-day request cap. |
+| `max_input_tokens_per_day` / `max_output_tokens_per_day` | Calendar-day token caps checked with pre-request estimates. |
+| `sliding_window_seconds` | Window size for rolling request/token quotas. |
+| `max_requests_per_window` / `max_tokens_per_window` | Sliding-window quota limits. |
+| `webhook_url` / `webhook_events` | Optional best-effort project notifications. Webhook URLs are redacted in API/UI responses. |
+
+Project keys support labels, owner subjects, expiration timestamps,
+`rotation_grace_until`, revocation, last-used timestamps, and optional key-level
+daily request, token, and estimated cost caps. Plaintext key values are returned
+only once from the key-issue response and are never stored.
+
 ### `[retention]`
 
 | Field | Default | Description |

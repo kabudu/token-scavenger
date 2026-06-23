@@ -93,6 +93,7 @@ pub fn render_shell(
         {}
         {}
         {}
+        {}
         <div class="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-600 uppercase tracking-widest">System</div>
         {}
         {}
@@ -105,6 +106,7 @@ pub fn render_shell(
         nav_item("models", "/ui/models", "fas fa-brain", "Models"),
         nav_item("routing", "/ui/routing", "fas fa-route", "Routing"),
         nav_item("usage", "/ui/usage", "fas fa-chart-line", "Usage"),
+        nav_item("projects", "/ui/projects", "fas fa-key", "Projects"),
         nav_item("chat", "/ui/chat", "fas fa-comment-dots", "Chat Tester"),
         nav_item(
             "observability",
@@ -1275,6 +1277,113 @@ pub async fn render_usage(state: &AppState) -> String {
     renderPricingPage();
     </script>"#;
     render_shell("Usage", "usage", &content, scripts, state)
+}
+
+pub async fn render_projects(state: &AppState) -> String {
+    let projects = crate::projects::list_projects(state)
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "projects": [] }));
+    let rows = projects
+        .get("projects")
+        .and_then(|value| value.as_array())
+        .map(|projects| {
+            projects
+                .iter()
+                .map(|project| {
+                    let id = escape_html(project.get("project_id").and_then(|v| v.as_str()).unwrap_or("?"));
+                    let name = escape_html(project.get("display_name").and_then(|v| v.as_str()).unwrap_or("?"));
+                    let enabled = project.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let privacy = escape_html(project.get("privacy_profile").and_then(|v| v.as_str()).unwrap_or("default"));
+                    let allow_paid = project.get("allow_paid_fallback").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let keys = project.get("keys").and_then(|v| v.as_array()).map(|keys| keys.len()).unwrap_or(0);
+                    let cost_day = project.get("max_cost_per_day_usd").and_then(|v| v.as_f64()).map(|v| format!("${v:.2}")).unwrap_or_else(|| "-".into());
+                    let status = if enabled { "Enabled" } else { "Disabled" };
+                    let status_class = if enabled { "text-emerald-400" } else { "text-red-400" };
+                    format!(r#"<tr>
+                        <td><div class="font-bold">{}</div><div class="font-mono text-[10px] text-slate-500">{}</div></td>
+                        <td><span class="{} text-xs font-bold uppercase">{}</span></td>
+                        <td class="font-mono text-xs">{}</td>
+                        <td class="font-mono text-xs">{}</td>
+                        <td class="font-mono text-xs">{}</td>
+                        <td class="font-mono text-xs">{}</td>
+                        <td class="text-right">
+                            <button class="btn text-xs" onclick="issueKey('{}')">Issue key</button>
+                            <a class="btn text-xs" href="/admin/projects/{}/export.csv">CSV</a>
+                            <a class="btn text-xs" href="/admin/projects/{}/diagnostics/bundle">Diagnostics</a>
+                        </td>
+                    </tr>"#, name, id, status_class, status, privacy, if allow_paid { "paid ok" } else { "free/local" }, keys, cost_day, id, id, id)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| "<tr><td colspan=\"7\" class=\"px-6 py-4 text-center text-slate-500\">No projects configured</td></tr>".into());
+
+    let content = format!(
+        r#"
+        <div class="grid grid-cols-1 xl:grid-cols-[1fr_24rem] gap-6">
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between gap-4 flex-wrap">
+                    <h3 class="font-bold">Projects</h3>
+                    <button class="btn" onclick="createProject()">Create Project</button>
+                </div>
+                <div class="p-0 overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="text-slate-500 border-b border-white/5 bg-white/[0.01]">
+                            <tr><th>Project</th><th>Status</th><th>Privacy</th><th>Paid</th><th>Keys</th><th>Daily Cost Cap</th><th class="text-right">Actions</th></tr>
+                        </thead>
+                        <tbody class="divide-y divide-white/5">{}</tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="glass-card p-5 space-y-4">
+                <h3 class="font-bold">New Project</h3>
+                <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Name</span><input id="project-name" class="mt-2 w-full" placeholder="staging"></label>
+                <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Allowed Model Groups</span><input id="project-models" class="mt-2 w-full" placeholder="fast:chat,cheap:code"></label>
+                <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Daily Cost Cap USD</span><input id="project-cost-day" type="number" min="0" step="0.01" class="mt-2 w-full" placeholder="2.00"></label>
+                <label class="block"><span class="text-xs font-bold text-slate-500 uppercase">Privacy Profile</span>
+                    <select id="project-privacy" class="mt-2 w-full">
+                        <option value="default">default</option>
+                        <option value="free_only">free_only</option>
+                        <option value="local_only">local_only</option>
+                    </select>
+                </label>
+                <label class="flex items-center gap-2 text-sm"><input id="project-paid" type="checkbox"> Allow paid fallback for this project</label>
+            </div>
+        </div>
+        "#,
+        rows
+    );
+    let scripts = r#"<script>
+    function listValue(id) {
+        return document.getElementById(id).value.split(',').map(v => v.trim()).filter(Boolean);
+    }
+    async function createProject() {
+        const name = document.getElementById('project-name').value.trim();
+        if (!name) { showModal('Project name required', 'Enter a project name.', true); return; }
+        const cap = document.getElementById('project-cost-day').value;
+        const body = {
+            display_name: name,
+            allowed_model_groups: listValue('project-models'),
+            privacy_profile: document.getElementById('project-privacy').value,
+            allow_paid_fallback: document.getElementById('project-paid').checked
+        };
+        if (cap) body.max_cost_per_day_usd = Number(cap);
+        const r = await fetch('/admin/projects', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { showModal('Project create failed', data, true); return; }
+        location.reload();
+    }
+    async function issueKey(projectId) {
+        const label = prompt('Key label');
+        if (!label) return;
+        const r = await fetch(`/admin/projects/${projectId}/keys`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label})});
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { showModal('Key issue failed', data, true); return; }
+        showModal('Project API key', data.api_key + '\n\nStore it now. It will not be shown again.', false);
+    }
+    </script>"#;
+    render_shell("Projects", "projects", &content, scripts, state)
 }
 
 /// Render the health view.

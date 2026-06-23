@@ -2,7 +2,7 @@
 
 TokenScavenger already solves a very practical problem: one local OpenAI-compatible gateway that makes free-tier and explicitly approved paid fallback routing observable and controllable. The next wave should turn it from a useful router into an operator-grade LLM traffic control plane.
 
-This roadmap is intentionally focused on five high-value enhancements. Each one preserves the project invariants: self-hosted first, single-binary runtime, OpenAI-compatible behavior, explicit paid-provider policy, redacted secrets, and clear routing explanations.
+This roadmap is intentionally focused on six high-value enhancements. Each one preserves the project invariants: self-hosted first, single-binary runtime, OpenAI-compatible behavior, explicit paid-provider policy, redacted secrets, and clear routing explanations.
 
 ## 1. Policy Engine For Cost, Latency, And Quality
 
@@ -83,6 +83,38 @@ This roadmap is intentionally focused on five high-value enhancements. Each one 
 - [x] Homebrew packaging and Kubernetes manifests that complement the existing binary, Docker, Docker Compose, and systemd deployment docs.
 - [x] Restore drills, retention policy controls, and migration rollback guidance for SQLite state, extending the current backup and automatic migration docs.
 - [x] Optional external identity integration for the admin UI, such as OIDC reverse-proxy headers, while keeping local auth simple.
+
+## 6. Project-Scoped API Keys And Budgets
+
+**Status:** Implemented for the next release.
+
+**Current baseline:** TokenScavenger already has bearer authentication, role-aware admin access, pricing estimates, hard routing budgets, paid-fallback gating, request traces, audit history, and usage accounting. Those controls are currently centered on the instance and route policy rather than on individual client applications, teams, or environments.
+
+**Why it matters:** Operators need a safe way to share one TokenScavenger instance across multiple workloads without losing spend control or attribution. A production app, staging environment, local scripts, and teammates should each be able to use a distinct OpenAI-compatible API key with its own permissions, budget, and usage history. This makes paid fallback safer, key rotation less disruptive, and usage investigations much faster.
+
+**What good looks like for an MVP:**
+
+- [x] Named projects such as `pubtrackr-prod`, `staging`, `local-dev`, or `team-research`.
+- [x] Generated OpenAI-compatible bearer keys that are shown once, stored only as hashes, and revocable without rotating the instance admin key.
+- [x] Per-project enablement, allowed model groups, paid-fallback permission, request limits, token limits, and estimated cost budgets.
+- [x] Usage, request traces, route-plan explanations, and audit entries tagged with `project_id`.
+- [x] Budget and capability enforcement before provider calls, with deterministic skip reasons when project policy blocks a route.
+- [x] Admin UI flows for creating projects, issuing keys, viewing budget status, exporting usage, and drilling into per-project diagnostics.
+- [x] Backward compatibility for the existing `server.master_api_key` as the bootstrap admin/client key.
+- [x] Tests for key hashing, authentication, revocation, project usage attribution, model-group restrictions, paid fallback gating, and budget blocking.
+
+**Beyond MVP:**
+
+- [x] Multiple keys per project with labels, owners, creation timestamps, last-used timestamps, expiration dates, and prefix-only display.
+- [x] Key rotation workflows that allow overlapping old/new keys during a configurable grace period.
+- [x] Per-project provider allowlists and denylists, local-only constraints, and privacy profiles that can force local or free-only routing.
+- [x] Hierarchical budgets with organization, project, environment, and key-level caps with clear precedence rules.
+- [x] Sliding-window rate limits and quotas in addition to calendar-day limits.
+- [x] Optional per-project webhook notifications for policy-block events and budget-related enforcement.
+- [x] CSV/JSON exports and Prometheus labels for project-level usage, spend, and errors.
+- [x] Project-scoped diagnostic bundles that redact secrets and exclude other projects' traces.
+- [x] Admin role controls that let team owners manage their own project keys without granting global credential-manager access.
+- [x] A migration path from single-key deployments that auto-creates a default project for existing usage.
 
 ## How To Contribute
 

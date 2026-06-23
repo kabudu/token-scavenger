@@ -128,6 +128,14 @@ pub async fn route_chat_request(
         chat_token_estimate(&request),
     )
     .await;
+    plan = crate::projects::filter_project_policy(
+        plan,
+        &state,
+        &request_id,
+        &request.model,
+        chat_token_estimate(&request),
+    )
+    .await?;
 
     if plan.is_empty() {
         crate::observability::record_route_plan(
@@ -737,6 +745,14 @@ pub async fn route_embeddings_request(
         embeddings_token_estimate(&request),
     )
     .await;
+    let plan = crate::projects::filter_project_policy(
+        plan,
+        &state,
+        &request_id,
+        &request.model,
+        embeddings_token_estimate(&request),
+    )
+    .await?;
     if plan.is_empty() {
         crate::observability::record_route_plan(
             &state,

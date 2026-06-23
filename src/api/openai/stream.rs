@@ -273,6 +273,20 @@ pub async fn create_chat_stream(
         },
     )
     .await;
+    plan = crate::projects::filter_project_policy(
+        plan,
+        &state,
+        &request_id,
+        &request.model,
+        TokenEstimate {
+            input_tokens: request
+                .prompt_size_hint()
+                .div_ceil(4)
+                .min(u32::MAX as usize) as u32,
+            output_tokens: request.max_tokens.unwrap_or(1024),
+        },
+    )
+    .await?;
 
     if plan.is_empty() {
         crate::observability::record_route_plan(

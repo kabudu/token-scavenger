@@ -41,6 +41,7 @@ pub struct AuthContext {
     pub display_name: Option<String>,
     pub role: AdminRole,
     pub source: AuthSource,
+    pub project: Option<crate::projects::ClientProjectContext>,
 }
 
 impl AuthContext {
@@ -57,6 +58,7 @@ pub enum AuthSource {
     MasterKey,
     UiSession,
     ExternalIdentity,
+    ProjectKey,
 }
 
 impl AuthSource {
@@ -65,6 +67,7 @@ impl AuthSource {
             AuthSource::MasterKey => "master_key",
             AuthSource::UiSession => "ui_session",
             AuthSource::ExternalIdentity => "external_identity",
+            AuthSource::ProjectKey => "project_key",
         }
     }
 }
@@ -113,10 +116,37 @@ pub async fn auth_middleware(
                     display_name: Some("Master key".into()),
                     role: AdminRole::Admin,
                     source: AuthSource::MasterKey,
+                    project: None,
                 },
                 required_role,
             )
             .await;
+        }
+        if let Some(project) = crate::projects::authenticate_project_key(&state, token)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            if path.starts_with("/v1/") {
+                return run_authorized(
+                    req,
+                    next,
+                    AuthContext {
+                        subject: format!("project:{}", project.project_id),
+                        email: None,
+                        display_name: Some(project.display_name.clone()),
+                        role: AdminRole::ReadOnly,
+                        source: AuthSource::ProjectKey,
+                        project: Some(project),
+                    },
+                    required_role,
+                )
+                .await;
+            }
+            warn!(
+                path = %path,
+                "Project API key cannot authorize admin, UI, or metrics routes"
+            );
+            return Err(StatusCode::FORBIDDEN);
         }
     }
 
@@ -139,6 +169,7 @@ pub async fn auth_middleware(
                             display_name: Some("Browser session".into()),
                             role: AdminRole::Admin,
                             source: AuthSource::UiSession,
+                            project: None,
                         },
                         required_role,
                     )
@@ -177,6 +208,7 @@ pub async fn auth_middleware(
                         display_name: Some("Master key".into()),
                         role: AdminRole::Admin,
                         source: AuthSource::MasterKey,
+                        project: None,
                     },
                     required_role,
                 )
@@ -234,6 +266,9 @@ fn required_admin_role(method: &Method, path: &str) -> Option<AdminRole> {
     if !path.starts_with("/admin/") {
         return None;
     }
+    if path.starts_with("/admin/projects") {
+        return Some(AdminRole::ReadOnly);
+    }
     if method == Method::GET {
         return Some(AdminRole::ReadOnly);
     }
@@ -265,6 +300,7 @@ fn external_identity_context(
         display_name,
         role,
         source: AuthSource::ExternalIdentity,
+        project: None,
     })
 }
 
