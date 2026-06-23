@@ -200,7 +200,7 @@ pub fn render_shell(
 <div id="global-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
     <div class="glass-card max-w-md w-full p-6 transform scale-95 transition-transform duration-300" id="global-modal-content">
         <h3 id="global-modal-title" class="text-lg font-bold mb-2"></h3>
-        <p id="global-modal-message" class="text-sm text-slate-300 mb-6"></p>
+        <div id="global-modal-message" class="text-sm text-slate-300 mb-6"></div>
         <div class="flex justify-end gap-3" id="global-modal-actions">
             <button class="btn" style="background:#334155;" onclick="hideModal()">Close</button>
         </div>
@@ -211,10 +211,12 @@ function showModal(title, message, isError) {{
     const titleEl = document.getElementById('global-modal-title');
     const msgEl = document.getElementById('global-modal-message');
     const actionsEl = document.getElementById('global-modal-actions');
+    const contentEl = document.getElementById('global-modal-content');
     
     titleEl.innerText = title;
     titleEl.className = `text-lg font-bold mb-2 ${{isError ? 'text-red-400' : 'text-emerald-400'}}`;
     msgEl.innerText = (typeof message === 'object') ? JSON.stringify(message, null, 2) : message;
+    contentEl.classList.remove('project-key-modal-content');
     
     if (typeof message === 'object') {{ 
         msgEl.classList.add('font-mono', 'whitespace-pre-wrap', 'text-[10px]'); 
@@ -1503,13 +1505,66 @@ pub async fn render_projects(state: &AppState) -> String {
         if (!r.ok) { showModal('Project create failed', data, true); return; }
         location.reload();
     }
+    let issuedProjectApiKey = '';
+    function showProjectApiKeyModal(apiKey) {
+        issuedProjectApiKey = apiKey;
+        const titleEl = document.getElementById('global-modal-title');
+        const msgEl = document.getElementById('global-modal-message');
+        const actionsEl = document.getElementById('global-modal-actions');
+        const contentEl = document.getElementById('global-modal-content');
+        titleEl.innerText = 'Project API key';
+        titleEl.className = 'text-lg font-bold mb-3 text-emerald-400';
+        contentEl.classList.add('project-key-modal-content');
+        msgEl.className = 'text-sm text-slate-300 mb-6';
+        msgEl.innerHTML = `
+            <p class="project-key-warning">Store this key now. It will not be shown again.</p>
+            <div class="project-key-secret" role="group" aria-label="Issued project API key">
+                <code id="issued-project-key" class="project-key-value">${escapeProjectHtml(apiKey)}</code>
+            </div>
+        `;
+        actionsEl.innerHTML = `
+            <button class="btn project-key-copy-btn" id="project-key-copy-btn" onclick="copyIssuedProjectKey()">
+                <i class="fas fa-copy" aria-hidden="true"></i>
+                <span>Copy key</span>
+            </button>
+            <button class="btn" style="background:#334155;" onclick="hideModal()">Close</button>
+        `;
+        const modal = document.getElementById('global-modal');
+        modal.classList.remove('hidden');
+        void modal.offsetWidth;
+        modal.classList.remove('opacity-0');
+        contentEl.classList.remove('scale-95');
+    }
+    async function copyIssuedProjectKey() {
+        const button = document.getElementById('project-key-copy-btn');
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(issuedProjectApiKey);
+            } else {
+                const textarea = document.createElement('textarea');
+                textarea.value = issuedProjectApiKey;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                textarea.remove();
+            }
+            button.innerHTML = '<i class="fas fa-check" aria-hidden="true"></i><span>Copied</span>';
+            button.classList.add('project-key-copy-success');
+        } catch (e) {
+            button.innerHTML = '<i class="fas fa-exclamation-triangle" aria-hidden="true"></i><span>Copy failed</span>';
+        }
+    }
     async function issueKey(projectId) {
         const label = prompt('Key label');
         if (!label) return;
         const r = await fetch(`/admin/projects/${projectId}/keys`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label})});
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { showModal('Key issue failed', data, true); return; }
-        showModal('Project API key', data.api_key + '\n\nStore it now. It will not be shown again.', false);
+        if (!data.api_key) { showModal('Key issue failed', 'The server did not return an API key.', true); return; }
+        showProjectApiKeyModal(data.api_key);
     }
     loadProjectModelGroupOptions();
     </script>"#;
