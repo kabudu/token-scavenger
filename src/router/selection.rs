@@ -706,6 +706,16 @@ pub fn should_skip_for_stream_silence_hint(
     false
 }
 
+/// Treat stream silence as a soft hint: never suppress the only available route.
+pub fn should_skip_for_stream_silence_hint_with_alternative(
+    state: &AppState,
+    attempt: &RouteAttempt,
+    prompt_size_hint: usize,
+    candidate_count: usize,
+) -> bool {
+    candidate_count > 1 && should_skip_for_stream_silence_hint(state, attempt, prompt_size_hint)
+}
+
 pub fn record_stream_silence_hint(
     state: &AppState,
     provider_id: &str,

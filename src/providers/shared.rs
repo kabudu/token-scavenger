@@ -502,6 +502,37 @@ fn parse_sse_line(line: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+fn classify_sse_error(data: &serde_json::Value) -> Option<ProviderError> {
+    let error = data.get("error")?;
+    let message = error
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or("upstream streaming error");
+    let code = error
+        .get("code")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .map(|value| value.to_string())
+                .or_else(|| value.as_str().map(str::to_string))
+        })
+        .unwrap_or_default();
+    let error_type = error
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let classification = format!("{code} {error_type} {message}").to_ascii_lowercase();
+    let status = if code == "429"
+        || classification.contains("rate_limit")
+        || classification.contains("rate limit")
+    {
+        429
+    } else {
+        500
+    };
+    Some(classify_error(status, message))
+}
+
 /// Stream OpenAI-compatible SSE chat completions through a channel.
 /// Makes a POST to /chat/completions with stream: true, then parses SSE events
 /// and sends them through the provided sender.
@@ -616,6 +647,9 @@ pub async fn openai_stream_completions(
                         // Parse the SSE data as streaming chunk
                         match serde_json::from_str::<serde_json::Value>(&json_str) {
                             Ok(data) => {
+                                if let Some(error) = classify_sse_error(&data) {
+                                    return Err(error);
+                                }
                                 if let Some(choices) =
                                     data.get("choices").and_then(|c| c.as_array())
                                 {
@@ -865,7 +899,7 @@ macro_rules! openai_compat_adapter {
 #[cfg(test)]
 mod tests {
     use super::{
-        openai_chat_body, parse_sse_line, serialize_chat_messages,
+        classify_sse_error, openai_chat_body, parse_sse_line, serialize_chat_messages,
         should_retry_with_min_max_tokens, with_min_max_tokens,
     };
     use crate::api::openai::chat::{ChatMessage, ToolCall, ToolCallFunction};
@@ -917,6 +951,23 @@ mod tests {
         );
         assert_eq!(parse_sse_line("data: [DONE]"), Some(String::new()));
         assert_eq!(parse_sse_line("event: message"), None);
+    }
+
+    #[test]
+    fn classifies_openrouter_stream_rate_limit_errors() {
+        let error = classify_sse_error(&serde_json::json!({
+            "error": {
+                "message": "User Provided API Key Rate Limit Exceeded.",
+                "code": 429,
+                "type": "rate_limit_error"
+            }
+        }))
+        .expect("embedded SSE error");
+
+        assert!(matches!(
+            error,
+            crate::providers::traits::ProviderError::RateLimited { .. }
+        ));
     }
 
     #[test]

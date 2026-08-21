@@ -323,6 +323,14 @@ struct SmartModelGroup {
 fn smart_model_groups() -> Vec<SmartModelGroup> {
     vec![
         SmartModelGroup {
+            name: "free:openrouter",
+            targets: vec![target("openrouter", "openrouter/free")],
+        },
+        SmartModelGroup {
+            name: "preview:ox-alpha",
+            targets: vec![target("openrouter", "stealth/ox-alpha")],
+        },
+        SmartModelGroup {
             name: "fast:chat",
             targets: vec![
                 target("groq", "llama3-8b-8192"),
@@ -419,6 +427,7 @@ fn infer_vision(provider_id: &str, model_id: &str) -> bool {
     model_id.contains("vision")
         || model_id.contains("gpt-4o")
         || model_id.contains("gemini")
+        || model_id == "stealth/ox-alpha"
         || (provider_id == "google" && model_id.contains("flash"))
 }
 
@@ -427,6 +436,7 @@ fn infer_reasoning(model_id: &str) -> bool {
         || model_id.contains("deepseek")
         || model_id.contains("grok-4")
         || model_id.contains("r1")
+        || model_id == "stealth/ox-alpha"
 }
 
 fn freshness(
@@ -511,6 +521,21 @@ mod tests {
             infer_model_intelligence("google", "gemini-2.0-flash", None, false, None, None, None);
         assert!(vision.supports_vision);
         assert!(vision.modalities.contains(&"vision".to_string()));
+
+        let ox_alpha = infer_model_intelligence(
+            "openrouter",
+            "stealth/ox-alpha",
+            Some(r#"{"context_window":1048576}"#),
+            false,
+            None,
+            None,
+            None,
+        );
+        assert!(ox_alpha.supports_reasoning);
+        assert!(ox_alpha.supports_vision);
+        assert!(ox_alpha.supports_tools);
+        assert!(ox_alpha.supports_json_mode);
+        assert_eq!(ox_alpha.context_window, Some(1_048_576));
     }
 
     #[test]

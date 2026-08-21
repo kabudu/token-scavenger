@@ -9,22 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the operator-overridable `free:openrouter` model group backed by OpenRouter's stable free-model router.
+- Added the isolated `preview:ox-alpha` model group for OpenRouter's temporary Ox Alpha stealth preview, including curated capability metadata and explicit data-retention guidance.
+
 ### Changed
 
+- Updated OpenRouter documentation to distinguish durable free routing from temporary stealth previews.
+- Refined model intelligence pills and moved request-trace details into an accessible right-side drawer.
+- Normalized changelog bullets to one physical source line for cleaner review diffs.
+
 ### Fixed
+
+- Updated provider config parsing to satisfy current Clippy guidance without changing empty or redacted-value handling.
+- Fixed streaming requests to respect the configured request timeout instead of imposing a 15-second first-content cap.
+- Fixed embedded OpenRouter SSE rate-limit errors so clients receive OpenAI-compatible error events and request traces record `429 rate_limited` outcomes.
+- Fixed stream-silence hints so they cannot suppress the only available route in a model group.
+- Fixed the System Stream so active HTTP requests reliably emit redacted method, path, status, latency, and request-ID events.
 
 ## [0.3.9] - 2026-06-23
 
 ### Added
 
-- Added project-scoped OpenAI-compatible API keys with show-once key issuance,
-  hash-only storage, revocation, expiration/grace rotation metadata, per-project
-  and key-level budgets, provider/model-group/privacy restrictions, usage
-  attribution, CSV exports, project diagnostics, Prometheus project metrics, and
-  an admin UI Projects view.
-- Added an in-app Projects usage panel and inline policy summaries so operators
-  can see model-group, provider, privacy, paid-fallback, and usage attribution
-  without opening raw JSON exports.
+- Added project-scoped OpenAI-compatible API keys with show-once key issuance, hash-only storage, revocation, expiration/grace rotation metadata, per-project and key-level budgets, provider/model-group/privacy restrictions, usage attribution, CSV exports, project diagnostics, Prometheus project metrics, and an admin UI Projects view.
+- Added an in-app Projects usage panel and inline policy summaries so operators can see model-group, provider, privacy, paid-fallback, and usage attribution without opening raw JSON exports.
 
 ### Changed
 
@@ -36,13 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Replaced the admin UI's full-width update banner with a compact
-  TokenScavenger-orange header widget beside the health status pill.
+- Replaced the admin UI's full-width update banner with a compact TokenScavenger-orange header widget beside the health status pill.
 
 ### Fixed
 
-- Release `checksums.txt` files now list bare asset filenames so v0.3.5
-  self-update clients can verify and apply newer releases.
+- Release `checksums.txt` files now list bare asset filenames so v0.3.5 self-update clients can verify and apply newer releases.
 
 ## [0.3.7] - 2026-06-21
 
@@ -50,13 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Refreshed README and deployment guidance for Homebrew-first installs,
-  self-update testing, and current v0.3.6 deployment examples.
+- Refreshed README and deployment guidance for Homebrew-first installs, self-update testing, and current v0.3.6 deployment examples.
 
 ### Fixed
 
-- Fixed the admin Chat Tester so the `Default` model selection resolves to an
-  enabled discovered chat model instead of sending the literal model `default`.
+- Fixed the admin Chat Tester so the `Default` model selection resolves to an enabled discovered chat model instead of sending the literal model `default`.
 
 ## [0.3.6] - 2026-06-21
 
@@ -64,17 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The release workflow now updates `kabudu/homebrew-tap` automatically after
-  publishing release artifacts.
-- Self-update checks are enabled by default and passive check failures now
-  return a diagnostic status instead of disrupting the admin UI.
+- The release workflow now updates `kabudu/homebrew-tap` automatically after publishing release artifacts.
+- Self-update checks are enabled by default and passive check failures now return a diagnostic status instead of disrupting the admin UI.
 
 ### Fixed
 
-- Updated the in-repository Homebrew formula copy to the current v0.3.5 release
-  artifact URLs and checksums.
-- Self-update checksum verification now accepts the `dist/...` paths emitted in
-  release `checksums.txt` files.
+- Updated the in-repository Homebrew formula copy to the current v0.3.5 release artifact URLs and checksums.
+- Self-update checksum verification now accepts the `dist/...` paths emitted in release `checksums.txt` files.
 
 ## [0.3.5] - 2026-06-21
 
@@ -84,36 +83,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Completed the Homebrew packaging with release artifact checksums and formula
-  validation.
-- Replaced the Kubernetes deployment image placeholder with a concrete local
-  image tag and documented registry retagging for remote clusters.
+- Completed the Homebrew packaging with release artifact checksums and formula validation.
+- Replaced the Kubernetes deployment image placeholder with a concrete local image tag and documented registry retagging for remote clusters.
 
 ## [0.3.4] - 2026-06-21
 
 ### Added
 
-- Added role-aware admin authorization with read-only, operator, config editor,
-  credential manager, and admin roles.
-- Added external identity support for the admin UI/API through trusted
-  reverse-proxy headers, enabling Google, GitHub, Microsoft, and OSS OIDC
-  providers through proxies such as oauth2-proxy, Dex, Authelia, Keycloak, and
-  Zitadel.
-- Added `GET /admin/whoami` for validating the authenticated admin principal,
-  auth source, resolved role, and credential-management permission.
-- Added encrypted credential persistence for runtime overrides using an
-  operator-supplied AES-GCM key.
-- Added opt-in self-update checks and apply flow through the admin API/UI, with
-  checksum verification and same-argument restart.
-- Added configurable retention windows for usage, health, audit, and request
-  trace data.
+- Added role-aware admin authorization with read-only, operator, config editor, credential manager, and admin roles.
+- Added external identity support for the admin UI/API through trusted reverse-proxy headers, enabling Google, GitHub, Microsoft, and OSS OIDC providers through proxies such as oauth2-proxy, Dex, Authelia, Keycloak, and Zitadel.
+- Added `GET /admin/whoami` for validating the authenticated admin principal, auth source, resolved role, and credential-management permission.
+- Added encrypted credential persistence for runtime overrides using an operator-supplied AES-GCM key.
+- Added opt-in self-update checks and apply flow through the admin API/UI, with checksum verification and same-argument restart.
+- Added configurable retention windows for usage, health, audit, and request trace data.
 - Added Homebrew formula and Kubernetes manifest starters.
 - Added release SBOM generation and GitHub artifact provenance attestations.
 
 ### Changed
 
-- Documented restore drills, migration rollback guidance, and release
-  verification surfaces for deployment operators.
+- Documented restore drills, migration rollback guidance, and release verification surfaces for deployment operators.
 
 ### Fixed
 
@@ -121,11 +109,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added an operator-grade observability workflow with durable request trace
-  timelines, time-window success/429/fallback/token/cost analytics, an incident
-  feed, redacted diagnostic bundle export, and `/ui/observability`.
-- Added ready-to-import Grafana dashboard and Prometheus alert starters under
-  `monitoring/`.
+- Added an operator-grade observability workflow with durable request trace timelines, time-window success/429/fallback/token/cost analytics, an incident feed, redacted diagnostic bundle export, and `/ui/observability`.
+- Added ready-to-import Grafana dashboard and Prometheus alert starters under `monitoring/`.
 
 ### Changed
 
@@ -137,22 +122,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added a Model Intelligence Layer with normalized model families, task tags,
-  modalities, context-window metadata, reasoning/vision/tool/JSON capability
-  signals, and catalog freshness scoring.
-- Added built-in smart model groups for `fast:chat`, `cheap:code`,
-  `reasoning:deep`, and `vision:balanced`.
+- Added a Model Intelligence Layer with normalized model families, task tags, modalities, context-window metadata, reasoning/vision/tool/JSON capability signals, and catalog freshness scoring.
+- Added built-in smart model groups for `fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced`.
 
 ### Changed
 
-- `/v1/models`, `/admin/models`, the Models UI, and route-plan diagnostics now
-  expose model intelligence metadata for easier provider/model comparison.
+- `/v1/models`, `/admin/models`, the Models UI, and route-plan diagnostics now expose model intelligence metadata for easier provider/model comparison.
 
 ### Fixed
 
-- Chat and streaming route planning now reroutes before upstream calls when a
-  model cannot satisfy requested tools, JSON mode, vision input, or known
-  context-window requirements.
+- Chat and streaming route planning now reroutes before upstream calls when a model cannot satisfy requested tools, JSON mode, vision input, or known context-window requirements.
 
 ## [0.3.1] - 2026-06-20
 
@@ -160,28 +139,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Replaced the README architecture overview with an SVG diagram using the
-  TokenScavenger logo color theme.
+- Replaced the README architecture overview with an SVG diagram using the TokenScavenger logo color theme.
 
 ### Fixed
 
-- Fixed route planning so persisted per-model endpoint capabilities are enforced
-  for chat, streaming, and embeddings routes.
-- Fixed local provider embedding support to use bounded background capability
-  probing with explicit enabled/disabled overrides.
-- Fixed embeddings fallback diagnostics so non-success upstream responses
-  preserve provider error bodies instead of masking them as JSON parse failures.
-- Fixed Prometheus build metadata to report the running package version instead
-  of hard-coded v0.1.0 labels.
+- Fixed route planning so persisted per-model endpoint capabilities are enforced for chat, streaming, and embeddings routes.
+- Fixed local provider embedding support to use bounded background capability probing with explicit enabled/disabled overrides.
+- Fixed embeddings fallback diagnostics so non-success upstream responses preserve provider error bodies instead of masking them as JSON parse failures.
+- Fixed Prometheus build metadata to report the running package version instead of hard-coded v0.1.0 labels.
 
 ## [0.3.0] - 2026-06-19
 
 ### Added
 
-- Added first-class local OpenAI-compatible provider adapters for generic local
-  servers, Ollama, llama.cpp server, and LM Studio, including chat, streaming,
-  model discovery, routing, health, fallback, usage, and metrics integration
-  through the normal provider path.
+- Added first-class local OpenAI-compatible provider adapters for generic local servers, Ollama, llama.cpp server, and LM Studio, including chat, streaming, model discovery, routing, health, fallback, usage, and metrics integration through the normal provider path.
 
 ### Changed
 
@@ -191,24 +162,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added policy-based routing objectives for `min_cost`, `min_latency`,
-  `balanced`, `quality_first`, and `local_only`, with per-model-group
-  objective overrides.
-- Added hard routing budgets for estimated spend per request, per day, per
-  provider/day, and per model-group/day.
-- Added route-plan scoring diagnostics with cost, latency, reliability,
-  context-window, quality, operator-priority, and budget skip details.
-- Added deterministic policy-engine coverage for budget enforcement,
-  paid-fallback gating, tie-breaking, local-only routing, context-window
-  scoring, and Hermes-style agentic tool routing.
+- Added policy-based routing objectives for `min_cost`, `min_latency`, `balanced`, `quality_first`, and `local_only`, with per-model-group objective overrides.
+- Added hard routing budgets for estimated spend per request, per day, per provider/day, and per model-group/day.
+- Added route-plan scoring diagnostics with cost, latency, reliability, context-window, quality, operator-priority, and budget skip details.
+- Added deterministic policy-engine coverage for budget enforcement, paid-fallback gating, tie-breaking, local-only routing, context-window scoring, and Hermes-style agentic tool routing.
 
 ### Changed
 
-- Chat, streaming chat, and embeddings route planning now score eligible
-  provider/model candidates using estimated cost, observed latency, recent
-  failure rate, context window, capabilities, and operator priority.
-- Curated and discovered model metadata now preserves context-window hints for
-  policy scoring.
+- Chat, streaming chat, and embeddings route planning now score eligible provider/model candidates using estimated cost, observed latency, recent failure rate, context window, capabilities, and operator priority.
+- Curated and discovered model metadata now preserves context-window hints for policy scoring.
 
 ### Fixed
 
@@ -216,36 +178,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added release workflow automation that promotes `[Unreleased]` changelog
-  entries into a dated release section and uses that section as the GitHub
-  release notes.
+- Added release workflow automation that promotes `[Unreleased]` changelog entries into a dated release section and uses that section as the GitHub release notes.
 
 ### Changed
 
-- Non-positive client `max_tokens` values are now normalized to `1` at the API
-  boundary so provider fallbacks never receive invalid negative token limits.
-- OpenAI-compatible and Gemini adapters now omit absent token-limit fields
-  instead of forwarding JSON `null` values to upstream providers.
-- OpenAI-compatible providers now retry once with `max_tokens: 1` when an
-  upstream rejects an omitted token limit as zero or missing, while negative
-  context-budget errors fall through to the next planned model without a
-  doomed same-model retry.
-- Graceful shutdown now signals Axum immediately, then drains background tasks
-  and closes SQLite after the HTTP server stops.
-- HTTP shutdown now has a bounded drain window so open SSE/streaming
-  connections cannot prevent the process from completing shutdown.
-- Streaming fallback now logs each provider/model attempt as it starts and
-  advances to the next planned attempt if no content arrives within a bounded
-  pre-content timeout.
-- Recent negative context-budget failures are remembered per provider/model and
-  prompt size so equal-or-larger prompts skip doomed attempts without blocking
-  shorter fresh sessions.
-- Recent streaming attempts that time out or end before content are remembered
-  per provider/model and prompt size for a short TTL, avoiding repeated silent
-  attempts while preserving routing for smaller fresh sessions.
-- Recent upstream rate limits are remembered per provider/model for a short
-  TTL, using `Retry-After` when available, so repeated requests skip known
-  limited attempts instead of hammering the same route.
+- Non-positive client `max_tokens` values are now normalized to `1` at the API boundary so provider fallbacks never receive invalid negative token limits.
+- OpenAI-compatible and Gemini adapters now omit absent token-limit fields instead of forwarding JSON `null` values to upstream providers.
+- OpenAI-compatible providers now retry once with `max_tokens: 1` when an upstream rejects an omitted token limit as zero or missing, while negative context-budget errors fall through to the next planned model without a doomed same-model retry.
+- Graceful shutdown now signals Axum immediately, then drains background tasks and closes SQLite after the HTTP server stops.
+- HTTP shutdown now has a bounded drain window so open SSE/streaming connections cannot prevent the process from completing shutdown.
+- Streaming fallback now logs each provider/model attempt as it starts and advances to the next planned attempt if no content arrives within a bounded pre-content timeout.
+- Recent negative context-budget failures are remembered per provider/model and prompt size so equal-or-larger prompts skip doomed attempts without blocking shorter fresh sessions.
+- Recent streaming attempts that time out or end before content are remembered per provider/model and prompt size for a short TTL, avoiding repeated silent attempts while preserving routing for smaller fresh sessions.
+- Recent upstream rate limits are remembered per provider/model for a short TTL, using `Retry-After` when available, so repeated requests skip known limited attempts instead of hammering the same route.
 
 ### Fixed
 
@@ -253,42 +198,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added model-group targets that can mix portable model IDs with
-  provider-qualified `{ provider, model }` entries, preserving ordered fallback
-  while allowing explicit upstream pinning.
-- Added admin UI support for model-group target modes, with separate
-  "Any provider" and "Specific provider" selection flows.
+- Added model-group targets that can mix portable model IDs with provider-qualified `{ provider, model }` entries, preserving ordered fallback while allowing explicit upstream pinning.
+- Added admin UI support for model-group target modes, with separate "Any provider" and "Specific provider" selection flows.
 
 ### Changed
 
-- Updated route-plan and streaming diagnostics to log full provider/model
-  attempt labels, making provider-qualified and cross-provider model-group
-  routing easier to audit.
-- Updated tool-request routing to preserve operator/model-group order among
-  tool-capable attempts instead of reshuffling by provider reliability rank.
-- Updated streaming failure handling to surface upstream errors that occur
-  before any response content is emitted, including provider rate-limit details.
-- Treat upstream token-per-minute/request-size `413 rate_limit_exceeded` errors
-  as rate limits so they drive request fallback and preserve the upstream
-  diagnostic body.
-- Rate-limit and quota errors no longer poison provider health for later
-  attempts; they remain per-request fallback signals.
-- Updated model-group documentation with both portable model ID and
-  provider-qualified target examples.
+- Updated route-plan and streaming diagnostics to log full provider/model attempt labels, making provider-qualified and cross-provider model-group routing easier to audit.
+- Updated tool-request routing to preserve operator/model-group order among tool-capable attempts instead of reshuffling by provider reliability rank.
+- Updated streaming failure handling to surface upstream errors that occur before any response content is emitted, including provider rate-limit details.
+- Treat upstream token-per-minute/request-size `413 rate_limit_exceeded` errors as rate limits so they drive request fallback and preserve the upstream diagnostic body.
+- Rate-limit and quota errors no longer poison provider health for later attempts; they remain per-request fallback signals.
+- Updated model-group documentation with both portable model ID and provider-qualified target examples.
 
 ### Fixed
 
-- Fixed admin "Deploy Configuration" so redacted provider API keys are treated
-  as display masks and the existing stored secret is preserved.
-- Fixed Google Gemini tool-call requests by translating OpenAI tool definitions
-  to Gemini `functionDeclarations` and `toolConfig` instead of forwarding the
-  OpenAI `type/function` shape.
-- Fixed Google Gemini tool-result continuation requests by translating OpenAI
-  `role: "tool"` messages into Gemini `functionResponse` parts.
-- Fixed SSE parsing to accept compact `data:{...}` frames as well as
-  `data: {...}` frames.
-- Fixed route-plan and streaming model-group expansion so provider-qualified
-  targets are routed only through their configured provider.
+- Fixed admin "Deploy Configuration" so redacted provider API keys are treated as display masks and the existing stored secret is preserved.
+- Fixed Google Gemini tool-call requests by translating OpenAI tool definitions to Gemini `functionDeclarations` and `toolConfig` instead of forwarding the OpenAI `type/function` shape.
+- Fixed Google Gemini tool-result continuation requests by translating OpenAI `role: "tool"` messages into Gemini `functionResponse` parts.
+- Fixed SSE parsing to accept compact `data:{...}` frames as well as `data: {...}` frames.
+- Fixed route-plan and streaming model-group expansion so provider-qualified targets are routed only through their configured provider.
 
 ## [0.1.6] - 2026-05-08
 
@@ -296,26 +224,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Improved streaming route diagnostics with selected model IDs so fallback
-  attempts are explainable when model groups span multiple providers.
-- Added tool-aware route reprioritization for chat requests with OpenAI `tools`
-  so agentic clients prefer providers/models with more reliable tool-call
-  behavior without requiring a separate model group.
+- Improved streaming route diagnostics with selected model IDs so fallback attempts are explainable when model groups span multiple providers.
+- Added tool-aware route reprioritization for chat requests with OpenAI `tools` so agentic clients prefer providers/models with more reliable tool-call behavior without requiring a separate model group.
 
 ### Fixed
 
-- Fixed streaming chat routing so disabled or undiscovered provider/model pairs
-  are filtered before upstream calls, matching non-streaming routing behavior.
-- Fixed empty streaming attempts being treated as successful completions before
-  any content or tool-call delta was forwarded, allowing fallback to continue to
-  the next planned attempt.
-- Fixed OpenAI-compatible streamed tool calls by forwarding `delta.tool_calls`
-  chunks instead of treating tool-call-only streams as empty responses.
-- Fixed OpenAI-compatible tool continuation requests by preserving
-  `assistant.tool_calls` and `tool.tool_call_id` fields when forwarding message
-  history to upstream providers.
-- Improved authentication failure logs with method, path, and header-presence
-  metadata while continuing to avoid logging API key material.
+- Fixed streaming chat routing so disabled or undiscovered provider/model pairs are filtered before upstream calls, matching non-streaming routing behavior.
+- Fixed empty streaming attempts being treated as successful completions before any content or tool-call delta was forwarded, allowing fallback to continue to the next planned attempt.
+- Fixed OpenAI-compatible streamed tool calls by forwarding `delta.tool_calls` chunks instead of treating tool-call-only streams as empty responses.
+- Fixed OpenAI-compatible tool continuation requests by preserving `assistant.tool_calls` and `tool.tool_call_id` fields when forwarding message history to upstream providers.
+- Improved authentication failure logs with method, path, and header-presence metadata while continuing to avoid logging API key material.
 
 ## [0.1.5] - 2026-05-07
 
@@ -325,18 +243,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed model discovery persistence for file-configured providers by seeding
-  provider rows before discovery and recording only persisted model counts.
-- Fixed provider hot-reload persistence so base URLs and free-only mode are
-  stored with provider rows before model discovery refreshes.
-- Fixed first-run provider saves so model discovery runs immediately after
-  providers are added and the Models page has server-rendered fallback rows.
-- Fixed the admin Models page to request `/admin/models` on load instead of
-  relying only on model JSON embedded in the page HTML.
-- Fixed streaming chat completions so usage chunks are recorded in token usage
-  metrics and cost accounting, including requests sent from the Chat Tester.
-- Added the running binary version to `/readyz` so setup does not silently apply
-  configuration to an older incompatible process.
+- Fixed model discovery persistence for file-configured providers by seeding provider rows before discovery and recording only persisted model counts.
+- Fixed provider hot-reload persistence so base URLs and free-only mode are stored with provider rows before model discovery refreshes.
+- Fixed first-run provider saves so model discovery runs immediately after providers are added and the Models page has server-rendered fallback rows.
+- Fixed the admin Models page to request `/admin/models` on load instead of relying only on model JSON embedded in the page HTML.
+- Fixed streaming chat completions so usage chunks are recorded in token usage metrics and cost accounting, including requests sent from the Chat Tester.
+- Added the running binary version to `/readyz` so setup does not silently apply configuration to an older incompatible process.
 
 ## [0.1.4] - 2026-05-07
 
@@ -346,9 +258,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Improved first-run setup behavior when TokenScavenger is already running by
-  hot-reloading the generated config into the live server instead of requiring a
-  manual process kill and restart.
+- Improved first-run setup behavior when TokenScavenger is already running by hot-reloading the generated config into the live server instead of requiring a manual process kill and restart.
 
 ## [0.1.3] - 2026-05-07
 
@@ -358,12 +268,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Improved first-run startup behavior when the configured bind address is
-  already in use, replacing the raw OS error with an actionable message.
-- Fixed admin UI access when a master API key is configured by enabling browser
-  session auth during setup and adding a `/ui/login` flow.
-- Fixed empty admin model catalogs by returning the curated model catalog and
-  overlaying discovered database rows instead of relying on DB rows only.
+- Improved first-run startup behavior when the configured bind address is already in use, replacing the raw OS error with an actionable message.
+- Fixed admin UI access when a master API key is configured by enabling browser session auth during setup and adding a `/ui/login` flow.
+- Fixed empty admin model catalogs by returning the curated model catalog and overlaying discovered database rows instead of relying on DB rows only.
 
 ## [0.1.2] - 2026-05-06
 
@@ -371,10 +278,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Updated the release workflow to sign and notarize the macOS ARM64 binary
-  using Apple Developer ID credentials, distributed as a notarized zip archive.
-- Updated README, marketing site, and generated release notes for the notarized
-  macOS archive install flow.
+- Updated the release workflow to sign and notarize the macOS ARM64 binary using Apple Developer ID credentials, distributed as a notarized zip archive.
+- Updated README, marketing site, and generated release notes for the notarized macOS archive install flow.
 
 ### Fixed
 
@@ -384,13 +289,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Added a sticky marketing site header and a compact tabbed install section for
-  macOS, Linux, and Windows release binaries.
+- Added a sticky marketing site header and a compact tabbed install section for macOS, Linux, and Windows release binaries.
 
 ### Fixed
 
-- Fixed Windows release builds by gating Unix-only shutdown signal handling
-  behind Unix targets.
+- Fixed Windows release builds by gating Unix-only shutdown signal handling behind Unix targets.
 
 ## [0.1.0] - 2026-05-06
 

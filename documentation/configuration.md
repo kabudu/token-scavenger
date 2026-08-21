@@ -420,6 +420,11 @@ target = [
   "gemini-2.0-flash",
   { provider = "openrouter", model = "meta-llama/llama-3.3-70b-instruct:free" },
 ]
+
+# TokenScavenger also seeds an operator-overridable `free:openrouter` group
+# targeting { provider = "openrouter", model = "openrouter/free" }.
+# The separate `preview:ox-alpha` group targets the temporary, data-retaining
+# { provider = "openrouter", model = "stealth/ox-alpha" } stealth preview.
 ```
 
 ### Free-first with paid fallback

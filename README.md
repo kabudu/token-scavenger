@@ -317,9 +317,23 @@ and the same CSV or redacted diagnostic exports exposed by the admin API.
 TokenScavenger normalizes model families, task tags, modality flags, context
 windows, JSON/tool support, reasoning hints, embeddings support, and catalog
 freshness into the merged model catalog. Built-in smart model groups such as
-`fast:chat`, `cheap:code`, `reasoning:deep`, and `vision:balanced` sit on top
+`free:openrouter`, `preview:ox-alpha`, `fast:chat`, `cheap:code`,
+`reasoning:deep`, and `vision:balanced` sit on top
 of the normal model-group system, so operators can edit or override them in the
 UI.
+
+`free:openrouter` is pinned to OpenRouter's stable `openrouter/free` router,
+which selects from the free models available at request time. This avoids
+shipping a short-lived stealth/alpha model ID. The selected upstream may log
+prompts and completions, so do not use this group for sensitive data without
+checking the current model and provider data policy.
+
+`preview:ox-alpha` explicitly targets OpenRouter's free `stealth/ox-alpha`
+reasoning preview for coding and long-running agentic work. It is intentionally
+not included in general fallback groups: the anonymous provider retains prompts
+and completions, the additional Stealth Program terms apply, and availability
+is temporary. Never send secrets, private source code, personal data, or other
+sensitive material through this group.
 
 Chat and streaming route planning uses this metadata to reroute before calling
 an upstream when a model cannot satisfy requested tools, JSON mode, vision input,

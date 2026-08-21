@@ -89,6 +89,37 @@ async fn test_healthz_returns_ok() {
 }
 
 #[tokio::test]
+async fn test_system_stream_receives_http_activity() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let (log_tx, _) = tokio::sync::broadcast::channel(8);
+    let state = AppState::new(Config::default(), pool, Default::default(), log_tx);
+    let mut log_rx = state.log_tx.lock().unwrap().as_ref().unwrap().subscribe();
+    let app = tokenscavenger::app::startup::build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let line = tokio::time::timeout(std::time::Duration::from_secs(1), log_rx.recv())
+        .await
+        .expect("system stream activity")
+        .unwrap();
+    assert!(line.contains("GET /healthz status=200"));
+    assert!(!line.to_ascii_lowercase().contains("authorization"));
+}
+
+#[tokio::test]
 async fn test_readyz_returns_json() {
     let (app, _state) = build_test_app().await;
 
@@ -1660,6 +1691,7 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         "/ui",
         "/ui/routing",
         "/ui/models",
+        "/ui/observability",
         "/ui/projects",
         "/ui/config",
         "/ui/logs",
@@ -1688,6 +1720,11 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         if path == "/ui/models" {
             assert!(html.contains("Model Catalog"));
             assert!(html.contains("fetch('/admin/models'"));
+        }
+        if path == "/ui/observability" {
+            assert!(html.contains("id=\"trace-drawer\""));
+            assert!(html.contains("aria-modal=\"true\""));
+            assert!(html.contains("closeTraceDrawer"));
         }
         if path == "/ui/projects" {
             assert!(html.contains("Project Usage"));
@@ -3137,9 +3174,29 @@ async fn test_smart_model_groups_are_seeded_without_overwriting_operator_groups(
     .fetch_one(&pool)
     .await
     .unwrap();
+    let openrouter_free = sqlx::query_as::<_, (String,)>(
+        "SELECT target_json FROM model_groups WHERE name = 'free:openrouter'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ox_alpha = sqlx::query_as::<_, (String,)>(
+        "SELECT target_json FROM model_groups WHERE name = 'preview:ox-alpha'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     assert_eq!(fast.0, "[\"operator-model\"]");
     assert!(reasoning.0.contains("grok-4.20-reasoning"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&openrouter_free.0).unwrap(),
+        serde_json::json!([{"provider": "openrouter", "model": "openrouter/free"}])
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&ox_alpha.0).unwrap(),
+        serde_json::json!([{"provider": "openrouter", "model": "stealth/ox-alpha"}])
+    );
 }
 
 #[tokio::test]

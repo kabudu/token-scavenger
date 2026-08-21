@@ -259,15 +259,19 @@ pub async fn admin_logs_stream(
     State(state): State<AppState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     // Subscribe BEFORE emitting any trace so events aren't missed.
-    let rx = {
+    let (sender, rx) = {
         let guard = state.log_tx.lock().unwrap();
-        guard
+        let sender = guard
             .as_ref()
             .expect("log_tx sender taken during shutdown")
-            .subscribe()
+            .clone();
+        let rx = sender.subscribe();
+        (sender, rx)
     };
 
-    // Notify via tracing (will reach all subscribers including this new one).
+    // Publish directly as well as through tracing so connection activity is observable
+    // even when a process-level tracing subscriber cannot be replaced.
+    let _ = sender.send("[INFO] system stream client connected".into());
     tracing::info!("SSE client connected to system stream");
 
     let log_stream = BroadcastStream::new(rx).filter_map(|result| match result {
@@ -761,17 +765,11 @@ pub async fn admin_config_save(
                 let api_key = provider_update
                     .get("api_key")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| {
-                        if s.is_empty() || crate::util::redact::is_redacted_secret(s) {
-                            None
-                        } else {
-                            Some(s)
-                        }
-                    });
+                    .filter(|s| !s.is_empty() && !crate::util::redact::is_redacted_secret(s));
                 let base_url = provider_update
                     .get("base_url")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
+                    .filter(|s| !s.is_empty());
                 let free_only = provider_update.get("free_only").and_then(|v| v.as_bool());
                 let embedding_support = provider_update
                     .get("embedding_support")

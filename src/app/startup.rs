@@ -528,6 +528,10 @@ pub fn build_router(state: AppState) -> Router {
     public
         .merge(protected)
         .layer(TraceLayer::new_for_http())
+        .layer(from_fn_with_state(
+            state.clone(),
+            crate::api::middleware::system_stream_middleware,
+        ))
         .layer(axum::middleware::from_fn(
             crate::api::middleware::request_id_middleware,
         ))
