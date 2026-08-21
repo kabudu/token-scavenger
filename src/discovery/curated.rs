@@ -60,6 +60,22 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
         // OpenRouter free
         DiscoveredModel {
             provider_id: "openrouter".into(),
+            upstream_model_id: "openrouter/free".into(),
+            display_name: Some("OpenRouter Free Models Router".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(200_000),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "openrouter".into(),
+            upstream_model_id: "stealth/ox-alpha".into(),
+            display_name: Some("Ox Alpha (Stealth Preview)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(1_048_576),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "openrouter".into(),
             upstream_model_id: "meta-llama/llama-3.3-70b-instruct:free".into(),
             display_name: Some("Llama 3.3 70B (Free)".into()),
             endpoint_compatibility: vec!["chat".into()],

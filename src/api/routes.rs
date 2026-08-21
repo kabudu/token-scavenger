@@ -761,17 +761,11 @@ pub async fn admin_config_save(
                 let api_key = provider_update
                     .get("api_key")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| {
-                        if s.is_empty() || crate::util::redact::is_redacted_secret(s) {
-                            None
-                        } else {
-                            Some(s)
-                        }
-                    });
+                    .filter(|s| !s.is_empty() && !crate::util::redact::is_redacted_secret(s));
                 let base_url = provider_update
                     .get("base_url")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
+                    .filter(|s| !s.is_empty());
                 let free_only = provider_update.get("free_only").and_then(|v| v.as_bool());
                 let embedding_support = provider_update
                     .get("embedding_support")

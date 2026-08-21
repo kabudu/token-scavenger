@@ -130,10 +130,16 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Chat endpoint** | `POST /chat/completions` |
 | **Models endpoint** | `GET /models` |
 | **Format** | Fully OpenAI-compatible |
-| **Free models** | Any model with `:free` suffix: `meta-llama/llama-3.3-70b-instruct:free` |
-| **Quirks** | ⚠️ Extra headers: `HTTP-Referer`, `X-Title` (recommended for rankings). Model format is `provider/model`. Can pass a `models` array for automatic fallback. |
+| **Free models** | `openrouter/free` dynamically selects an available free model; a specific model can be selected with its `:free` suffix. |
+| **Quirks** | ⚠️ Extra headers: `HTTP-Referer`, `X-Title` (recommended for rankings). Model format is `provider/model`. Can pass a `models` array for automatic fallback. Free and preview model availability and data policies can change; inspect the resolved model before sending sensitive data. |
 | **Rate limits** | Separate limits for free vs paid users. Check via `GET /v1/key`. |
 | **Docs** | https://openrouter.ai/docs |
+
+TokenScavenger exposes Ox Alpha through the separate `preview:ox-alpha` model
+group. The upstream ID is `stealth/ox-alpha`. It is a free, temporary preview
+operated by an anonymous provider that retains prompts and completions and is
+subject to OpenRouter's additional Stealth Program terms. It is deliberately
+excluded from ordinary fallback groups and must not receive sensitive data.
 
 ### Cerebras
 

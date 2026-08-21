@@ -23,11 +23,11 @@ use url::Url;
 // OPENAI-COMPATIBLE PROVIDERS (use shared openai_chat_completions helper)
 // ============================================================================
 
-/// OpenRouter — free models via `:free` suffix
+/// OpenRouter - free models via `openrouter/free` or a `:free` suffix
 /// Base: https://openrouter.ai/api/v1
 /// Auth: Bearer token
 /// Extra headers: HTTP-Referer, X-Title (optional, for rankings)
-/// Free models: any ID with `:free` suffix
+/// Free models: `openrouter/free` or any ID with a `:free` suffix
 pub struct OpenRouterAdapter;
 
 #[async_trait]
@@ -52,6 +52,7 @@ impl ProviderAdapter for OpenRouterAdapter {
             openai_compatible: true,
             has_quirks: true,
             quirks: vec![
+                "openrouter/free dynamically selects an available free model".into(),
                 "Free models use :free suffix".into(),
                 "Supports model fallback via models[] array".into(),
             ],

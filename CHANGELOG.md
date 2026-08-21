@@ -9,9 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the operator-overridable `free:openrouter` model group backed by
+  OpenRouter's stable free-model router.
+- Added the isolated `preview:ox-alpha` model group for OpenRouter's temporary
+  Ox Alpha stealth preview, including curated capability metadata and explicit
+  data-retention guidance.
+
 ### Changed
 
+- Updated OpenRouter documentation to distinguish durable free routing from
+  temporary stealth previews.
+
 ### Fixed
+
+- Updated provider config parsing to satisfy current Clippy guidance without
+  changing empty or redacted-value handling.
 
 ## [0.3.9] - 2026-06-23
 
