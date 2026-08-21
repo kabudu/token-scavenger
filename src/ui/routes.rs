@@ -1821,7 +1821,7 @@ pub async fn render_observability(state: &AppState) -> String {
                         "text-red-400"
                     };
                     format!(
-                        r#"<tr><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono text-xs">{}</td><td>{}</td><td>{}</td><td class="{} font-bold text-xs uppercase">{}</td><td class="font-mono">{}ms</td><td><button class="btn text-xs" data-request-id="{}" onclick="loadTraceFromButton(this)">Open</button></td></tr>"#,
+                        r#"<tr><td class="font-mono text-xs text-cyan-400">{}</td><td class="font-mono text-xs">{}</td><td>{}</td><td>{}</td><td class="{} font-bold text-xs uppercase">{}</td><td class="font-mono">{}ms</td><td><button class="btn text-xs" type="button" aria-haspopup="dialog" data-request-id="{}" onclick="loadTraceFromButton(this)">Open</button></td></tr>"#,
                         request_id, model, provider, trace["endpoint_kind"], status_class, status, latency, request_id
                     )
                 })
@@ -1944,10 +1944,18 @@ pub async fn render_observability(state: &AppState) -> String {
                 </div>
             </div>
         </div>
-        <div class="glass-card overflow-hidden">
-            <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between"><h3 class="font-bold">Trace Timeline</h3><span id="trace-title" class="font-mono text-xs text-slate-500">Select a request</span></div>
-            <pre id="trace-detail" class="p-4 bg-[#010409] font-mono text-[11px] leading-relaxed overflow-x-auto text-slate-300 min-h-[220px]"></pre>
-        </div>"#,
+        <div id="trace-drawer-backdrop" class="trace-drawer-backdrop" onclick="closeTraceDrawer()" aria-hidden="true"></div>
+        <aside id="trace-drawer" class="trace-drawer" role="dialog" aria-modal="true" aria-labelledby="trace-drawer-heading" aria-hidden="true">
+            <div class="trace-drawer-header">
+                <div class="min-w-0">
+                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Request Trace</div>
+                    <h3 id="trace-drawer-heading" class="font-bold mt-1">Trace Timeline</h3>
+                    <span id="trace-title" class="trace-drawer-request">Select a request</span>
+                </div>
+                <button id="trace-drawer-close" class="trace-drawer-close" type="button" onclick="closeTraceDrawer()" aria-label="Close trace drawer"><i class="fas fa-times" aria-hidden="true"></i></button>
+            </div>
+            <pre id="trace-detail" class="trace-drawer-content" aria-live="polite"></pre>
+        </aside>"#,
         format_number(request_count),
         success_rate,
         rate_limit_rate,
@@ -1969,7 +1977,7 @@ pub async fn render_observability(state: &AppState) -> String {
         const status = trace.status || 'unknown';
         const cls = status === 'success' ? 'text-emerald-400' : (trace.http_status === 429 ? 'text-yellow-400' : 'text-red-400');
         const id = htmlEscape(trace.request_id);
-        return `<tr><td class="font-mono text-xs text-cyan-400">${id}</td><td class="font-mono text-xs">${htmlEscape(trace.requested_model)}</td><td>${htmlEscape(trace.selected_provider_id || '-')}</td><td>${htmlEscape(trace.endpoint_kind)}</td><td class="${cls} font-bold text-xs uppercase">${htmlEscape(status)}</td><td class="font-mono">${trace.latency_ms || 0}ms</td><td><button class="btn text-xs" data-request-id="${id}" onclick="loadTraceFromButton(this)">Open</button></td></tr>`;
+        return `<tr><td class="font-mono text-xs text-cyan-400">${id}</td><td class="font-mono text-xs">${htmlEscape(trace.requested_model)}</td><td>${htmlEscape(trace.selected_provider_id || '-')}</td><td>${htmlEscape(trace.endpoint_kind)}</td><td class="${cls} font-bold text-xs uppercase">${htmlEscape(status)}</td><td class="font-mono">${trace.latency_ms || 0}ms</td><td><button class="btn text-xs" type="button" aria-haspopup="dialog" data-request-id="${id}" onclick="loadTraceFromButton(this)">Open</button></td></tr>`;
     }
     function incidentRow(incident) {
         const severity = incident.severity || 'info';
@@ -1992,15 +2000,46 @@ pub async fn render_observability(state: &AppState) -> String {
         document.getElementById('trace-rows').innerHTML = (traces.traces || []).map(traceRow).join('') || '<tr><td colspan="7" class="px-6 py-4 text-center text-slate-500">No request traces yet</td></tr>';
         document.getElementById('incident-rows').innerHTML = (incidents.incidents || []).map(incidentRow).join('') || '<tr><td colspan="4" class="px-6 py-4 text-center text-slate-500">No incidents recorded</td></tr>';
     }
-    async function loadTrace(requestId) {
-        const response = await fetch('/admin/request-traces/' + encodeURIComponent(requestId));
-        const detail = await response.json();
+    let traceDrawerTrigger = null;
+    function openTraceDrawer(requestId) {
+        const drawer = document.getElementById('trace-drawer');
+        const backdrop = document.getElementById('trace-drawer-backdrop');
         document.getElementById('trace-title').innerText = requestId;
-        document.getElementById('trace-detail').innerText = JSON.stringify(detail, null, 2);
+        document.getElementById('trace-detail').innerText = 'Loading trace…';
+        drawer.classList.add('open');
+        drawer.setAttribute('aria-hidden', 'false');
+        backdrop.classList.add('open');
+        document.body.classList.add('trace-drawer-open');
+        document.getElementById('trace-drawer-close').focus();
+    }
+    function closeTraceDrawer() {
+        const drawer = document.getElementById('trace-drawer');
+        const backdrop = document.getElementById('trace-drawer-backdrop');
+        drawer.classList.remove('open');
+        drawer.setAttribute('aria-hidden', 'true');
+        backdrop.classList.remove('open');
+        document.body.classList.remove('trace-drawer-open');
+        if (traceDrawerTrigger) traceDrawerTrigger.focus();
+        traceDrawerTrigger = null;
+    }
+    async function loadTrace(requestId) {
+        openTraceDrawer(requestId);
+        try {
+            const response = await fetch('/admin/request-traces/' + encodeURIComponent(requestId));
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const detail = await response.json();
+            document.getElementById('trace-detail').innerText = JSON.stringify(detail, null, 2);
+        } catch (error) {
+            document.getElementById('trace-detail').innerText = `Unable to load trace (${error.message}).`;
+        }
     }
     function loadTraceFromButton(button) {
+        traceDrawerTrigger = button;
         loadTrace(button.dataset.requestId || '');
     }
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.getElementById('trace-drawer').classList.contains('open')) closeTraceDrawer();
+    });
     async function downloadDiagnosticBundle() {
         const bundle = await fetch('/admin/diagnostics/bundle').then(r => r.json());
         const blob = new Blob([JSON.stringify(bundle, null, 2)], {type:'application/json'});

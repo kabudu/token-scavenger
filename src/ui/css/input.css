@@ -33,3 +33,15 @@ button.btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
 .intelligence-pill::before { content: ""; width: 5px; height: 5px; flex: 0 0 auto; border-radius: 999px; background: currentColor; box-shadow: 0 0 7px currentColor; opacity: 0.85; }
 .intelligence-pill-task { color: #67e8f9; border-color: rgba(34, 211, 238, 0.2); background: rgba(34, 211, 238, 0.08); }
 .intelligence-pill-modality { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.2); background: rgba(139, 92, 246, 0.08); }
+
+.trace-drawer-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(2, 6, 23, 0.7); opacity: 0; pointer-events: none; transition: opacity 0.22s ease; backdrop-filter: blur(2px); }
+.trace-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+.trace-drawer { position: fixed; z-index: 61; top: 0; right: 0; width: min(620px, calc(100vw - 24px)); height: 100vh; display: flex; flex-direction: column; background: #071126; border-left: 1px solid rgba(148, 163, 184, 0.18); box-shadow: -24px 0 64px rgba(0, 0, 0, 0.48); transform: translateX(102%); visibility: hidden; transition: transform 0.24s ease, visibility 0s linear 0.24s; }
+.trace-drawer.open { transform: translateX(0); visibility: visible; transition-delay: 0s; }
+.trace-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); background: rgba(255, 255, 255, 0.02); }
+.trace-drawer-request { display: block; max-width: 460px; margin-top: 5px; color: #67e8f9; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-drawer-close { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; color: #94a3b8; background: rgba(255, 255, 255, 0.04); cursor: pointer; transition: color 0.2s, background-color 0.2s, border-color 0.2s; }
+.trace-drawer-close:hover { color: #fff; background: rgba(255, 255, 255, 0.09); border-color: rgba(148, 163, 184, 0.3); }
+.trace-drawer-close:focus-visible { outline: 2px solid var(--color-cyan); outline-offset: 2px; }
+.trace-drawer-content { flex: 1; min-height: 0; margin: 0; padding: 20px 24px 40px; overflow: auto; color: #cbd5e1; background: #010409; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+body.trace-drawer-open { overflow: hidden; }

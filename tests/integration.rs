@@ -1660,6 +1660,7 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         "/ui",
         "/ui/routing",
         "/ui/models",
+        "/ui/observability",
         "/ui/projects",
         "/ui/config",
         "/ui/logs",
@@ -1688,6 +1689,11 @@ async fn test_ui_smoke_pages_include_accessibility_and_analytics_surfaces() {
         if path == "/ui/models" {
             assert!(html.contains("Model Catalog"));
             assert!(html.contains("fetch('/admin/models'"));
+        }
+        if path == "/ui/observability" {
+            assert!(html.contains("id=\"trace-drawer\""));
+            assert!(html.contains("aria-modal=\"true\""));
+            assert!(html.contains("closeTraceDrawer"));
         }
         if path == "/ui/projects" {
             assert!(html.contains("Project Usage"));
