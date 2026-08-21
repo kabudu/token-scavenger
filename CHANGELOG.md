@@ -15,10 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Updated OpenRouter documentation to distinguish durable free routing from temporary stealth previews.
+- Refined model intelligence pills and moved request-trace details into an accessible right-side drawer.
+- Normalized changelog bullets to one physical source line for cleaner review diffs.
 
 ### Fixed
 
 - Updated provider config parsing to satisfy current Clippy guidance without changing empty or redacted-value handling.
+- Fixed streaming requests to respect the configured request timeout instead of imposing a 15-second first-content cap.
+- Fixed embedded OpenRouter SSE rate-limit errors so clients receive OpenAI-compatible error events and request traces record `429 rate_limited` outcomes.
+- Fixed stream-silence hints so they cannot suppress the only available route in a model group.
+- Fixed the System Stream so active HTTP requests reliably emit redacted method, path, status, latency, and request-ID events.
 
 ## [0.3.9] - 2026-06-23
 
