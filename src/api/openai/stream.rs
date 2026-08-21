@@ -350,7 +350,7 @@ pub async fn create_chat_stream(
 
     tokio::spawn(async move {
         let pre_content_timeout =
-            Duration::from_millis(config_clone.server.request_timeout_ms.clamp(1_000, 15_000));
+            Duration::from_millis(config_clone.server.request_timeout_ms.max(1_000));
         let prompt_size_hint = request_clone.prompt_size_hint();
         for attempt in &plan {
             let provider_id = &attempt.provider_id;
