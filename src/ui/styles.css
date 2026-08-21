@@ -88,6 +88,11 @@ body.sidebar-open { overflow: hidden; }
   .admin-page-header h1 { font-size: 1rem; }
   main > .p-8 { padding: 16px; }
 }
+.intelligence-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 150px; max-width: 280px; }
+.intelligence-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 3px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0.025em; white-space: nowrap; }
+.intelligence-pill::before { content: ""; width: 5px; height: 5px; flex: 0 0 auto; border-radius: 999px; background: currentColor; box-shadow: 0 0 7px currentColor; opacity: 0.85; }
+.intelligence-pill-task { color: #67e8f9; border-color: rgba(34, 211, 238, 0.2); background: rgba(34, 211, 238, 0.08); }
+.intelligence-pill-modality { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.2); background: rgba(139, 92, 246, 0.08); }
 @media (max-width: 760px) { .provider-add-grid { grid-template-columns: 1fr; } }
 @media (max-width: 520px) {
   .mobile-brand { max-width: 150px; }

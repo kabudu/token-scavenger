@@ -27,3 +27,9 @@ button.btn { background: var(--color-fox); color: white; padding: 6px 16px; bord
 button.btn:hover { filter: brightness(1.2); }
 button.btn-danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 6px 16px; border-radius: 6px; font-weight: bold; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; transition: all 0.2s; border: 1px solid rgba(239, 68, 68, 0.3); }
 button.btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+
+.intelligence-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 150px; max-width: 280px; }
+.intelligence-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 3px 9px; border: 1px solid transparent; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0.025em; white-space: nowrap; }
+.intelligence-pill::before { content: ""; width: 5px; height: 5px; flex: 0 0 auto; border-radius: 999px; background: currentColor; box-shadow: 0 0 7px currentColor; opacity: 0.85; }
+.intelligence-pill-task { color: #67e8f9; border-color: rgba(34, 211, 238, 0.2); background: rgba(34, 211, 238, 0.08); }
+.intelligence-pill-modality { color: #c4b5fd; border-color: rgba(167, 139, 250, 0.2); background: rgba(139, 92, 246, 0.08); }

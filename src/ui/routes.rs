@@ -940,8 +940,8 @@ pub async fn render_models(state: &AppState) -> String {
                 const u = m.upstream_model_id || '?';
                 const p = m.provider_id || '?';
                 const intel = m.intelligence || {{}};
-                const tags = (intel.task_tags || []).slice(0, 3).map(t => `<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/10">${{t}}</span>`).join('');
-                const modalities = (intel.modalities || []).map(t => `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/10">${{t}}</span>`).join('');
+                const tags = (intel.task_tags || []).slice(0, 3).map(t => `<span class="intelligence-pill intelligence-pill-task" title="Task capability">${{t}}</span>`).join('');
+                const modalities = (intel.modalities || []).map(t => `<span class="intelligence-pill intelligence-pill-modality" title="Input modality">${{t}}</span>`).join('');
                 const context = intel.context_window ? `${{Number(intel.context_window).toLocaleString()}} ctx` : 'unknown ctx';
                 const freshness = m.freshness || intel.freshness || 'Unknown';
                 const freshnessScore = Math.round((m.freshness_score || intel.freshness_score || 0) * 100);
@@ -953,7 +953,7 @@ pub async fn render_models(state: &AppState) -> String {
                 const status_html = enabled 
                     ? `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 text-[10px]">Enabled</span>`
                     : `<span class="px-2 py-0.5 rounded bg-white/5 text-slate-500 text-[10px]">Disabled</span>`;
-                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}<div class="text-[10px] text-slate-500 mt-1">${{intel.family || 'general'}} · ${{context}}</div></td><td class="text-sm">${{p}}</td><td><div class="flex flex-wrap gap-1 max-w-xs">${{tags}}${{modalities}}</div></td><td class="text-xs"><span class="text-slate-300">${{freshness}}</span><div class="text-[10px] text-slate-500">${{freshnessScore}}%</div></td><td>${{status_html}}</td><td><input type="number" value="${{prio}}" class="w-16 bg-black/20 border border-white/10 rounded px-2 py-0.5 text-xs text-center" onchange="updateModelPriority('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}', this.value)"></td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
+                html += `<tr><td class="font-mono text-sm text-cyan-400">${{u}}<div class="text-[10px] text-slate-500 mt-1">${{intel.family || 'general'}} · ${{context}}</div></td><td class="text-sm">${{p}}</td><td><div class="intelligence-pills">${{tags}}${{modalities}}</div></td><td class="text-xs"><span class="text-slate-300">${{freshness}}</span><div class="text-[10px] text-slate-500">${{freshnessScore}}%</div></td><td>${{status_html}}</td><td><input type="number" value="${{prio}}" class="w-16 bg-black/20 border border-white/10 rounded px-2 py-0.5 text-xs text-center" onchange="updateModelPriority('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}', this.value)"></td><td><button class="${{button_class}}" onclick="toggleModel('${{p.replace(/'/g, "\\'")}}','${{u.replace(/'/g, "\\'")}}',${{next_enabled}})">${{button_label}}</button></td></tr>`;
             }});
         }}
         document.getElementById('modelsTableBody').innerHTML = html;
