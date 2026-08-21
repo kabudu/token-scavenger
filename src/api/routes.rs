@@ -259,15 +259,19 @@ pub async fn admin_logs_stream(
     State(state): State<AppState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     // Subscribe BEFORE emitting any trace so events aren't missed.
-    let rx = {
+    let (sender, rx) = {
         let guard = state.log_tx.lock().unwrap();
-        guard
+        let sender = guard
             .as_ref()
             .expect("log_tx sender taken during shutdown")
-            .subscribe()
+            .clone();
+        let rx = sender.subscribe();
+        (sender, rx)
     };
 
-    // Notify via tracing (will reach all subscribers including this new one).
+    // Publish directly as well as through tracing so connection activity is observable
+    // even when a process-level tracing subscriber cannot be replaced.
+    let _ = sender.send("[INFO] system stream client connected".into());
     tracing::info!("SSE client connected to system stream");
 
     let log_stream = BroadcastStream::new(rx).filter_map(|result| match result {

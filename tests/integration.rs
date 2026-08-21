@@ -89,6 +89,37 @@ async fn test_healthz_returns_ok() {
 }
 
 #[tokio::test]
+async fn test_system_stream_receives_http_activity() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let (log_tx, _) = tokio::sync::broadcast::channel(8);
+    let state = AppState::new(Config::default(), pool, Default::default(), log_tx);
+    let mut log_rx = state.log_tx.lock().unwrap().as_ref().unwrap().subscribe();
+    let app = tokenscavenger::app::startup::build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let line = tokio::time::timeout(std::time::Duration::from_secs(1), log_rx.recv())
+        .await
+        .expect("system stream activity")
+        .unwrap();
+    assert!(line.contains("GET /healthz status=200"));
+    assert!(!line.to_ascii_lowercase().contains("authorization"));
+}
+
+#[tokio::test]
 async fn test_readyz_returns_json() {
     let (app, _state) = build_test_app().await;
 
