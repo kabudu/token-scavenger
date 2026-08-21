@@ -53,6 +53,12 @@ pub enum StreamEvent {
         completion_tokens: u32,
         total_tokens: u32,
     },
+    /// OpenAI-compatible error event emitted after an SSE response has started.
+    Error {
+        message: String,
+        error_type: String,
+        code: String,
+    },
     /// Done sentinel.
     Done,
 }
@@ -153,6 +159,19 @@ pub fn format_sse_payload(event: &StreamEvent) -> String {
             }
         })
         .to_string(),
+        StreamEvent::Error {
+            message,
+            error_type,
+            code,
+        } => serde_json::json!({
+            "error": {
+                "message": message,
+                "type": error_type,
+                "param": null,
+                "code": code,
+            }
+        })
+        .to_string(),
         StreamEvent::Done => "[DONE]".to_string(),
     }
 }
@@ -175,7 +194,27 @@ fn stream_event_has_content(event: &StreamEvent) -> bool {
                     .is_some_and(|value| !value.is_empty())
                 || !function_arguments.is_empty()
         }
-        StreamEvent::Usage { .. } | StreamEvent::Done => false,
+        StreamEvent::Usage { .. } | StreamEvent::Error { .. } | StreamEvent::Done => false,
+    }
+}
+
+fn stream_error_event(error: &ProviderError) -> StreamEvent {
+    match error {
+        ProviderError::RateLimited { details, .. } => StreamEvent::Error {
+            message: details.clone(),
+            error_type: "rate_limit_error".into(),
+            code: "rate_limit_exceeded".into(),
+        },
+        ProviderError::QuotaExhausted { details, .. } => StreamEvent::Error {
+            message: details.clone(),
+            error_type: "quota_error".into(),
+            code: "quota_exhausted".into(),
+        },
+        _ => StreamEvent::Error {
+            message: error.to_string(),
+            error_type: "provider_error".into(),
+            code: "provider_error".into(),
+        },
     }
 }
 
@@ -352,7 +391,8 @@ pub async fn create_chat_stream(
         let pre_content_timeout =
             Duration::from_millis(config_clone.server.request_timeout_ms.max(1_000));
         let prompt_size_hint = request_clone.prompt_size_hint();
-        for attempt in &plan {
+        let mut terminal_error = None;
+        'attempts: for attempt in &plan {
             let provider_id = &attempt.provider_id;
             let model_id = &attempt.model_id;
             if should_skip_for_context_hint(&state, attempt, prompt_size_hint) {
@@ -484,27 +524,26 @@ pub async fn create_chat_stream(
                 biased;
                 event = attempt_rx.recv() => {
                     let Some(event) = event else {
-                        if forwarded_meaningful_event {
-                            info!(
-                                provider = %provider_id,
-                                model = %model_id,
-                                "Streaming completed"
-                            );
-                            crate::observability::record_attempt_result(
-                                &state,
-                                &task_request_id,
-                                "chat",
-                                attempt,
-                                "stream_completed",
-                                None,
-                                None,
-                            )
-                            .await;
-                            let _ = tx.send(StreamEvent::Done).await;
-                            return;
-                        }
-                        if attempt_task.is_finished() {
-                            match attempt_task.await {
+                        match attempt_task.await {
+                                Ok(Ok(())) if forwarded_meaningful_event => {
+                                    info!(
+                                        provider = %provider_id,
+                                        model = %model_id,
+                                        "Streaming completed"
+                                    );
+                                    crate::observability::record_attempt_result(
+                                        &state,
+                                        &task_request_id,
+                                        "chat",
+                                        attempt,
+                                        "stream_completed",
+                                        None,
+                                        None,
+                                    )
+                                    .await;
+                                    let _ = tx.send(StreamEvent::Done).await;
+                                    return;
+                                }
                                 Ok(Ok(())) => {
                                     warn!(
                                         provider = %provider_id,
@@ -551,11 +590,19 @@ pub async fn create_chat_stream(
                                         &task_request_id,
                                         "chat",
                                         attempt,
-                                        "stream_failed_pre_content",
+                                        if forwarded_meaningful_event {
+                                            "stream_failed_after_content"
+                                        } else {
+                                            "stream_failed_pre_content"
+                                        },
                                         None,
                                         Some(&e.to_string()),
                                     )
                                     .await;
+                                    terminal_error = Some(e);
+                                    if forwarded_meaningful_event {
+                                        break 'attempts;
+                                    }
                                 }
                                 Err(e) => {
                                     warn!(
@@ -576,14 +623,6 @@ pub async fn create_chat_stream(
                                     )
                                     .await;
                                 }
-                            }
-                        } else {
-                            warn!(
-                                provider = %provider_id,
-                                model = %model_id,
-                                "Streaming attempt closed without content; trying next planned attempt"
-                            );
-                            attempt_task.abort();
                         }
                         break;
                     };
@@ -713,11 +752,19 @@ pub async fn create_chat_stream(
                                 &task_request_id,
                                 "chat",
                                 attempt,
-                                "stream_failed_pre_content",
+                                if forwarded_meaningful_event {
+                                    "stream_failed_after_content"
+                                } else {
+                                    "stream_failed_pre_content"
+                                },
                                 None,
                                 Some(&e.to_string()),
                             )
                             .await;
+                            terminal_error = Some(e);
+                            if forwarded_meaningful_event {
+                                break 'attempts;
+                            }
                         }
                         Err(e) => {
                             warn!(
@@ -771,7 +818,14 @@ pub async fn create_chat_stream(
             }
         }
 
-        // All providers failed pre-stream or streaming failed
+        // All providers failed pre-stream or an upstream ended an active stream with an error.
+        let (failure_status, failure_http_status, failure_outcome) = match terminal_error.as_ref() {
+            Some(ProviderError::RateLimited { .. }) => ("rate_limited", 429, "rate_limited"),
+            Some(ProviderError::QuotaExhausted { .. }) => {
+                ("quota_exhausted", 429, "quota_exhausted")
+            }
+            _ => ("route_exhausted", 503, "route_exhausted"),
+        };
         let _ = crate::usage::accounting::record_failure(
             &state,
             crate::usage::accounting::FailureRecord {
@@ -780,8 +834,8 @@ pub async fn create_chat_stream(
                 requested_model: &request_clone.model,
                 selected_provider_id: plan.last().map(|attempt| attempt.provider_id.as_str()),
                 selected_model_id: plan.last().map(|attempt| attempt.model_id.as_str()),
-                status: "route_exhausted",
-                http_status: 503,
+                status: failure_status,
+                http_status: failure_http_status,
                 latency_ms: task_started_at.elapsed().as_millis() as i64,
                 streaming: true,
             },
@@ -794,12 +848,15 @@ pub async fn create_chat_stream(
                 event_type: "route_exhausted",
                 provider_id: plan.last().map(|attempt| attempt.provider_id.as_str()),
                 model_id: plan.last().map(|attempt| attempt.model_id.as_str()),
-                outcome: Some("route_exhausted"),
+                outcome: Some(failure_outcome),
                 latency_ms: Some(task_started_at.elapsed().as_millis() as i64),
                 details: serde_json::json!({"endpoint_kind": "chat", "streaming": true}),
             },
         )
         .await;
+        if let Some(error) = terminal_error.as_ref() {
+            let _ = tx.send(stream_error_event(error)).await;
+        }
         let _ = tx.send(StreamEvent::Done).await;
     });
 

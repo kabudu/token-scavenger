@@ -307,6 +307,49 @@ async fn e2e_upstream_rate_limit_exhaustion_returns_429() {
 }
 
 #[tokio::test]
+async fn e2e_streaming_rate_limit_emits_error_event_and_records_429() {
+    let (app, state) = build_e2e_app_with_failure(u32::MAX, true).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-stream-rate-limited")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "model": "test-model",
+                        "messages": [{"role":"user","content":"Hi"}],
+                        "stream": true
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    let stream = String::from_utf8(body.to_vec()).unwrap();
+    assert!(stream.contains("rate_limit_exceeded"));
+    assert!(stream.contains("mock rate limited"));
+    assert!(stream.contains("data: [DONE]"));
+
+    let row: (String, i64) =
+        sqlx::query_as("SELECT status, http_status FROM request_log WHERE request_id = ?")
+            .bind("req-e2e-stream-rate-limited")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "rate_limited");
+    assert_eq!(row.1, 429);
+}
+
+#[tokio::test]
 async fn e2e_route_exhausted_no_providers() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
