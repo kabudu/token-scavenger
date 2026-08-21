@@ -13,7 +13,7 @@ use crate::router::selection::{
     filter_by_health, filter_by_model_enabled_for_endpoint, filter_by_paid_policy,
     prioritize_for_tool_use, record_context_failure_hint, record_rate_limit_hint,
     record_stream_silence_hint, should_skip_for_context_hint, should_skip_for_rate_limit_hint,
-    should_skip_for_stream_silence_hint,
+    should_skip_for_stream_silence_hint_with_alternative,
 };
 use axum::response::sse::Event;
 use futures::stream::Stream;
@@ -406,7 +406,12 @@ pub async fn create_chat_stream(
                 .await;
                 continue;
             }
-            if should_skip_for_stream_silence_hint(&state, attempt, prompt_size_hint) {
+            if should_skip_for_stream_silence_hint_with_alternative(
+                &state,
+                attempt,
+                prompt_size_hint,
+                plan.len(),
+            ) {
                 crate::observability::record_skip(
                     &state,
                     &task_request_id,
