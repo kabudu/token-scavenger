@@ -161,7 +161,7 @@ You should see:
  INFO tokenscavenger: Config loaded from tokenscavenger.toml: server.bind=0.0.0.0:8000, providers=3
  INFO tokenscavenger: Database initialized at tokenscavenger.db
  INFO tokenscavenger: AppState created
- INFO tokenscavenger: TokenScavenger v0.3.6 starting on 0.0.0.0:8000
+ INFO tokenscavenger: TokenScavenger v0.4.0 starting on 0.0.0.0:8000
 ```
 
 ## Step 5: Test
@@ -216,6 +216,55 @@ curl -N http://localhost:8000/v1/chat/completions \
 ### Operator dashboard
 
 Open http://localhost:8000/ui in your browser.
+
+## External harnesses with Cloudflare Quick Tunnels
+
+Some hosted coding harnesses, including Cursor configurations that reject private or loopback endpoints, cannot call TokenScavenger at `localhost` directly. For temporary development and testing, a Cloudflare Quick Tunnel can expose the local OpenAI-compatible API over a public HTTPS URL without opening an inbound port.
+
+First, protect TokenScavenger with a strong master API key. Do not expose an unauthenticated instance through a public tunnel:
+
+```toml
+[server]
+bind = "127.0.0.1:8000"
+master_api_key = "${TOKENSCAVENGER_KEY}"
+```
+
+Provide `TOKENSCAVENGER_KEY` securely in the TokenScavenger process environment. Avoid putting the secret directly in a command that will be retained in shell history.
+
+Start TokenScavenger and confirm it is reachable locally:
+
+```bash
+curl --fail http://127.0.0.1:8000/healthz
+```
+
+Install `cloudflared` if necessary, then start a Quick Tunnel in a separate terminal:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+
+`cloudflared` prints a randomly generated URL such as `https://example-words.trycloudflare.com`. Keep that process running for as long as the harness needs access. The URL stops working when the process exits, and a later invocation normally receives a different hostname.
+
+Configure an OpenAI-compatible harness with:
+
+| Setting | Value |
+|---|---|
+| Base URL | `https://example-words.trycloudflare.com/v1` |
+| API key | The value configured as TokenScavenger's `master_api_key` |
+| Model | A catalog model or model group, such as `preview:ox-alpha` |
+
+For Cursor, add the tunnel URL as the custom OpenAI base URL, paste the TokenScavenger master key into the API-key field, and enable the desired TokenScavenger model or model group. Do not paste an upstream provider key such as the OpenRouter key into the harness; upstream credentials remain inside TokenScavenger.
+
+Verify the public API before configuring the harness:
+
+```bash
+export TOKENSCAVENGER_URL="https://example-words.trycloudflare.com"
+
+curl --fail "$TOKENSCAVENGER_URL/v1/models" \
+  -H "Authorization: Bearer $TOKENSCAVENGER_KEY"
+```
+
+Quick Tunnels are intended for temporary testing, not a stable deployment. The generated hostname is public, so retain bearer authentication, keep provider and master keys out of command-line arguments and logs, and stop `cloudflared` when testing is complete. For a durable hostname and access policy, use a named Cloudflare Tunnel or another authenticated reverse proxy instead. See Cloudflare's [Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/).
 
 ## Using with OpenAI SDKs
 

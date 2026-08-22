@@ -192,6 +192,8 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
+If a hosted harness such as Cursor cannot reach local endpoints, see [External harnesses with Cloudflare Quick Tunnels](documentation/getting-started.md#external-harnesses-with-cloudflare-quick-tunnels) for a temporary authenticated HTTPS endpoint.
+
 ## Architecture
 
 TokenScavenger is a single Rust binary using Axum + Tokio + SQLite with these subsystems:
