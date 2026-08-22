@@ -48,6 +48,7 @@ async fn refresh_one(state: &AppState, provider_cfg: crate::config::schema::Prov
         api_key: provider_cfg.api_key.clone(),
         config: std::sync::Arc::new(provider_cfg.clone()),
         client: state.http_client.clone(),
+        request_timeout: std::time::Duration::from_millis(state.config().server.request_timeout_ms),
     };
 
     info!(provider = %provider_cfg.id, "Starting model discovery");

@@ -66,6 +66,9 @@ pub struct AppState {
     /// Per provider/model hints for short-lived upstream model capacity limits.
     pub route_rate_limit_hints: Arc<DashMap<String, ContextFailureHint>>,
 
+    /// Short-lived deduplication state for repeated authentication warnings.
+    pub auth_warning_hints: Arc<DashMap<String, i64>>,
+
     /// In-memory UI browser sessions for optional cookie auth.
     pub ui_sessions: Arc<DashMap<String, i64>>,
 
@@ -77,6 +80,9 @@ pub struct AppState {
     /// Wrapped in Option so shutdown can take-and-drop the sender to close
     /// the channel, which breaks the SSE circular dependency during drain.
     pub log_tx: Arc<std::sync::Mutex<Option<broadcast::Sender<String>>>>,
+
+    /// Keeps the non-blocking file log worker alive and flushes it on shutdown.
+    pub log_file_guard: Arc<std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>>,
 
     /// Broadcast channel for health events (UI streaming).
     pub health_event_tx: broadcast::Sender<String>,
@@ -139,9 +145,11 @@ impl AppState {
             context_failure_hints: Arc::new(DashMap::new()),
             stream_silence_hints: Arc::new(DashMap::new()),
             route_rate_limit_hints: Arc::new(DashMap::new()),
+            auth_warning_hints: Arc::new(DashMap::new()),
             ui_sessions: Arc::new(DashMap::new()),
             request_projects: Arc::new(DashMap::new()),
             log_tx: Arc::new(std::sync::Mutex::new(Some(log_tx))),
+            log_file_guard: Arc::new(std::sync::Mutex::new(None)),
             health_event_tx,
             config_watch_tx,
             config_watch_rx,

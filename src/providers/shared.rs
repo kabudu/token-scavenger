@@ -559,6 +559,7 @@ pub async fn openai_stream_completions(
         .post(url.clone())
         .headers(bearer_auth(&config))
         .json(&body)
+        .timeout(ctx.request_timeout)
         .send()
         .await
         .map_err(|e| {
@@ -585,6 +586,7 @@ pub async fn openai_stream_completions(
                 .post(url)
                 .headers(bearer_auth(&config))
                 .json(&retry_body)
+                .timeout(ctx.request_timeout)
                 .send()
                 .await
                 .map_err(|e| {

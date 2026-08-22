@@ -522,6 +522,7 @@ impl ProviderAdapter for GoogleAdapter {
             .post(url)
             .headers(google_api_key_auth(&config))
             .json(&body)
+            .timeout(ctx.request_timeout)
             .send()
             .await
             .map_err(|e| {

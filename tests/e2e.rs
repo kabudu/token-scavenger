@@ -17,16 +17,18 @@ struct MiniMock {
     failures: AtomicU32,
     succeed_after: u32,
     rate_limited: bool,
+    delay_ms: u64,
 }
 
 /// Build a TokenScavenger test app with one mock provider.
 async fn build_e2e_app(succeed_after: u32) -> (axum::Router, tokenscavenger::app::state::AppState) {
-    build_e2e_app_with_failure(succeed_after, false).await
+    build_e2e_app_with_failure(succeed_after, false, 0).await
 }
 
 async fn build_e2e_app_with_failure(
     succeed_after: u32,
     rate_limited: bool,
+    delay_ms: u64,
 ) -> (axum::Router, tokenscavenger::app::state::AppState) {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
@@ -37,6 +39,12 @@ async fn build_e2e_app_with_failure(
     let mut config = tokenscavenger::config::schema::Config::default();
     config.server.master_api_key = String::new();
     config.routing.provider_order = vec!["mock".into()];
+    if delay_ms > 0 {
+        config
+            .routing
+            .stream_first_content_timeout_ms
+            .insert("test-model".into(), 1_000);
+    }
     config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
         id: "mock".into(),
         enabled: true,
@@ -140,6 +148,9 @@ async fn build_e2e_app_with_failure(
             _: &ProviderContext,
             req: NormalizedChatRequest,
         ) -> Result<ProviderChatResponse, ProviderError> {
+            if self.state.delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.state.delay_ms)).await;
+            }
             let count = self.state.failures.fetch_add(1, Ordering::SeqCst);
             if count < self.state.succeed_after {
                 if self.state.rate_limited {
@@ -183,6 +194,7 @@ async fn build_e2e_app_with_failure(
                 failures: AtomicU32::new(0),
                 succeed_after,
                 rate_limited,
+                delay_ms,
             }),
         }))
         .await;
@@ -270,7 +282,7 @@ async fn e2e_retry_then_success() {
 
 #[tokio::test]
 async fn e2e_upstream_rate_limit_exhaustion_returns_429() {
-    let (app, state) = build_e2e_app_with_failure(u32::MAX, true).await;
+    let (app, state) = build_e2e_app_with_failure(u32::MAX, true, 0).await;
 
     let resp = app
         .oneshot(
@@ -308,7 +320,7 @@ async fn e2e_upstream_rate_limit_exhaustion_returns_429() {
 
 #[tokio::test]
 async fn e2e_streaming_rate_limit_emits_error_event_and_records_429() {
-    let (app, state) = build_e2e_app_with_failure(u32::MAX, true).await;
+    let (app, state) = build_e2e_app_with_failure(u32::MAX, true, 0).await;
 
     let response = app
         .oneshot(
@@ -347,6 +359,55 @@ async fn e2e_streaming_rate_limit_emits_error_event_and_records_429() {
             .unwrap();
     assert_eq!(row.0, "rate_limited");
     assert_eq!(row.1, 429);
+}
+
+#[tokio::test]
+async fn e2e_streaming_timeout_emits_classified_error_and_persists_details() {
+    let (app, state) = build_e2e_app_with_failure(0, false, 1_200).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-stream-timeout")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "model": "test-model",
+                        "messages": [{"role":"user","content":"Hi"}],
+                        "stream": true
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    let stream = String::from_utf8(body.to_vec()).unwrap();
+    assert!(stream.contains("stream_timeout_pre_content"));
+    assert!(stream.contains("timed out before content after 1000 ms"));
+    assert!(stream.contains("data: [DONE]"));
+
+    let row: (String, i64, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT status, http_status, error_code, error_summary FROM request_log WHERE request_id = ?",
+    )
+    .bind("req-e2e-stream-timeout")
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "route_exhausted");
+    assert_eq!(row.1, 503);
+    assert_eq!(row.2.as_deref(), Some("stream_timeout_pre_content"));
+    assert_eq!(
+        row.3.as_deref(),
+        Some("timed out before content after 1000 ms")
+    );
 }
 
 #[tokio::test]
@@ -525,6 +586,24 @@ async fn e2e_streaming_response_is_wire_level_sse() {
     assert_eq!(row.0, 10);
     assert_eq!(row.1, 5);
     assert!(row.2);
+
+    let mut timing_events = 0;
+    for _ in 0..20 {
+        timing_events = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM request_trace_events
+             WHERE request_id = ? AND event_type IN ('stream_first_event', 'stream_first_content')
+             AND latency_ms IS NOT NULL",
+        )
+        .bind("req-e2e-streaming-usage")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        if timing_events == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(timing_events, 2);
 }
 
 #[tokio::test]

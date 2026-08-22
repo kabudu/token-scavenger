@@ -62,6 +62,8 @@ pub async fn drain_after_server_stop(state: AppState) {
     info!("Closing database pool...");
     state.db.close().await;
     info!("Shutdown complete");
+    // Dropping the guard drains and flushes the non-blocking file writer.
+    state.log_file_guard.lock().unwrap().take();
 }
 
 #[cfg(unix)]

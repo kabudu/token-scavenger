@@ -140,10 +140,16 @@ max_connections = 8
 
 [logging]
 level = "info"
+# Optional; defaults to tokenscavenger.log beside the SQLite database
+# file_path = "/var/log/tokenscavenger/tokenscavenger.log"
+max_files = 7
 
 [routing]
 free_first = true
 allow_paid_fallback = false
+
+[routing.stream_first_content_timeout_ms]
+"preview:ox-alpha" = 180000
 
 [[providers]]
 id = "groq"
@@ -336,6 +342,12 @@ not included in general fallback groups: the anonymous provider retains prompts
 and completions, the additional Stealth Program terms apply, and availability
 is temporary. Never send secrets, private source code, personal data, or other
 sensitive material through this group.
+
+Because long-horizon reasoning models may take longer to emit their first
+meaningful streaming event, TokenScavenger gives `preview:ox-alpha` a 180-second
+first-content timeout by default. Operators can override this by requested model
+group, qualified `provider/model`, or upstream model ID under
+`routing.stream_first_content_timeout_ms`.
 
 Chat and streaming route planning uses this metadata to reroute before calling
 an upstream when a model cannot satisfy requested tools, JSON mode, vision input,

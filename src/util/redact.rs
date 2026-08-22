@@ -8,6 +8,22 @@ pub fn redact_secret(secret: &str) -> String {
     format!("****{}", visible)
 }
 
+/// Remove all configured plaintext credentials from diagnostic text.
+pub fn redact_config_secrets(config: &crate::config::schema::Config, value: &str) -> String {
+    let mut redacted = value.to_string();
+    for secret in std::iter::once(config.server.master_api_key.as_str()).chain(
+        config
+            .providers
+            .iter()
+            .filter_map(|provider| provider.api_key.as_deref()),
+    ) {
+        if !secret.is_empty() {
+            redacted = redacted.replace(secret, "[REDACTED]");
+        }
+    }
+    redacted
+}
+
 /// Return true when a submitted value looks like a display-only redaction mask.
 ///
 /// Admin UI saves should preserve the existing secret for these values instead
@@ -63,6 +79,23 @@ mod tests {
     fn test_redact_secret_long() {
         let result = redact_secret("sk-abc123def456");
         assert_eq!(result, "****f456");
+    }
+
+    #[test]
+    fn test_redact_config_secrets() {
+        let mut config = crate::config::schema::Config::default();
+        config.server.master_api_key = "master-secret".into();
+        config
+            .providers
+            .push(crate::config::schema::ProviderConfig {
+                id: "provider".into(),
+                api_key: Some("provider-secret".into()),
+                ..Default::default()
+            });
+        assert_eq!(
+            redact_config_secrets(&config, "master-secret and provider-secret"),
+            "[REDACTED] and [REDACTED]"
+        );
     }
 
     #[test]

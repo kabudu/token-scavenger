@@ -571,6 +571,7 @@ pub async fn admin_provider_test(
         api_key: provider_cfg.api_key.clone(),
         config: std::sync::Arc::new(provider_cfg.clone()),
         client: state.http_client.clone(),
+        request_timeout: std::time::Duration::from_millis(state.config().server.request_timeout_ms),
     };
 
     // Try model discovery as a connectivity test
@@ -683,6 +684,13 @@ pub async fn admin_config_save(
         changed = true;
     }
 
+    if let Some(logging) = body.get("logging") {
+        config.logging = serde_json::from_value(logging.clone()).map_err(|error| {
+            ApiError::InvalidRequest(format!("Invalid logging config: {error}"))
+        })?;
+        changed = true;
+    }
+
     // --- Routing settings ---
     if let Some(routing) = body.get("routing") {
         if let Some(free) = routing.get("free_first").and_then(|v| v.as_bool()) {
@@ -720,6 +728,15 @@ pub async fn admin_config_save(
                 .iter()
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect();
+            changed = true;
+        }
+        if let Some(timeouts) = routing.get("stream_first_content_timeout_ms") {
+            config.routing.stream_first_content_timeout_ms =
+                serde_json::from_value(timeouts.clone()).map_err(|error| {
+                    ApiError::InvalidRequest(format!(
+                        "Invalid routing.stream_first_content_timeout_ms: {error}"
+                    ))
+                })?;
             changed = true;
         }
     }

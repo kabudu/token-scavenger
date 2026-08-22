@@ -35,7 +35,7 @@ fn safe_details(value: serde_json::Value) -> String {
     text
 }
 
-fn short_error(error: &str) -> String {
+pub(crate) fn short_error(error: &str) -> String {
     let mut text = error.replace('\n', " ");
     if text.len() > 512 {
         text.truncate(512);
@@ -144,6 +144,12 @@ pub async fn record_attempt_result(
     latency_ms: Option<i64>,
     error_summary: Option<&str>,
 ) {
+    let safe_error_summary = error_summary.map(|summary| {
+        let config = state.config();
+        short_error(&crate::util::redact::redact_config_secrets(
+            &config, summary,
+        ))
+    });
     record_event(
         state,
         TraceEventRecord {
@@ -156,7 +162,7 @@ pub async fn record_attempt_result(
             details: json!({
                 "endpoint_kind": endpoint_kind,
                 "priority": attempt.priority,
-                "error_summary": error_summary.map(short_error),
+                "error_summary": safe_error_summary,
             }),
         },
     )

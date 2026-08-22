@@ -10,12 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Documented authenticated Cloudflare Quick Tunnels for Cursor and other external OpenAI-compatible harnesses that cannot call local endpoints directly.
+- Added bounded daily operational log files beside the SQLite database by default, with configurable path and retained-file count.
+- Added requested-model, provider/model, and upstream-model first-content timeout overrides, including a 180-second out-of-box timeout for `preview:ox-alpha`.
 
 ### Changed
+
+- Deduplicated identical authentication warnings for 60 seconds while retaining every rejection and debug-level diagnostics.
+- Added separate first-upstream-event, first-meaningful-content, and total-attempt latency trace timings for streaming diagnostics.
 
 ### Fixed
 
 - Updated the public website metadata, release copy, and manual installation commands to reference v0.4.0.
+- Persisted redacted streaming failure codes and summaries in request logs and route traces so timeout, empty-stream, provider, quota, and rate-limit failures remain diagnosable.
 
 ## [0.4.0] - 2026-08-21
 
