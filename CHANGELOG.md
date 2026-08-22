@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.4.1] - 2026-08-22
+
+### Added
+
 - Documented authenticated Cloudflare Quick Tunnels for Cursor and other external OpenAI-compatible harnesses that cannot call local endpoints directly.
 - Added bounded daily operational log files beside the SQLite database by default, with configurable path and retained-file count.
 - Added requested-model, provider/model, and upstream-model first-content timeout overrides, including a 180-second out-of-box timeout for `preview:ox-alpha`.
