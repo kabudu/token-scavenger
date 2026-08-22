@@ -47,6 +47,7 @@ moka = { version = "0.12", features = ["future"] }
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-appender = "0.2"
 
 # Interactive CLI
 dialoguer = { version = "0.11", features = ["password"] }

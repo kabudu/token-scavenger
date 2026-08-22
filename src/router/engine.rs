@@ -287,6 +287,9 @@ pub async fn route_chat_request(
             api_key: provider_cfg.api_key.clone(),
             config: Arc::new(provider_cfg.clone()),
             client: state.http_client.clone(),
+            request_timeout: std::time::Duration::from_millis(
+                state.config().server.request_timeout_ms,
+            ),
         };
 
         // Attempt the request
@@ -847,6 +850,9 @@ pub async fn route_embeddings_request(
             api_key: provider_cfg.api_key.clone(),
             config: Arc::new(provider_cfg.clone()),
             client: state.http_client.clone(),
+            request_timeout: std::time::Duration::from_millis(
+                state.config().server.request_timeout_ms,
+            ),
         };
 
         crate::observability::record_attempt_started(&state, &request_id, "embeddings", attempt)
@@ -1039,6 +1045,8 @@ async fn record_route_failure(state: &AppState, failure: RouteFailure<'_>) {
             http_status: failure.http_status as i64,
             latency_ms: failure.started_at.elapsed().as_millis() as i64,
             streaming: failure.streaming,
+            error_code: Some(failure.status),
+            error_summary: Some(failure.status),
         },
     )
     .await;

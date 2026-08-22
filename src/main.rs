@@ -303,10 +303,12 @@ fn build_reload_payload(config: &Config) -> serde_json::Value {
             "ui_path": config.server.ui_path,
             "request_timeout_ms": config.server.request_timeout_ms,
         },
+        "logging": config.logging,
         "routing": {
             "free_first": config.routing.free_first,
             "allow_paid_fallback": config.routing.allow_paid_fallback,
             "provider_order": config.routing.provider_order,
+            "stream_first_content_timeout_ms": config.routing.stream_first_content_timeout_ms,
         },
         "resilience": {
             "max_retries_per_provider": config.resilience.max_retries_per_provider,

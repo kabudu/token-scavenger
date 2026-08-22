@@ -333,6 +333,17 @@ async fn test_admin_config_save_hot_reloads_server_auth_fields() {
             "ui_session_auth": true,
             "ui_path": "/ui",
             "request_timeout_ms": 42_000
+        },
+        "logging": {
+            "format": "text",
+            "level": "debug",
+            "file_path": "/tmp/tokenscavenger-test.log",
+            "max_files": 3
+        },
+        "routing": {
+            "stream_first_content_timeout_ms": {
+                "preview:ox-alpha": 240_000
+            }
         }
     });
 
@@ -355,6 +366,18 @@ async fn test_admin_config_save_hot_reloads_server_auth_fields() {
     assert!(config.server.ui_session_auth);
     assert_eq!(config.server.ui_path, "/ui");
     assert_eq!(config.server.request_timeout_ms, 42_000);
+    assert_eq!(
+        config.logging.file_path.as_deref(),
+        Some("/tmp/tokenscavenger-test.log")
+    );
+    assert_eq!(config.logging.max_files, 3);
+    assert_eq!(
+        config
+            .routing
+            .stream_first_content_timeout_ms
+            .get("preview:ox-alpha"),
+        Some(&240_000)
+    );
 }
 
 #[tokio::test]
@@ -1842,6 +1865,7 @@ async fn test_local_openai_adapter_auto_probes_embeddings() {
         api_key: None,
         config: std::sync::Arc::new(config),
         client: reqwest::Client::new(),
+        request_timeout: std::time::Duration::from_secs(30),
     };
 
     assert!(
@@ -1905,6 +1929,7 @@ async fn test_local_openai_adapter_does_not_advertise_embeddings_when_probe_fail
         api_key: None,
         config: std::sync::Arc::new(config),
         client: reqwest::Client::new(),
+        request_timeout: std::time::Duration::from_secs(30),
     };
 
     let models =
@@ -1944,6 +1969,7 @@ async fn test_local_openai_adapter_embedding_support_can_be_configured() {
         api_key: None,
         config: std::sync::Arc::new(config.clone()),
         client: reqwest::Client::new(),
+        request_timeout: std::time::Duration::from_secs(30),
     };
 
     let forced_models =
@@ -2000,6 +2026,7 @@ async fn test_local_openai_adapter_auto_probes_embeddings_with_bounded_concurren
         api_key: None,
         config: std::sync::Arc::new(config),
         client: reqwest::Client::new(),
+        request_timeout: std::time::Duration::from_secs(30),
     };
 
     let started_at = std::time::Instant::now();

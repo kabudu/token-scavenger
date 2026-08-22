@@ -39,6 +39,7 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
         }
         config.server = overrides.server;
         config.database = overrides.database;
+        config.logging = overrides.logging;
         config.metrics = overrides.metrics;
         config.security = overrides.security;
         config.retention = overrides.retention;
@@ -59,7 +60,7 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
     let (log_tx, _log_rx) = tokio::sync::broadcast::channel::<String>(1024);
 
     // 3. Initialize tracing (installs BroadcastLayer so UI stream receives log events)
-    init_tracing(&config, log_tx.clone());
+    let log_file_guard = init_tracing(&config, log_tx.clone());
     info!("Tracing initialized");
 
     // 4. Open SQLite and run migrations
@@ -70,6 +71,7 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
 
     // 5. Build AppState (hand over the pre-created log_tx)
     let state = AppState::new(config, db, config_path.to_path_buf(), log_tx);
+    *state.log_file_guard.lock().unwrap() = log_file_guard;
     info!("AppState created");
 
     // 5. Load DB-persisted config overrides before building runtime registries.
@@ -565,7 +567,10 @@ fn cors_layer(config: &Config) -> CorsLayer {
 /// Initialize the tracing subscriber based on config.
 /// Installs a `BroadcastLayer` that forwards every log event into `log_tx`
 /// so the browser UI SSE stream receives live log output.
-fn init_tracing(config: &Config, log_tx: tokio::sync::broadcast::Sender<String>) {
+fn init_tracing(
+    config: &Config,
+    log_tx: tokio::sync::broadcast::Sender<String>,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     use crate::util::broadcast_layer::BroadcastLayer;
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{EnvFilter, fmt};
@@ -577,9 +582,47 @@ fn init_tracing(config: &Config, log_tx: tokio::sync::broadcast::Sender<String>)
 
     let broadcast = BroadcastLayer::new(log_tx);
 
+    let configured_path = config.logging.file_path.as_deref().map(Path::new);
+    let default_directory = Path::new(&config.database.path)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let log_directory = configured_path
+        .and_then(Path::parent)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(default_directory);
+    let log_filename = configured_path
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or("tokenscavenger.log");
+    let file_appender = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix(log_filename)
+        .max_log_files(config.logging.max_files.max(1))
+        .build(log_directory)
+        .map_err(|error| {
+            eprintln!(
+                "TokenScavenger could not initialize file logging at {}: {error}",
+                log_directory.join(log_filename).display()
+            );
+            error
+        })
+        .ok();
+    let (file_writer, file_guard) = file_appender
+        .map(tracing_appender::non_blocking)
+        .map_or((None, None), |(writer, guard)| (Some(writer), Some(guard)));
+    let file_layer = file_writer.map(|writer| {
+        fmt::layer()
+            .with_target(true)
+            .with_thread_ids(false)
+            .with_ansi(false)
+            .with_writer(writer)
+    });
+
     tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer)
-        .with(broadcast)
+        .with(fmt_layer.with_filter(filter.clone()))
+        .with(file_layer.map(|layer| layer.with_filter(filter.clone())))
+        .with(broadcast.with_filter(filter))
         .init();
+    file_guard
 }

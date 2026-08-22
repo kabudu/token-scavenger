@@ -35,6 +35,8 @@ max_connections = 8                 # SQLite pool size
 [logging]
 format = "json"                     # "json" or "text"
 level = "info"                      # trace | debug | info | warn | error
+file_path = ""                      # Optional daily log path; defaults beside the database
+max_files = 7                        # Maximum daily files retained
 
 [metrics]
 enabled = true                      # Enable Prometheus metrics endpoint
@@ -69,6 +71,10 @@ provider_order = [                  # Fallback ordering
 [routing.model_group_objectives]
 "agentic" = "quality_first"
 "cheap:code" = "min_cost"
+
+[routing.stream_first_content_timeout_ms]
+"preview:ox-alpha" = 180000
+"openrouter/another-slow-model" = 150000
 
 [routing.budgets]
 max_cost_per_request_usd = 0.01
@@ -168,6 +174,16 @@ admin_groups = ["tokenscavenger-admins"]
 |-------|---------|-------------|
 | `format` | `"json"` | Log output format. `"json"` for structured JSON logs, `"text"` for human-readable. |
 | `level` | `"info"` | Minimum log level. Also controlled by `RUST_LOG` environment variable. |
+| `file_path` | unset | Daily operational log path. When unset, TokenScavenger writes `tokenscavenger.log.YYYY-MM-DD` beside the SQLite database. |
+| `max_files` | `7` | Maximum number of daily log files retained. Values below one are treated as one. |
+
+File logging is enabled by default and bounded by `max_files`. The live System
+Stream remains an in-memory broadcast intended for active operators; durable
+logs provide restart-safe diagnostics without persisting request or response
+bodies.
+
+Streaming request traces record time to the first upstream event, time to the
+first meaningful content forwarded to the client, and total attempt latency.
 
 ### `[metrics]`
 

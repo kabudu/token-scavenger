@@ -31,6 +31,7 @@ pub struct ProviderContext {
     pub api_key: Option<String>,
     pub config: std::sync::Arc<crate::config::schema::ProviderConfig>,
     pub client: reqwest::Client,
+    pub request_timeout: std::time::Duration,
 }
 
 /// Unified provider error type.

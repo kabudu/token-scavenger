@@ -210,6 +210,12 @@ pub struct LoggingConfig {
     pub format: String,
     #[serde(default = "default_log_level")]
     pub level: String,
+    /// Optional log path. Relative paths are resolved from the process working directory.
+    /// When omitted, logs are written beside the SQLite database.
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default = "default_log_max_files")]
+    pub max_files: usize,
 }
 
 impl Default for LoggingConfig {
@@ -217,6 +223,8 @@ impl Default for LoggingConfig {
         Self {
             format: default_log_format(),
             level: default_log_level(),
+            file_path: None,
+            max_files: default_log_max_files(),
         }
     }
 }
@@ -259,6 +267,10 @@ pub struct RoutingConfig {
     pub default_model_group_strategy: String,
     #[serde(default)]
     pub provider_order: Vec<String>,
+    /// First meaningful streaming-content timeout overrides in milliseconds.
+    /// Keys may be a requested model/group, `provider/model`, or upstream model ID.
+    #[serde(default = "default_stream_first_content_timeout_ms")]
+    pub stream_first_content_timeout_ms: HashMap<String, u64>,
 }
 
 impl Default for RoutingConfig {
@@ -271,6 +283,7 @@ impl Default for RoutingConfig {
             budgets: RoutingBudgetConfig::default(),
             default_model_group_strategy: default_model_group_strategy(),
             provider_order: Vec::new(),
+            stream_first_content_timeout_ms: default_stream_first_content_timeout_ms(),
         }
     }
 }
@@ -368,6 +381,12 @@ fn default_ui_path() -> String {
 }
 fn default_request_timeout_ms() -> u64 {
     120_000
+}
+fn default_log_max_files() -> usize {
+    7
+}
+fn default_stream_first_content_timeout_ms() -> HashMap<String, u64> {
+    HashMap::from([("preview:ox-alpha".to_string(), 180_000)])
 }
 fn default_credential_key_env() -> String {
     "TOKENSCAVENGER_CREDENTIAL_KEY".to_string()

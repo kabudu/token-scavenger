@@ -29,6 +29,8 @@ pub struct FailureRecord<'a> {
     pub http_status: i64,
     pub latency_ms: i64,
     pub streaming: bool,
+    pub error_code: Option<&'a str>,
+    pub error_summary: Option<&'a str>,
 }
 
 /// Record a usage event for a completed request.
@@ -169,9 +171,14 @@ pub async fn record_failure(
 ) -> Result<(), sqlx::Error> {
     let project = crate::projects::remove_request_project(state, record.request_id)
         .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
+    let error_summary = record.error_summary.map(|summary| {
+        let config = state.config();
+        let redacted = crate::util::redact::redact_config_secrets(&config, summary);
+        crate::observability::short_error(&redacted)
+    });
     sqlx::query(
-        "INSERT OR IGNORE INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, project_id, api_key_prefix)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT OR IGNORE INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, error_code, error_summary, project_id, api_key_prefix)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(record.request_id)
     .bind(record.endpoint_kind)
@@ -182,6 +189,8 @@ pub async fn record_failure(
     .bind(record.http_status)
     .bind(record.latency_ms)
     .bind(record.streaming)
+    .bind(record.error_code)
+    .bind(error_summary)
     .bind(&project.project_id)
     .bind(&project.api_key_prefix)
     .execute(&state.db)
@@ -208,9 +217,65 @@ pub async fn record_failure(
         provider = record.selected_provider_id.unwrap_or("none"),
         model = record.requested_model,
         status = record.status,
+        error_code = record.error_code.unwrap_or("none"),
         latency_ms = record.latency_ms,
         "Failed request recorded"
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::Config;
+
+    #[tokio::test]
+    async fn failure_rows_preserve_classification_and_redact_configured_secrets() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .unwrap();
+        let mut config = Config::default();
+        config.server.master_api_key = "secret-test-key".into();
+        let state = AppState::new(
+            config,
+            pool,
+            Default::default(),
+            tokio::sync::broadcast::channel(1).0,
+        );
+
+        record_failure(
+            &state,
+            FailureRecord {
+                request_id: "failed-stream",
+                endpoint_kind: "chat",
+                requested_model: "preview:ox-alpha",
+                selected_provider_id: Some("openrouter"),
+                selected_model_id: Some("stealth/ox-alpha"),
+                status: "route_exhausted",
+                http_status: 503,
+                latency_ms: 180_000,
+                streaming: true,
+                error_code: Some("stream_timeout_pre_content"),
+                error_summary: Some("provider echoed secret-test-key before timeout"),
+            },
+        )
+        .await
+        .unwrap();
+
+        let row = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT error_code, error_summary FROM request_log WHERE request_id = ?",
+        )
+        .bind("failed-stream")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(row.0.as_deref(), Some("stream_timeout_pre_content"));
+        assert_eq!(
+            row.1.as_deref(),
+            Some("provider echoed [REDACTED] before timeout")
+        );
+    }
 }

@@ -135,6 +135,7 @@ pub async fn probe_provider(state: &AppState, provider_id: &str) -> bool {
         api_key: provider_cfg.api_key.clone(),
         config: std::sync::Arc::new(provider_cfg.clone()),
         client: state.http_client.clone(),
+        request_timeout: std::time::Duration::from_millis(config.server.request_timeout_ms),
     };
     let started = std::time::Instant::now();
     let timeout = std::time::Duration::from_millis(config.server.request_timeout_ms);

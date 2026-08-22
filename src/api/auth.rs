@@ -7,7 +7,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AdminRole {
@@ -221,12 +221,35 @@ pub async fn auth_middleware(
         return Ok((StatusCode::SEE_OTHER, [(header::LOCATION, "/ui/login")]).into_response());
     }
 
-    warn!(
-        method = %method,
-        path = %path,
-        has_authorization_header,
-        "Authentication failed: invalid or missing API key"
-    );
+    let warning_key = format!("{method}:{path}:{has_authorization_header}");
+    let now = chrono::Utc::now().timestamp();
+    let should_warn = state
+        .auth_warning_hints
+        .get(&warning_key)
+        .is_none_or(|last_warned| now.saturating_sub(*last_warned) >= 60);
+    if should_warn {
+        if state.auth_warning_hints.len() >= 1_024 {
+            state
+                .auth_warning_hints
+                .retain(|_, last_warned| now.saturating_sub(*last_warned) < 60);
+        }
+        if state.auth_warning_hints.len() < 1_024 {
+            state.auth_warning_hints.insert(warning_key, now);
+        }
+        warn!(
+            method = %method,
+            path = %path,
+            has_authorization_header,
+            "Authentication failed: invalid or missing API key"
+        );
+    } else {
+        debug!(
+            method = %method,
+            path = %path,
+            has_authorization_header,
+            "Repeated authentication failure suppressed at WARN level"
+        );
+    }
     Err(StatusCode::UNAUTHORIZED)
 }
 

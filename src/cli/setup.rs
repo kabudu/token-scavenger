@@ -179,6 +179,8 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
         logging: LoggingConfig {
             format: "json".into(),
             level: "info".into(),
+            file_path: None,
+            max_files: 7,
         },
         metrics: MetricsConfig {
             enabled: true,
@@ -195,6 +197,8 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
             budgets: Default::default(),
             default_model_group_strategy: "provider-priority".into(),
             provider_order: providers.iter().map(|p| p.id.clone()).collect(),
+            stream_first_content_timeout_ms: RoutingConfig::default()
+                .stream_first_content_timeout_ms,
         },
         resilience: ResilienceConfig {
             max_retries_per_provider: 2,
