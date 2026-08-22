@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Documented authenticated Cloudflare Quick Tunnels for Cursor and other external OpenAI-compatible harnesses that cannot call local endpoints directly.
+
 ### Changed
 
 ### Fixed
