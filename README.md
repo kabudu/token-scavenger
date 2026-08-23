@@ -147,6 +147,9 @@ max_files = 7
 [routing]
 free_first = true
 allow_paid_fallback = false
+# Optional: retry an empty upstream SSE response once as a non-streaming call
+# to the same provider/model, before any bytes are sent to the client.
+recover_empty_stream_with_non_streaming = false
 
 [routing.stream_first_content_timeout_ms]
 "preview:ox-alpha" = 180000
@@ -348,6 +351,14 @@ meaningful streaming event, TokenScavenger gives `preview:ox-alpha` a 180-second
 first-content timeout by default. Operators can override this by requested model
 group, qualified `provider/model`, or upstream model ID under
 `routing.stream_first_content_timeout_ms`.
+
+For providers that intermittently finish an SSE response without content while
+the equivalent non-streaming request succeeds, operators can enable
+`routing.recover_empty_stream_with_non_streaming`. Recovery is bounded to one
+same-provider, same-model request and only runs before meaningful content has
+been forwarded, so it cannot splice or replay a partially delivered response.
+The normalized response is translated back into OpenAI-compatible content,
+tool-call, usage, finish-reason, and `[DONE]` events.
 
 Chat and streaming route planning uses this metadata to reroute before calling
 an upstream when a model cannot satisfy requested tools, JSON mode, vision input,

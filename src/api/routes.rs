@@ -739,6 +739,13 @@ pub async fn admin_config_save(
                 })?;
             changed = true;
         }
+        if let Some(enabled) = routing
+            .get("recover_empty_stream_with_non_streaming")
+            .and_then(|value| value.as_bool())
+        {
+            config.routing.recover_empty_stream_with_non_streaming = enabled;
+            changed = true;
+        }
     }
 
     // --- Resilience settings ---

@@ -1,7 +1,7 @@
 use crate::api::error::ApiError;
-use crate::api::openai::chat::NormalizedChatRequest;
 use crate::api::openai::chat::StreamDelta;
 use crate::api::openai::chat::UsageResponse;
+use crate::api::openai::chat::{NormalizedChatRequest, ProviderChatResponse};
 use crate::app::state::AppState;
 use crate::config::schema::Config;
 use crate::discovery::model_intelligence::{
@@ -125,10 +125,10 @@ pub fn format_sse_payload(event: &StreamEvent) -> String {
             "created": created,
             "model": model,
             "choices": [{
-                "index": index,
+                "index": 0,
                 "delta": {
                     "tool_calls": [{
-                        "index": 0,
+                        "index": index,
                         "id": tool_call_id.as_deref().unwrap_or(""),
                         "function": {
                             "name": function_name.as_deref().unwrap_or(""),
@@ -197,6 +197,79 @@ fn stream_event_has_content(event: &StreamEvent) -> bool {
         }
         StreamEvent::Usage { .. } | StreamEvent::Error { .. } | StreamEvent::Done => false,
     }
+}
+
+fn recovered_non_stream_events(response: ProviderChatResponse) -> Option<Vec<StreamEvent>> {
+    let has_content = response
+        .content
+        .as_ref()
+        .is_some_and(|content| !content.is_empty());
+    let has_tool_calls = response
+        .tool_calls
+        .as_ref()
+        .is_some_and(|tool_calls| !tool_calls.is_empty());
+    if !has_content && !has_tool_calls {
+        return None;
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let created = chrono::Utc::now().timestamp();
+    let model = response.model_id;
+    let mut events = Vec::new();
+
+    if has_content {
+        events.push(StreamEvent::Chunk {
+            id: id.clone(),
+            created,
+            model: model.clone(),
+            delta: StreamDelta {
+                role: Some("assistant".into()),
+                content: response.content,
+            },
+            finish_reason: if has_tool_calls {
+                None
+            } else {
+                response.finish_reason.clone()
+            },
+        });
+    }
+
+    if let Some(tool_calls) = response.tool_calls {
+        for (index, tool_call) in tool_calls.into_iter().enumerate() {
+            events.push(StreamEvent::ToolCallChunk {
+                id: id.clone(),
+                created,
+                model: model.clone(),
+                index: index as u32,
+                tool_call_id: Some(tool_call.id),
+                function_name: Some(tool_call.function.name),
+                function_arguments: tool_call.function.arguments,
+            });
+        }
+        events.push(StreamEvent::Chunk {
+            id: id.clone(),
+            created,
+            model: model.clone(),
+            delta: StreamDelta {
+                role: None,
+                content: None,
+            },
+            finish_reason: response.finish_reason,
+        });
+    }
+
+    if let Some(usage) = response.usage {
+        events.push(StreamEvent::Usage {
+            id,
+            created,
+            model,
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+        });
+    }
+    events.push(StreamEvent::Done);
+    Some(events)
 }
 
 fn stream_first_content_timeout_ms(
@@ -567,6 +640,7 @@ pub async fn create_chat_stream(
                 model: attempt.model_id.clone(),
                 ..request_clone.clone()
             };
+            let recovery_request = attempt_request.clone();
             info!(
                 provider = %provider_id,
                 model = %model_id,
@@ -586,6 +660,7 @@ pub async fn create_chat_stream(
             let mut buffered = Vec::new();
             let mut forwarded_meaningful_event = false;
             let mut received_upstream_event = false;
+            let mut ended_empty = false;
             let first_content_timeout = tokio::time::sleep(pre_content_timeout);
             tokio::pin!(first_content_timeout);
 
@@ -615,6 +690,7 @@ pub async fn create_chat_stream(
                                     return;
                                 }
                                 Ok(Ok(())) => {
+                                    ended_empty = true;
                                     warn!(
                                         provider = %provider_id,
                                         model = %model_id,
@@ -760,6 +836,7 @@ pub async fn create_chat_stream(
                         }
                         let _ = tx.send(event).await;
                     } else if matches!(event, StreamEvent::Done) {
+                            ended_empty = true;
                             warn!(
                                 provider = %provider_id,
                                 model = %model_id,
@@ -811,6 +888,7 @@ pub async fn create_chat_stream(
                             return;
                         }
                         Ok(Ok(())) => {
+                            ended_empty = true;
                             warn!(
                                 provider = %provider_id,
                                 model = %model_id,
@@ -932,6 +1010,75 @@ pub async fn create_chat_stream(
                         );
                         attempt_task.abort();
                         break;
+                    }
+                }
+            }
+
+            if ended_empty && config_clone.routing.recover_empty_stream_with_non_streaming {
+                info!(
+                    provider = %provider_id,
+                    model = %model_id,
+                    "Retrying empty upstream stream as a non-streaming request"
+                );
+                let recovery_started_at = Instant::now();
+                match adapter.chat_completions(&ctx, recovery_request).await {
+                    Ok(response) => {
+                        if let Some(events) = recovered_non_stream_events(response) {
+                            crate::observability::record_attempt_result(
+                                &state,
+                                &task_request_id,
+                                "chat",
+                                attempt,
+                                "stream_recovered_non_streaming",
+                                Some(recovery_started_at.elapsed().as_millis() as i64),
+                                None,
+                            )
+                            .await;
+                            info!(
+                                provider = %provider_id,
+                                model = %model_id,
+                                "Recovered empty upstream stream with non-streaming response"
+                            );
+                            for event in events {
+                                let _ = tx.send(event).await;
+                            }
+                            return;
+                        }
+                        warn!(
+                            provider = %provider_id,
+                            model = %model_id,
+                            "Non-streaming recovery also completed without content"
+                        );
+                        crate::observability::record_attempt_result(
+                            &state,
+                            &task_request_id,
+                            "chat",
+                            attempt,
+                            "empty_stream_recovery_empty",
+                            Some(recovery_started_at.elapsed().as_millis() as i64),
+                            Some("non-streaming recovery completed without content"),
+                        )
+                        .await;
+                    }
+                    Err(error) => {
+                        warn!(
+                            provider = %provider_id,
+                            model = %model_id,
+                            error = %error,
+                            "Non-streaming recovery failed"
+                        );
+                        record_streaming_provider_error(&state, provider_id, &error).await;
+                        crate::observability::record_attempt_result(
+                            &state,
+                            &task_request_id,
+                            "chat",
+                            attempt,
+                            "empty_stream_recovery_failed",
+                            Some(recovery_started_at.elapsed().as_millis() as i64),
+                            Some(&error.to_string()),
+                        )
+                        .await;
+                        terminal_error = Some(error);
                     }
                 }
             }
@@ -1078,6 +1225,7 @@ async fn record_streaming_provider_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::openai::chat::{ProviderUsage, ToolCall, ToolCallFunction};
 
     fn attempt() -> RouteAttempt {
         RouteAttempt {
@@ -1127,5 +1275,90 @@ mod tests {
             stream_first_content_timeout_ms(&config, "other", &attempt()),
             1_000
         );
+    }
+
+    #[test]
+    fn non_stream_recovery_requires_content_or_tool_calls() {
+        let response = ProviderChatResponse {
+            provider_id: "openrouter".into(),
+            model_id: "stealth/ox-alpha".into(),
+            content: None,
+            tool_calls: None,
+            finish_reason: Some("stop".into()),
+            usage: None,
+            latency_ms: 10,
+        };
+        assert!(recovered_non_stream_events(response).is_none());
+    }
+
+    #[test]
+    fn non_stream_recovery_translates_text_usage_and_done() {
+        let response = ProviderChatResponse {
+            provider_id: "openrouter".into(),
+            model_id: "stealth/ox-alpha".into(),
+            content: Some("recovered".into()),
+            tool_calls: None,
+            finish_reason: Some("stop".into()),
+            usage: Some(ProviderUsage {
+                prompt_tokens: 10,
+                completion_tokens: 2,
+                total_tokens: 12,
+                prompt_cache_hit_tokens: None,
+                prompt_cache_miss_tokens: None,
+                reasoning_tokens: None,
+            }),
+            latency_ms: 10,
+        };
+        let events = recovered_non_stream_events(response).unwrap();
+        assert!(matches!(
+            &events[0],
+            StreamEvent::Chunk { delta, finish_reason, .. }
+                if delta.content.as_deref() == Some("recovered")
+                    && finish_reason.as_deref() == Some("stop")
+        ));
+        assert!(matches!(
+            events[1],
+            StreamEvent::Usage {
+                total_tokens: 12,
+                ..
+            }
+        ));
+        assert!(matches!(events[2], StreamEvent::Done));
+    }
+
+    #[test]
+    fn non_stream_recovery_preserves_tool_call_indexes() {
+        let response = ProviderChatResponse {
+            provider_id: "openrouter".into(),
+            model_id: "stealth/ox-alpha".into(),
+            content: None,
+            tool_calls: Some(vec![
+                ToolCall {
+                    id: "call-0".into(),
+                    call_type: "function".into(),
+                    function: ToolCallFunction {
+                        name: "first".into(),
+                        arguments: "{}".into(),
+                    },
+                },
+                ToolCall {
+                    id: "call-1".into(),
+                    call_type: "function".into(),
+                    function: ToolCallFunction {
+                        name: "second".into(),
+                        arguments: "{}".into(),
+                    },
+                },
+            ]),
+            finish_reason: Some("tool_calls".into()),
+            usage: None,
+            latency_ms: 10,
+        };
+        let events = recovered_non_stream_events(response).unwrap();
+        let payload = format_sse_payload(&events[1]);
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["choices"][0]["index"], 0);
+        assert_eq!(payload["choices"][0]["delta"]["tool_calls"][0]["index"], 1);
+        assert!(matches!(events.last(), Some(StreamEvent::Done)));
     }
 }

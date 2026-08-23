@@ -18,6 +18,7 @@ struct MiniMock {
     succeed_after: u32,
     rate_limited: bool,
     delay_ms: u64,
+    empty_stream: bool,
 }
 
 /// Build a TokenScavenger test app with one mock provider.
@@ -30,6 +31,16 @@ async fn build_e2e_app_with_failure(
     rate_limited: bool,
     delay_ms: u64,
 ) -> (axum::Router, tokenscavenger::app::state::AppState) {
+    build_e2e_app_with_options(succeed_after, rate_limited, delay_ms, false, false).await
+}
+
+async fn build_e2e_app_with_options(
+    succeed_after: u32,
+    rate_limited: bool,
+    delay_ms: u64,
+    empty_stream: bool,
+    recover_empty_stream: bool,
+) -> (axum::Router, tokenscavenger::app::state::AppState) {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("src/db/migrations")
         .run(&pool)
@@ -39,6 +50,7 @@ async fn build_e2e_app_with_failure(
     let mut config = tokenscavenger::config::schema::Config::default();
     config.server.master_api_key = String::new();
     config.routing.provider_order = vec!["mock".into()];
+    config.routing.recover_empty_stream_with_non_streaming = recover_empty_stream;
     if delay_ms > 0 {
         config
             .routing
@@ -95,6 +107,7 @@ async fn build_e2e_app_with_failure(
     use tokenscavenger::api::openai::embeddings::{
         NormalizedEmbeddingsRequest, ProviderEmbeddingsResponse,
     };
+    use tokenscavenger::api::openai::stream::StreamEvent;
     use tokenscavenger::config::schema::ProviderConfig;
     use tokenscavenger::discovery::curated::DiscoveredModel;
     use tokenscavenger::providers::normalization::ProviderCapabilities;
@@ -186,6 +199,46 @@ async fn build_e2e_app_with_failure(
         ) -> Result<ProviderEmbeddingsResponse, ProviderError> {
             Err(ProviderError::UnsupportedFeature("no embeddings".into()))
         }
+        async fn stream_chat_completions(
+            &self,
+            ctx: &ProviderContext,
+            req: NormalizedChatRequest,
+            tx: tokio::sync::mpsc::Sender<StreamEvent>,
+        ) -> Result<(), ProviderError> {
+            if self.state.empty_stream {
+                let _ = tx.send(StreamEvent::Done).await;
+                return Ok(());
+            }
+            let response = self.chat_completions(ctx, req).await?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let created = chrono::Utc::now().timestamp();
+            let _ = tx
+                .send(StreamEvent::Chunk {
+                    id: id.clone(),
+                    created,
+                    model: response.model_id.clone(),
+                    delta: tokenscavenger::api::openai::chat::StreamDelta {
+                        role: Some("assistant".into()),
+                        content: response.content,
+                    },
+                    finish_reason: response.finish_reason,
+                })
+                .await;
+            if let Some(usage) = response.usage {
+                let _ = tx
+                    .send(StreamEvent::Usage {
+                        id,
+                        created,
+                        model: response.model_id,
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                        total_tokens: usage.total_tokens,
+                    })
+                    .await;
+            }
+            let _ = tx.send(StreamEvent::Done).await;
+            Ok(())
+        }
     }
     state
         .provider_registry
@@ -195,6 +248,7 @@ async fn build_e2e_app_with_failure(
                 succeed_after,
                 rate_limited,
                 delay_ms,
+                empty_stream,
             }),
         }))
         .await;
@@ -541,6 +595,100 @@ async fn e2e_models_endpoint() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["object"], "list");
     assert!(!json["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn e2e_empty_stream_recovers_once_via_same_provider_non_streaming() {
+    let (app, state) = build_e2e_app_with_options(0, false, 0, true, true).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-empty-stream-recovery")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "model": "test-model",
+                        "messages": [{"role":"user","content":"Hi"}],
+                        "stream": true
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    let stream = String::from_utf8(body.to_vec()).unwrap();
+    assert!(stream.contains("OK"));
+    assert!(stream.contains("data: [DONE]"));
+    assert!(!stream.contains("empty_stream"));
+
+    let recovery_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM request_trace_events
+         WHERE request_id = ? AND outcome = 'stream_recovered_non_streaming'",
+    )
+    .bind("req-e2e-empty-stream-recovery")
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(recovery_events, 1);
+
+    let usage_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM usage_events WHERE request_id = ?")
+            .bind("req-e2e-empty-stream-recovery")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(usage_rows, 1);
+}
+
+#[tokio::test]
+async fn e2e_empty_stream_recovery_remains_opt_in() {
+    let (app, state) = build_e2e_app_with_options(0, false, 0, true, false).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("X-Request-Id", "req-e2e-empty-stream-no-recovery")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "model": "test-model",
+                        "messages": [{"role":"user","content":"Hi"}],
+                        "stream": true
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    let stream = String::from_utf8(body.to_vec()).unwrap();
+    assert!(stream.contains("empty_stream"));
+    assert!(!stream.contains("\"content\":\"OK\""));
+
+    let recovery_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM request_trace_events
+         WHERE request_id = ? AND outcome = 'stream_recovered_non_streaming'",
+    )
+    .bind("req-e2e-empty-stream-no-recovery")
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(recovery_events, 0);
 }
 
 #[tokio::test]

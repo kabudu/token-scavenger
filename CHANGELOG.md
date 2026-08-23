@@ -9,9 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added an opt-in streaming compatibility recovery that retries an empty upstream stream once as a same-provider, same-model non-streaming request before returning a normalized SSE response.
+
 ### Changed
 
+- Updated the public website metadata and manual installation commands for v0.4.2.
+
 ### Fixed
+
+- Corrected OpenAI-compatible streamed tool-call indexing so the choice index remains zero while each tool call receives its own nested index.
 
 ## [0.4.1] - 2026-08-22
 

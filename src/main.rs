@@ -309,6 +309,7 @@ fn build_reload_payload(config: &Config) -> serde_json::Value {
             "allow_paid_fallback": config.routing.allow_paid_fallback,
             "provider_order": config.routing.provider_order,
             "stream_first_content_timeout_ms": config.routing.stream_first_content_timeout_ms,
+            "recover_empty_stream_with_non_streaming": config.routing.recover_empty_stream_with_non_streaming,
         },
         "resilience": {
             "max_retries_per_provider": config.resilience.max_retries_per_provider,
