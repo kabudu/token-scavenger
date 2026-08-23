@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.4.2] - 2026-08-23
+
+### Added
+
 - Added an opt-in streaming compatibility recovery that retries an empty upstream stream once as a same-provider, same-model non-streaming request before returning a normalized SSE response.
 
 ### Changed
