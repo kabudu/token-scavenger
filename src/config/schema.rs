@@ -271,6 +271,11 @@ pub struct RoutingConfig {
     /// Keys may be a requested model/group, `provider/model`, or upstream model ID.
     #[serde(default = "default_stream_first_content_timeout_ms")]
     pub stream_first_content_timeout_ms: HashMap<String, u64>,
+    /// Retry an upstream stream that ends before meaningful content as one
+    /// non-streaming request to the same provider/model. The recovered response
+    /// is translated back into OpenAI-compatible SSE events.
+    #[serde(default)]
+    pub recover_empty_stream_with_non_streaming: bool,
 }
 
 impl Default for RoutingConfig {
@@ -284,6 +289,7 @@ impl Default for RoutingConfig {
             default_model_group_strategy: default_model_group_strategy(),
             provider_order: Vec::new(),
             stream_first_content_timeout_ms: default_stream_first_content_timeout_ms(),
+            recover_empty_stream_with_non_streaming: false,
         }
     }
 }

@@ -199,6 +199,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
             provider_order: providers.iter().map(|p| p.id.clone()).collect(),
             stream_first_content_timeout_ms: RoutingConfig::default()
                 .stream_first_content_timeout_ms,
+            recover_empty_stream_with_non_streaming: false,
         },
         resilience: ResilienceConfig {
             max_retries_per_provider: 2,
