@@ -331,6 +331,10 @@ fn smart_model_groups() -> Vec<SmartModelGroup> {
             targets: vec![target("openrouter", "stealth/ox-alpha")],
         },
         SmartModelGroup {
+            name: "preview:union-alpha",
+            targets: vec![target("openrouter", "stealth/union-alpha")],
+        },
+        SmartModelGroup {
             name: "fast:chat",
             targets: vec![
                 target("groq", "llama3-8b-8192"),

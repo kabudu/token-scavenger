@@ -392,7 +392,10 @@ fn default_log_max_files() -> usize {
     7
 }
 fn default_stream_first_content_timeout_ms() -> HashMap<String, u64> {
-    HashMap::from([("preview:ox-alpha".to_string(), 180_000)])
+    HashMap::from([
+        ("preview:ox-alpha".to_string(), 180_000),
+        ("preview:union-alpha".to_string(), 180_000),
+    ])
 }
 fn default_credential_key_env() -> String {
     "TOKENSCAVENGER_CREDENTIAL_KEY".to_string()
