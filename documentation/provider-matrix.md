@@ -141,6 +141,11 @@ operated by an anonymous provider that retains prompts and completions and is
 subject to OpenRouter's additional Stealth Program terms. It is deliberately
 excluded from ordinary fallback groups and must not receive sensitive data.
 
+Union Alpha is exposed the same way through the `preview:union-alpha` model
+group (upstream ID `stealth/union-alpha`). The same temporary-availability and
+data-retention warnings apply: keep it out of ordinary fallback groups and do
+not send it sensitive data.
+
 ### Cerebras
 
 | Property | Value |

@@ -3213,6 +3213,12 @@ async fn test_smart_model_groups_are_seeded_without_overwriting_operator_groups(
     .fetch_one(&pool)
     .await
     .unwrap();
+    let union_alpha = sqlx::query_as::<_, (String,)>(
+        "SELECT target_json FROM model_groups WHERE name = 'preview:union-alpha'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     assert_eq!(fast.0, "[\"operator-model\"]");
     assert!(reasoning.0.contains("grok-4.20-reasoning"));
@@ -3223,6 +3229,10 @@ async fn test_smart_model_groups_are_seeded_without_overwriting_operator_groups(
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&ox_alpha.0).unwrap(),
         serde_json::json!([{"provider": "openrouter", "model": "stealth/ox-alpha"}])
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&union_alpha.0).unwrap(),
+        serde_json::json!([{"provider": "openrouter", "model": "stealth/union-alpha"}])
     );
 }
 

@@ -74,6 +74,7 @@ provider_order = [                  # Fallback ordering
 
 [routing.stream_first_content_timeout_ms]
 "preview:ox-alpha" = 180000
+"preview:union-alpha" = 180000
 "openrouter/another-slow-model" = 150000
 
 [routing.budgets]
@@ -441,6 +442,8 @@ target = [
 # targeting { provider = "openrouter", model = "openrouter/free" }.
 # The separate `preview:ox-alpha` group targets the temporary, data-retaining
 # { provider = "openrouter", model = "stealth/ox-alpha" } stealth preview.
+# The `preview:union-alpha` group targets the equivalent
+# { provider = "openrouter", model = "stealth/union-alpha" } stealth preview.
 ```
 
 ### Free-first with paid fallback
