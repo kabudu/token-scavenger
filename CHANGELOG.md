@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.5.0] - 2026-09-16
+
+### Added
+
 - Added the operator-overridable `preview:union-alpha` model group for OpenRouter's temporary Union Alpha stealth preview (upstream `stealth/union-alpha`), with curated fallback metadata, a 180-second default first-content stream timeout, and the same data-retention guidance as `preview:ox-alpha`.
 
 ### Changed
