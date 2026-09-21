@@ -10,6 +10,7 @@ pub mod config;
 pub mod db;
 pub mod discovery;
 pub mod metrics;
+pub mod mlx;
 pub mod observability;
 pub mod projects;
 pub mod providers;

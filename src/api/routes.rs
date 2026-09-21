@@ -169,6 +169,18 @@ pub async fn admin_providers(
     Ok(Json(providers))
 }
 
+/// GET /admin/mlx/status — read-only Apple Silicon MLX runtime/server status.
+/// Never installs, downloads, starts, or stops anything.
+pub async fn admin_mlx_status(
+    State(state): State<AppState>,
+) -> Result<Json<crate::mlx::MlxStatus>, ApiError> {
+    let config = state.config();
+    let base_url = crate::mlx::mlx_base_url(&config);
+    Ok(Json(
+        crate::mlx::detect(&state.http_client, &base_url).await,
+    ))
+}
+
 pub async fn admin_whoami(
     auth: Option<Extension<crate::api::auth::AuthContext>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {

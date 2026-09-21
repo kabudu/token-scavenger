@@ -222,6 +222,17 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             context_window: None,
             free_tier: true,
         },
+        // Apple Silicon MLX server (mlx_lm.server). The served model id is
+        // whatever was passed via --model; this seeds the known
+        // PrismML ternary 27B 2-bit distribution.
+        DiscoveredModel {
+            provider_id: "mlx".into(),
+            upstream_model_id: "prism-ml/Ternary-Bonsai-27B-mlx-2bit".into(),
+            display_name: Some("Ternary Bonsai 27B MLX 2-bit (MLX)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: None,
+            free_tier: true,
+        },
     ]
 }
 

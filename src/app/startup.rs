@@ -380,6 +380,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(crate::api::routes::admin_providers),
         )
         .route(
+            "/admin/mlx/status",
+            axum::routing::get(crate::api::routes::admin_mlx_status),
+        )
+        .route(
             "/admin/whoami",
             axum::routing::get(crate::api::routes::admin_whoami),
         )

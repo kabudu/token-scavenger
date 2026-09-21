@@ -386,7 +386,7 @@ fn infer_family(provider_id: &str, model_id: &str) -> String {
         "qwen".to_string()
     } else if model_id.contains("grok") {
         "grok".to_string()
-    } else if provider_id == "local" || provider_id == "ollama" {
+    } else if provider_id == "local" || provider_id == "ollama" || provider_id == "mlx" {
         "local".to_string()
     } else {
         "general".to_string()

@@ -300,7 +300,7 @@ Route-plan explanations include the selected objective, score components,
 estimated cost, observed latency, failure rate, and skip reasons.
 
 The `local_only` objective keeps only local attempts. Built-in local provider
-IDs (`local`, `ollama`, `llama-cpp`, and `lmstudio`) always qualify, and any
+IDs (`local`, `ollama`, `llama-cpp`, `lmstudio`, and `mlx`) always qualify, and any
 provider whose configured `base_url` uses `localhost`, `127.0.0.1`, or `::1`
 also qualifies. Local providers still use the normal adapter, health, breaker,
 fallback, usage, and metrics paths.
@@ -342,7 +342,7 @@ This is an array of provider configurations. Each entry specifies:
 | `embedding_support` | `"auto"` | For local OpenAI-compatible providers, controls whether discovered models are marked embedding-capable: `"auto"` probes `/embeddings`, `"enabled"` trusts the operator override, and `"disabled"` suppresses embeddings. Remote providers ignore this field. |
 
 Supported provider IDs:
-`groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`), `local`, `ollama`, `llama-cpp` (or `llamacpp`), `lmstudio` (or `lm-studio`)
+`groq`, `google`, `openrouter`, `cloudflare`, `cerebras`, `nvidia`, `cohere`, `mistral`, `github-models`, `huggingface`, `zai` (or `zhipu`), `siliconflow`, `deepseek`, `xai` (or `grok`), `local`, `ollama`, `llama-cpp` (or `llamacpp`), `lmstudio` (or `lm-studio`), `mlx` (or `mlx-lm`)
 
 Local provider defaults:
 
@@ -352,6 +352,7 @@ Local provider defaults:
 | `ollama` | `http://127.0.0.1:11434/v1` | Uses Ollama's OpenAI-compatible endpoints. |
 | `llama-cpp` | `http://127.0.0.1:8080/v1` | Uses the llama.cpp server OpenAI-compatible API. |
 | `lmstudio` | `http://127.0.0.1:1234/v1` | Uses LM Studio's local OpenAI-compatible server. |
+| `mlx` | `http://127.0.0.1:8080/v1` | Uses the `mlx-lm` OpenAI-compatible server on Apple Silicon (`mlx_lm.server`). No API key required by default. |
 
 Local embeddings are intentionally model-aware. With the default
 `embedding_support = "auto"`, TokenScavenger probes each discovered local model
@@ -468,4 +469,27 @@ free_only = false
 id = "xai"
 api_key = "${XAI_API_KEY}"
 free_only = false
+```
+
+### Local MLX server (Apple Silicon)
+
+First serve the model with `mlx-lm` (default port `8080`; full install/run
+guide in [documentation/mlx.md](mlx.md) — install into a venv, never system
+Python):
+
+```bash
+python3 -m mlx_lm server --model prism-ml/Ternary-Bonsai-27B-mlx-2bit --host 127.0.0.1 --port 8080
+```
+
+Then point TokenScavenger at it. No API key is required by default:
+
+```toml
+[routing]
+free_first = true
+provider_order = ["mlx", "ollama", "local", "groq"]
+
+[[providers]]
+id = "mlx"
+enabled = true
+# base_url = "http://127.0.0.1:8080/v1"  # default; override only if the server uses another host/port
 ```

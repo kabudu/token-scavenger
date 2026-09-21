@@ -30,6 +30,8 @@ target
 # Website dependencies
 /docs/node_modules
 
+# Local Python virtualenv for the MLX sidecar server (see documentation/mlx.md)
+.venv/
 # OS metadata files
 .DS_Store
 Thumbs.db
