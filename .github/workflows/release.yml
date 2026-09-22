@@ -151,7 +151,8 @@ jobs:
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
             cp "$BINARY" "tokenscavenger"
             chmod +x "tokenscavenger"
-            ditto -c -k --keepParent "tokenscavenger" "$ARCHIVE_NAME.zip"
+            ditto -c -k "tokenscavenger" "$ARCHIVE_NAME.zip"
+            unzip -Z -1 "$ARCHIVE_NAME.zip" | grep -Fxq "tokenscavenger"
             ARCHIVE_NAME="$ARCHIVE_NAME.zip"
           elif [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp "$BINARY" "$ARCHIVE_NAME"
