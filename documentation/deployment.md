@@ -257,6 +257,10 @@ Configure your orchestrator to use these endpoints:
 - **Liveness**: `GET /healthz` — returns `200 OK` with body `ok`
 - **Readiness**: `GET /readyz` — returns `200 OK` with JSON status when providers are configured
 
+## Subtask affinity
+
+Affinity pins live in the proxy process. Restarting the binary, or sending the next turn to a different replica, drops them. Required tool continuations then return `409 session_state_unavailable`. Put one replica behind a sticky session only if you need pins to survive across requests to that process. Do not put the SQLite file on a network share to share pins. See [subtask routing](agent-routing.md).
+
 ## Database
 
 ### Backup

@@ -117,7 +117,7 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Models endpoint** | `GET /models` |
 | **Format** | Native — uses `contents[{role, parts[{text}]}]` format |
 | **Free models** | `gemini-2.0-flash`, `gemini-1.5-flash` |
-| **Quirks** | ⚠️ Completely different format from OpenAI. Model is in URL path, not request body. Messages use `parts` array instead of simple `content` string. System instructions via separate `systemInstruction` field. |
+| **Quirks** | ⚠️ Completely different format from OpenAI. Model is in URL path, not request body. Messages use `parts` array instead of simple `content` string. System instructions via separate `systemInstruction` field. Function-call continuation can require thought signatures that TokenScavenger does not round-trip. Required subtask affinity refuses that continuation with `unsupported_continuation`. |
 | **Rate limits** | 60 requests/minute (free tier) |
 | **Docs** | https://ai.google.dev/gemini-api/docs |
 

@@ -43,23 +43,73 @@ pub async fn chat_completions(
     State(state): State<AppState>,
     auth: Option<Extension<crate::api::auth::AuthContext>>,
     headers: HeaderMap,
+    request_id_source: Option<Extension<crate::api::middleware::RequestIdSource>>,
     axum::Json(req): axum::Json<crate::api::openai::chat::ChatRequest>,
 ) -> Result<axum::response::Response, ApiError> {
     let normalized = crate::api::openai::chat::NormalizedChatRequest::from_request(req);
-    let request_id = request_id_from_headers(&headers);
-    register_project_for_request(&state, &request_id, auth.as_ref().map(|Extension(ctx)| ctx));
+    let auth_ctx = auth.as_ref().map(|Extension(ctx)| ctx);
+    let project = auth_ctx
+        .and_then(|context| context.project.clone())
+        .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
+    let mut context = crate::router::context::routing_context(
+        &headers,
+        project,
+        auth_ctx.is_some(),
+        std::time::Duration::from_millis(state.config().server.request_timeout_ms),
+    )?;
+    context.public_request_id = claim_request_id(
+        &state,
+        &context.public_request_id,
+        context.project.clone(),
+        request_id_source
+            .as_ref()
+            .map(|Extension(source)| source.client_supplied)
+            .unwrap_or_else(|| headers.contains_key("x-request-id")),
+    )
+    .await?;
+    let response_request_id = context.public_request_id.clone();
 
-    if normalized.stream {
-        // Streaming path
-        let stream =
-            crate::api::openai::stream::create_chat_stream(state, normalized, request_id).await?;
-        Ok(Sse::new(stream).into_response())
+    let mut response = if normalized.stream {
+        let stream = match crate::api::openai::stream::create_chat_stream(
+            state.clone(),
+            normalized,
+            context,
+        )
+        .await
+        {
+            Ok(stream) => stream,
+            Err(error) => {
+                crate::projects::remove_request_project(&state, &response_request_id);
+                return Ok(api_error_with_request_id(error, &response_request_id));
+            }
+        };
+        let cleanup = RequestProjectCleanup::new(state.clone(), response_request_id.clone());
+        let guarded = async_stream::stream! {
+            let _cleanup = cleanup;
+            futures::pin_mut!(stream);
+            while let Some(event) = stream.next().await {
+                yield event;
+            }
+        };
+        Sse::new(guarded).into_response()
     } else {
-        // Non-streaming path
         let response =
-            crate::router::engine::route_chat_request(state, normalized, request_id).await?;
-        Ok(Json(response).into_response())
+            match crate::router::engine::route_chat_request(state.clone(), normalized, context)
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    crate::projects::remove_request_project(&state, &response_request_id);
+                    return Ok(api_error_with_request_id(error, &response_request_id));
+                }
+            };
+        crate::projects::remove_request_project(&state, &response_request_id);
+        Json(response).into_response()
+    };
+    if let Ok(value) = HeaderValue::from_str(&response_request_id) {
+        response.headers_mut().insert("x-request-id", value);
     }
+    Ok(response)
 }
 
 /// POST /v1/embeddings — OpenAI-compatible embeddings.
@@ -67,33 +117,103 @@ pub async fn embeddings(
     State(state): State<AppState>,
     auth: Option<Extension<crate::api::auth::AuthContext>>,
     headers: HeaderMap,
+    request_id_source: Option<Extension<crate::api::middleware::RequestIdSource>>,
     axum::Json(req): axum::Json<crate::api::openai::embeddings::EmbeddingsRequest>,
-) -> Result<Json<crate::api::openai::embeddings::EmbeddingsResponse>, ApiError> {
+) -> Result<axum::response::Response, ApiError> {
     let normalized = crate::api::openai::embeddings::NormalizedEmbeddingsRequest::from_request(req);
-    let request_id = request_id_from_headers(&headers);
-    register_project_for_request(&state, &request_id, auth.as_ref().map(|Extension(ctx)| ctx));
-    let response =
-        crate::router::engine::route_embeddings_request(state, normalized, request_id).await?;
-    Ok(Json(response))
-}
-
-fn register_project_for_request(
-    state: &AppState,
-    request_id: &str,
-    auth: Option<&crate::api::auth::AuthContext>,
-) {
+    let requested_id = crate::router::context::public_request_id(&headers);
     let project = auth
-        .and_then(|context| context.project.clone())
+        .as_ref()
+        .and_then(|Extension(context)| context.project.clone())
         .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
-    crate::projects::register_request_project(state, request_id, project);
+    let request_id = claim_request_id(
+        &state,
+        &requested_id,
+        project,
+        request_id_source
+            .as_ref()
+            .map(|Extension(source)| source.client_supplied)
+            .unwrap_or_else(|| headers.contains_key("x-request-id")),
+    )
+    .await?;
+    let response = match crate::router::engine::route_embeddings_request(
+        state.clone(),
+        normalized,
+        request_id.clone(),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            crate::projects::remove_request_project(&state, &request_id);
+            return Ok(api_error_with_request_id(error, &request_id));
+        }
+    };
+    crate::projects::remove_request_project(&state, &request_id);
+    let mut response = Json(response).into_response();
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    Ok(response)
 }
 
-fn request_id_from_headers(headers: &HeaderMap) -> String {
-    headers
-        .get("X-Request-Id")
-        .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+async fn claim_request_id(
+    state: &AppState,
+    requested_id: &str,
+    project: crate::projects::ClientProjectContext,
+    client_supplied: bool,
+) -> Result<String, ApiError> {
+    use dashmap::mapref::entry::Entry;
+
+    let already_persisted = if client_supplied {
+        sqlx::query_scalar::<_, i64>("SELECT 1 FROM request_log WHERE request_id = ?")
+            .bind(requested_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|error| ApiError::InternalError(error.to_string()))?
+            .is_some()
+    } else {
+        false
+    };
+    let mut candidate = if already_persisted {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        requested_id.to_string()
+    };
+    loop {
+        match state.request_projects.entry(candidate.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(project);
+                return Ok(candidate);
+            }
+            Entry::Occupied(_) => candidate = uuid::Uuid::new_v4().to_string(),
+        }
+    }
+}
+
+fn api_error_with_request_id(error: ApiError, request_id: &str) -> axum::response::Response {
+    let mut response = error.into_response();
+    if let Ok(value) = HeaderValue::from_str(request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    response
+}
+
+struct RequestProjectCleanup {
+    state: AppState,
+    request_id: String,
+}
+
+impl RequestProjectCleanup {
+    fn new(state: AppState, request_id: String) -> Self {
+        Self { state, request_id }
+    }
+}
+
+impl Drop for RequestProjectCleanup {
+    fn drop(&mut self) {
+        crate::projects::remove_request_project(&self.state, &self.request_id);
+    }
 }
 
 /// GET /v1/models — OpenAI-compatible model listing.
@@ -327,6 +447,15 @@ pub async fn admin_route_plan(
     } else {
         crate::providers::traits::EndpointKind::ChatCompletions
     };
+    let adaptive = {
+        let config = state.config();
+        endpoint != "embeddings"
+            && config.routing.agent.enabled
+            && config.routing.agent.profiles.contains_key(&model)
+    };
+    if adaptive {
+        return adaptive_route_plan(&state, &model).await;
+    }
 
     let config = state.config();
     let resolved_targets = crate::router::model_groups::resolve_model_group_targets(&state, &model)
@@ -529,8 +658,223 @@ pub async fn admin_route_plan(
             "vision": route_requirements.requires_vision,
             "context_tokens": route_requirements.required_context_tokens
         },
-        "attempts": attempts
+        "attempts": attempts,
+        "decision": preview_decision(&state, &model, &[]).await
     })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RoutePreviewRequest {
+    model: String,
+    #[serde(default)]
+    messages: Vec<crate::api::openai::chat::ChatMessage>,
+    #[serde(default)]
+    task_type: Option<String>,
+    #[serde(default)]
+    tier: Option<String>,
+    #[serde(default)]
+    phase: Option<String>,
+    #[serde(default)]
+    simulated_tier: Option<String>,
+}
+
+/// POST /admin/route-plan/preview: side-effect-free plan for representative messages.
+pub async fn admin_route_plan_preview(
+    State(state): State<AppState>,
+    Json(body): Json<RoutePreviewRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let messages = if body.messages.is_empty() {
+        vec![crate::api::openai::chat::ChatMessage {
+            role: "user".into(),
+            content: Some(serde_json::Value::String(String::new())),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]
+    } else {
+        body.messages
+    };
+    let request = crate::api::openai::chat::NormalizedChatRequest {
+        model: body.model.clone(),
+        messages,
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        stream: false,
+        stop: None,
+        presence_penalty: None,
+        frequency_penalty: None,
+        user: None,
+        response_format: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let mut context = crate::router::context::routing_context(
+        &axum::http::HeaderMap::new(),
+        crate::projects::ClientProjectContext::master_default(),
+        false,
+        std::time::Duration::from_secs(5),
+    )?;
+    context.hints.task_type = body.task_type.filter(|value| !value.is_empty());
+    context.hints.tier = body.tier.as_deref().and_then(|value| match value {
+        "auto" => Some(crate::router::context::TierHint::Auto),
+        "economy" => Some(crate::router::context::TierHint::Economy),
+        "standard" => Some(crate::router::context::TierHint::Standard),
+        "advanced" => Some(crate::router::context::TierHint::Advanced),
+        _ => None,
+    });
+    context.hints.phase = body.phase.as_deref().and_then(|value| match value {
+        "auto" => Some(crate::router::context::PhaseHint::Auto),
+        "planner" => Some(crate::router::context::PhaseHint::Planner),
+        "tool_result" => Some(crate::router::context::PhaseHint::ToolResult),
+        "finalize" => Some(crate::router::context::PhaseHint::Finalize),
+        _ => None,
+    });
+    context.simulated_tier = body
+        .simulated_tier
+        .as_deref()
+        .and_then(crate::config::schema::AgentTier::parse);
+    let prepared = crate::router::planner::prepare_chat_plan(
+        &state,
+        &request,
+        &context,
+        crate::router::planner::PlanMode::Preview,
+    )
+    .await?;
+    let attempts = prepared
+        .attempts
+        .iter()
+        .map(|attempt| {
+            serde_json::json!({
+                "provider_id": attempt.provider_id,
+                "model_id": attempt.model_id,
+                "included": true,
+                "reason": "eligible"
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({
+        "requested_model": body.model,
+        "resolved_model": prepared.resolved_models.join(", "),
+        "endpoint": "chat",
+        "attempts": attempts,
+        "decision": prepared.decision.as_ref().map(crate::router::planner::decision_json),
+    })))
+}
+
+async fn adaptive_route_plan(
+    state: &AppState,
+    model: &str,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let request = crate::api::openai::chat::NormalizedChatRequest {
+        model: model.to_string(),
+        messages: vec![crate::api::openai::chat::ChatMessage {
+            role: "user".into(),
+            content: Some(serde_json::Value::String(String::new())),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }],
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        stream: false,
+        stop: None,
+        presence_penalty: None,
+        frequency_penalty: None,
+        user: None,
+        response_format: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let context = crate::router::context::routing_context(
+        &axum::http::HeaderMap::new(),
+        crate::projects::ClientProjectContext::master_default(),
+        false,
+        std::time::Duration::from_secs(5),
+    )?;
+    let prepared = crate::router::planner::prepare_chat_plan(
+        state,
+        &request,
+        &context,
+        crate::router::planner::PlanMode::Preview,
+    )
+    .await?;
+    let attempts = prepared
+        .attempts
+        .iter()
+        .map(|attempt| {
+            serde_json::json!({
+                "provider_id": attempt.provider_id,
+                "model_id": attempt.model_id,
+                "included": true,
+                "eligible": true,
+                "reason": "eligible"
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({
+        "requested_model": model,
+        "resolved_model": prepared.resolved_models.join(", "),
+        "endpoint": "chat",
+        "attempts": attempts,
+        "decision": prepared.decision.as_ref().map(crate::router::planner::decision_json),
+    })))
+}
+
+async fn preview_decision(
+    state: &AppState,
+    model: &str,
+    messages: &[crate::api::openai::chat::ChatMessage],
+) -> serde_json::Value {
+    let request = crate::api::openai::chat::NormalizedChatRequest {
+        model: model.to_string(),
+        messages: if messages.is_empty() {
+            vec![crate::api::openai::chat::ChatMessage {
+                role: "user".into(),
+                content: Some(serde_json::Value::String(String::new())),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }]
+        } else {
+            messages.to_vec()
+        },
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        stream: false,
+        stop: None,
+        presence_penalty: None,
+        frequency_penalty: None,
+        user: None,
+        response_format: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let Ok(context) = crate::router::context::routing_context(
+        &axum::http::HeaderMap::new(),
+        crate::projects::ClientProjectContext::master_default(),
+        false,
+        std::time::Duration::from_secs(5),
+    ) else {
+        return serde_json::Value::Null;
+    };
+    match crate::router::planner::prepare_chat_plan(
+        state,
+        &request,
+        &context,
+        crate::router::planner::PlanMode::Preview,
+    )
+    .await
+    {
+        Ok(prepared) => prepared
+            .decision
+            .as_ref()
+            .map(crate::router::planner::decision_json)
+            .unwrap_or(serde_json::Value::Null),
+        Err(_) => serde_json::Value::Null,
+    }
 }
 
 /// POST /admin/providers/discovery/refresh — trigger manual model discovery

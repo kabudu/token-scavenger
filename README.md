@@ -30,6 +30,10 @@
 - **Free-tier-first routing** with configurable fallback chains
 - **Tool-aware routing** for agentic clients, preferring stronger tool-call
   providers automatically when OpenAI `tools` are present
+- **Opt-in subtask routing** for labelled agent runs: rules choose an economy,
+  standard, or advanced model group per subtask, with process-local affinity
+  for that subtask's tool loop. Disabled by default. See
+  [subtask routing](documentation/agent-routing.md).
 - **Model intelligence layer** with smart groups, task tags, modality flags,
   context-window awareness, and catalog freshness scoring
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)

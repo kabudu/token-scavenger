@@ -104,6 +104,10 @@ pub async fn startup(config_path: &Path) -> Result<StartupResult, Box<dyn std::e
     let listener = TcpListener::bind(&addr).await?;
     info!("HTTP listener bound to {}", addr);
 
+    if let Err(error) = state.budget_ledger.ensure_seeded(&state.db).await {
+        tracing::error!(%error, "paid adaptive admission will stay blocked until spend reservations can be reconciled");
+    }
+
     // 9. Start background tasks (these run in spawned tasks, so .await is not needed)
     spawn_background_tasks(state.clone());
 
@@ -201,6 +205,24 @@ async fn seed_configured_providers(
 
 /// Spawn background task loops.
 fn spawn_background_tasks(base_state: AppState) {
+    let s = base_state.clone();
+    let handle = tokio::spawn(async move {
+        loop {
+            let mut shutdown_rx = s.shutdown_rx.clone();
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                    s.affinity.sweep();
+                    crate::metrics::prometheus::record_affinity_sessions(s.affinity.live_scopes());
+                }
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() { break; }
+                }
+            }
+        }
+        info!("Affinity sweep loop stopped");
+    });
+    base_state.background_handles.lock().unwrap().push(handle);
+
     // Discovery refresh loop
     let s = base_state.clone();
     let handle = tokio::spawn(async move {
@@ -408,6 +430,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(crate::api::routes::admin_route_plan),
         )
         .route(
+            "/admin/route-plan/preview",
+            axum::routing::post(crate::api::routes::admin_route_plan_preview),
+        )
+        .route(
             "/admin/audit",
             axum::routing::get(crate::api::routes::admin_audit),
         )
@@ -548,6 +574,12 @@ fn cors_layer(config: &Config) -> CorsLayer {
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             HeaderName::from_static("x-request-id"),
+            HeaderName::from_static("x-ts-session"),
+            HeaderName::from_static("x-ts-subtask"),
+            HeaderName::from_static("x-ts-task-type"),
+            HeaderName::from_static("x-ts-tier"),
+            HeaderName::from_static("x-ts-phase"),
+            HeaderName::from_static("x-ts-affinity"),
         ]);
 
     let origins: Vec<HeaderValue> = config

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "note": "Rules-only comparison against an always-default policy. This is not a real-model quality study.",
+  "cases": [
+    {"task_type": "plan", "rules_tier": "advanced", "default_tier": "standard"},
+    {"task_type": "extract", "rules_tier": "economy", "default_tier": "standard"},
+    {"task_type": "format", "rules_tier": "economy", "default_tier": "standard"},
+    {"task_type": "verify", "rules_tier": "economy", "default_tier": "standard"},
+    {"task_type": "unknown", "rules_tier": "standard", "default_tier": "standard"}
+  ]
+}

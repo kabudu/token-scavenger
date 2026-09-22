@@ -22,6 +22,13 @@ struct MetricsRegistry {
     project_requests: BTreeMap<(String, String, String), u64>,
     project_tokens: BTreeMap<(String, String), u64>,
     project_estimated_cost: BTreeMap<String, f64>,
+    agent_decisions: BTreeMap<(String, String, String), u64>,
+    classifier_outcomes: BTreeMap<String, u64>,
+    pin_outcomes: BTreeMap<String, u64>,
+    internal_tokens: BTreeMap<(String, String), u64>,
+    internal_cost: BTreeMap<String, f64>,
+    affinity_sessions: f64,
+    affinity_rejections: BTreeMap<String, u64>,
 }
 
 /// Register a request metric.
@@ -170,6 +177,62 @@ pub fn record_project_usage(
             .project_estimated_cost
             .entry(project_id.into())
             .or_default() += amount_usd;
+    }
+}
+
+pub fn record_agent_decision(source: &str, tier: &str, phase: &str) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .agent_decisions
+            .entry((source.into(), tier.into(), phase.into()))
+            .or_default() += 1;
+    }
+}
+
+pub fn record_classifier_outcome(outcome: &str) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .classifier_outcomes
+            .entry(outcome.into())
+            .or_default() += 1;
+    }
+}
+
+pub fn record_pin_outcome(outcome: &str) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics.pin_outcomes.entry(outcome.into()).or_default() += 1;
+    }
+}
+
+pub fn record_affinity_rejection(code: &str) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics.affinity_rejections.entry(code.into()).or_default() += 1;
+    }
+}
+
+pub fn record_affinity_sessions(active: usize) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        metrics.affinity_sessions = active as f64;
+    }
+}
+
+pub fn record_internal_usage(
+    purpose: &str,
+    confidence: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    amount_usd: f64,
+) {
+    if let Ok(mut metrics) = METRICS.lock() {
+        *metrics
+            .internal_tokens
+            .entry((purpose.into(), "input".into()))
+            .or_default() += input_tokens as u64;
+        *metrics
+            .internal_tokens
+            .entry((purpose.into(), "output".into()))
+            .or_default() += output_tokens as u64;
+        *metrics.internal_cost.entry(confidence.into()).or_default() += amount_usd;
     }
 }
 
@@ -390,6 +453,59 @@ pub fn render_metrics() -> String {
     if let Some(metrics) = metrics.as_ref() {
         for (project_id, value) in &metrics.project_estimated_cost {
             writeln!(output, "tokenscavenger_project_estimated_cost_usd_total{{project_id=\"{project_id}\"}} {value}").ok();
+        }
+    }
+
+    writeln!(
+        output,
+        "# HELP tokenscavenger_agent_decisions_total Adaptive routing decisions"
+    )
+    .ok();
+    writeln!(
+        output,
+        "# TYPE tokenscavenger_agent_decisions_total counter"
+    )
+    .ok();
+    if let Some(metrics) = metrics.as_ref() {
+        for ((source, tier, phase), value) in &metrics.agent_decisions {
+            writeln!(output, "tokenscavenger_agent_decisions_total{{source=\"{source}\",tier=\"{tier}\",phase=\"{phase}\"}} {value}").ok();
+        }
+        for (outcome, value) in &metrics.classifier_outcomes {
+            writeln!(
+                output,
+                "tokenscavenger_classifier_outcomes_total{{outcome=\"{outcome}\"}} {value}"
+            )
+            .ok();
+        }
+        for (outcome, value) in &metrics.pin_outcomes {
+            writeln!(
+                output,
+                "tokenscavenger_affinity_pin_outcomes_total{{outcome=\"{outcome}\"}} {value}"
+            )
+            .ok();
+        }
+        for (code, value) in &metrics.affinity_rejections {
+            writeln!(
+                output,
+                "tokenscavenger_affinity_rejections_total{{code=\"{code}\"}} {value}"
+            )
+            .ok();
+        }
+        writeln!(
+            output,
+            "tokenscavenger_affinity_sessions {}",
+            metrics.affinity_sessions
+        )
+        .ok();
+        for ((purpose, token_type), value) in &metrics.internal_tokens {
+            writeln!(output, "tokenscavenger_internal_tokens_total{{purpose=\"{purpose}\",type=\"{token_type}\"}} {value}").ok();
+        }
+        for (confidence, value) in &metrics.internal_cost {
+            writeln!(
+                output,
+                "tokenscavenger_internal_cost_usd_total{{confidence=\"{confidence}\"}} {value}"
+            )
+            .ok();
         }
     }
 

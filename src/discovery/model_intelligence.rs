@@ -162,39 +162,121 @@ pub fn infer_model_intelligence(
     }
 }
 
+async fn load_intelligence_rows(
+    db: &sqlx::SqlitePool,
+    pairs: &[(String, String)],
+) -> std::collections::HashMap<(String, String), IntelligenceRow> {
+    let mut rows = std::collections::HashMap::new();
+    for chunk in pairs.chunks(60) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = chunk
+            .iter()
+            .map(|_| "(?, ?)")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT m.provider_id, m.upstream_model_id, m.supports_chat, m.supports_embeddings,
+                    m.supports_tools, m.supports_json_mode, m.supports_vision, m.metadata_json,
+                    p.discovery_state, m.discovered_at, m.updated_at
+             FROM models m
+             LEFT JOIN providers p ON p.provider_id = m.provider_id
+             WHERE (m.provider_id, m.upstream_model_id) IN (VALUES {placeholders})"
+        );
+        let mut query = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        let Ok(fetched) = query.fetch_all(db).await else {
+            continue;
+        };
+        for (
+            provider_id,
+            model_id,
+            supports_chat,
+            supports_embeddings,
+            supports_tools,
+            supports_json_mode,
+            supports_vision,
+            metadata_json,
+            discovery_state,
+            discovered_at,
+            updated_at,
+        ) in fetched
+        {
+            rows.insert(
+                (provider_id, model_id),
+                (
+                    supports_chat,
+                    supports_embeddings,
+                    supports_tools,
+                    supports_json_mode,
+                    supports_vision,
+                    metadata_json,
+                    discovery_state,
+                    discovered_at,
+                    updated_at,
+                ),
+            );
+        }
+    }
+    rows
+}
+
 pub async fn model_compatibility(
     state: &AppState,
     attempt: &RouteAttempt,
     requirements: ModelRequestRequirements,
 ) -> CompatibilityDecision {
-    let row = sqlx::query_as::<
-        _,
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        "SELECT m.supports_chat, m.supports_embeddings, m.supports_tools, m.supports_json_mode,
-                m.supports_vision, m.metadata_json, p.discovery_state, m.discovered_at, m.updated_at
-         FROM models m
-         LEFT JOIN providers p ON p.provider_id = m.provider_id
-         WHERE m.provider_id = ? AND m.upstream_model_id = ?",
+    let rows = load_intelligence_rows(
+        &state.db,
+        &[(attempt.provider_id.clone(), attempt.model_id.clone())],
     )
-    .bind(&attempt.provider_id)
-    .bind(&attempt.model_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    .await;
+    let Some(row) = rows.get(&(attempt.provider_id.clone(), attempt.model_id.clone())) else {
+        return CompatibilityDecision {
+            compatible: true,
+            reasons: vec!["model intelligence unavailable; using provider capability".to_string()],
+        };
+    };
+    compatibility_from_row(&attempt.provider_id, &attempt.model_id, row, requirements)
+}
 
-    let Some((
+type IntelligenceRow = (
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+fn compatibility_from_row(
+    provider_id: &str,
+    model_id: &str,
+    row: &IntelligenceRow,
+    requirements: ModelRequestRequirements,
+) -> CompatibilityDecision {
+    let (
         supports_chat,
         supports_embeddings,
         supports_tools,
@@ -204,35 +286,30 @@ pub async fn model_compatibility(
         provider_discovery_state,
         discovered_at,
         updated_at,
-    )) = row
-    else {
-        return CompatibilityDecision {
-            compatible: true,
-            reasons: vec!["model intelligence unavailable; using provider capability".to_string()],
-        };
-    };
+    ) = row;
 
     let intelligence = infer_model_intelligence(
-        &attempt.provider_id,
-        &attempt.model_id,
+        provider_id,
+        model_id,
         metadata_json.as_deref(),
-        supports_embeddings,
+        *supports_embeddings,
         provider_discovery_state.as_deref(),
         discovered_at.as_deref(),
         updated_at.as_deref(),
     );
 
     let mut reasons = Vec::new();
-    if !supports_chat {
+    if !*supports_chat {
         reasons.push("filtered by model chat capability".to_string());
     }
-    if requirements.requires_tools && !(supports_tools && intelligence.supports_tools) {
+    if requirements.requires_tools && !(*supports_tools && intelligence.supports_tools) {
         reasons.push("filtered by model tool-call capability".to_string());
     }
-    if requirements.requires_json_mode && !(supports_json_mode && intelligence.supports_json_mode) {
+    if requirements.requires_json_mode && !(*supports_json_mode && intelligence.supports_json_mode)
+    {
         reasons.push("filtered by model JSON-mode capability".to_string());
     }
-    if requirements.requires_vision && !(supports_vision || intelligence.supports_vision) {
+    if requirements.requires_vision && !(*supports_vision || intelligence.supports_vision) {
         reasons.push("filtered by model vision capability".to_string());
     }
     if let (Some(required), Some(context_window)) = (
@@ -257,9 +334,24 @@ pub async fn filter_by_model_intelligence(
     state: &AppState,
     requirements: ModelRequestRequirements,
 ) -> Vec<RouteAttempt> {
+    let pairs = plan
+        .iter()
+        .map(|attempt| (attempt.provider_id.clone(), attempt.model_id.clone()))
+        .collect::<Vec<_>>();
+    let rows = load_intelligence_rows(&state.db, &pairs).await;
     let mut filtered = Vec::with_capacity(plan.len());
     for attempt in plan {
-        let decision = model_compatibility(state, &attempt, requirements).await;
+        let decision = match rows.get(&(attempt.provider_id.clone(), attempt.model_id.clone())) {
+            Some(row) => {
+                compatibility_from_row(&attempt.provider_id, &attempt.model_id, row, requirements)
+            }
+            None => CompatibilityDecision {
+                compatible: true,
+                reasons: vec![
+                    "model intelligence unavailable; using provider capability".to_string(),
+                ],
+            },
+        };
         if decision.compatible {
             filtered.push(attempt);
         } else {

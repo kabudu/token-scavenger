@@ -200,6 +200,7 @@ pub fn run_setup_wizard(target_path: &Path) -> Result<Config, Box<dyn std::error
             stream_first_content_timeout_ms: RoutingConfig::default()
                 .stream_first_content_timeout_ms,
             recover_empty_stream_with_non_streaming: false,
+            agent: Default::default(),
         },
         resilience: ResilienceConfig {
             max_retries_per_provider: 2,

@@ -1158,7 +1158,7 @@ pub async fn render_routing(state: &AppState) -> String {
                 <h3 class="font-bold mb-4 text-emerald-400">Routing Configuration</h3>
                 <div class="text-sm text-slate-400 mb-1 uppercase tracking-wider font-bold">Provider Fallback Order</div>
                 <div class="font-mono bg-black/30 p-3 rounded text-cyan-400 mb-4">{}</div>
-                <div class="flex gap-4"><span class="bg-white/5 px-3 py-1 rounded text-sm">Free First: <span class="font-bold">{}</span></span><span class="bg-white/5 px-3 py-1 rounded text-sm">Paid Fallback: <span class="font-bold">{}</span></span></div>
+                <div class="flex gap-4"><span class="bg-white/5 px-3 py-1 rounded text-sm">Free First: <span class="font-bold">{}</span></span><span class="bg-white/5 px-3 py-1 rounded text-sm">Paid Fallback: <span class="font-bold">{}</span></span><span class="bg-white/5 px-3 py-1 rounded text-sm">Subtask routing: <span class="font-bold">{}</span></span></div>
             </div>
             <div class="glass-card overflow-hidden">
                 <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Route Plan Explorer</h3></div>
@@ -1173,43 +1173,72 @@ pub async fn render_routing(state: &AppState) -> String {
                     </div>
                 </div>
             </div>
+            <div class="glass-card overflow-hidden">
+                <div class="px-6 py-4 border-b border-white/5 bg-white/[0.02]"><h3 class="font-bold">Subtask preview</h3></div>
+                <div class="p-6 grid gap-3">
+                    <textarea id="preview-message" aria-label="Representative message" class="min-h-[80px]" placeholder="Representative task text. This is not stored."></textarea>
+                    <div class="flex gap-4">
+                        <input id="preview-task" aria-label="Task type" placeholder="task type">
+                        <select id="preview-tier" aria-label="Simulated tier"><option value="">no simulation</option><option value="economy">simulate economy</option><option value="standard">simulate standard</option><option value="advanced">simulate advanced</option></select>
+                        <button class="btn" onclick="previewPlan()">Preview</button>
+                    </div>
+                    <div id="route-preview" class="text-sm text-slate-400"></div>
+                </div>
+            </div>
         </div>"#,
-        order, config.routing.free_first, config.routing.allow_paid_fallback, default_model
+        order,
+        config.routing.free_first,
+        config.routing.allow_paid_fallback,
+        if config.routing.agent.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        default_model
     );
     let scripts = r#"<script>
-    async function explainPlan() { 
-        const model = encodeURIComponent(document.getElementById('plan-model').value); 
-        const endpoint = encodeURIComponent(document.getElementById('plan-endpoint').value); 
-        const r = await fetch('/admin/route-plan?model='+model+'&endpoint='+endpoint); 
-        const data = await r.json();
-        
-        let html = `<div class="mb-4 flex items-center gap-2">
-            <span class="px-2 py-1 bg-white/5 rounded">Requested: <strong class="text-white">${data.requested_model}</strong></span>
-            <i class="fas fa-arrow-right text-slate-600"></i>
-            <span class="px-2 py-1 bg-white/5 rounded">Resolved: <strong class="text-emerald-400">${data.resolved_model}</strong></span>
-        </div>
-        <div class="space-y-2">`;
-        
+    function esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+        });
+    }
+    function renderAttempts(data) {
+        const eligible = function(attempt) { return attempt.included === true || attempt.eligible === true; };
+        let html = '<div class="mb-4 flex items-center gap-2"><span class="px-2 py-1 bg-white/5 rounded">Requested: <strong class="text-white">' + esc(data.requested_model) + '</strong></span><span class="px-2 py-1 bg-white/5 rounded">Resolved: <strong class="text-emerald-400">' + esc(data.resolved_model) + '</strong></span></div>';
+        if (data.decision && data.decision.adaptive) {
+            html += '<div class="mb-4 text-xs text-slate-300">Phase ' + esc(data.decision.phase) + ' · tier ' + esc(data.decision.tier) + ' · source ' + esc(data.decision.source) + ' · pin ' + esc(data.decision.pin) + ' · classifier ' + esc(data.decision.classifier_status) + (data.decision.simulated ? ' · simulated' : '') + (data.decision.classification_required ? ' · classification required for execution' : '') + '</div>';
+        }
+        html += '<div class="space-y-2">';
         if (data.attempts && data.attempts.length > 0) {
-            data.attempts.forEach((a, i) => {
-                const statusColor = a.eligible ? "text-emerald-500" : "text-slate-500";
-                html += `<div class="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/5 rounded">
-                    <div class="w-6 h-6 rounded-full bg-black/40 flex items-center justify-center font-bold text-[10px]">${i+1}</div>
-                    <div class="flex-1">
-                        <div class="font-bold text-white">${a.provider} <span class="text-cyan-400 font-mono text-xs ml-2">${a.upstream_model}</span></div>
-                        <div class="text-xs text-slate-500">Tier: ${a.tier}</div>
-                    </div>
-                    <div class="text-right">
-                        <div class="font-bold text-[10px] uppercase tracking-wide ${statusColor}">${a.eligible ? 'Eligible' : 'Filtered'}</div>
-                        ${a.reason ? `<div class="text-xs text-red-400">${a.reason}</div>` : ''}
-                    </div>
-                </div>`;
+            data.attempts.forEach(function(attempt, index) {
+                const provider = attempt.provider_id || attempt.provider;
+                const model = attempt.model_id || attempt.upstream_model;
+                html += '<div class="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/5 rounded"><div class="w-6 h-6 rounded-full bg-black/40 flex items-center justify-center font-bold text-[10px]">' + (index + 1) + '</div><div class="flex-1"><div class="font-bold text-white">' + esc(provider) + ' <span class="text-cyan-400 font-mono text-xs ml-2">' + esc(model) + '</span></div></div><div class="text-right"><div class="font-bold text-[10px] uppercase tracking-wide ' + (eligible(attempt) ? 'text-emerald-500' : 'text-slate-500') + '">' + (eligible(attempt) ? 'Eligible' : 'Filtered') + '</div>' + (attempt.reason ? '<div class="text-xs text-red-400">' + esc(attempt.reason) + '</div>' : '') + '</div></div>';
             });
         } else {
-            html += `<div class="text-red-400 p-4 bg-red-400/10 rounded">No eligible routes found. Request would fail.</div>`;
+            html += '<div class="text-red-400 p-4 bg-red-400/10 rounded">No eligible routes found. Request would fail.</div>';
         }
-        html += `</div>`;
-        document.getElementById('route-plan').innerHTML = html;
+        return html + '</div>';
+    }
+    async function explainPlan() {
+        const model = encodeURIComponent(document.getElementById('plan-model').value);
+        const endpoint = encodeURIComponent(document.getElementById('plan-endpoint').value);
+        const response = await fetch('/admin/route-plan?model=' + model + '&endpoint=' + endpoint);
+        document.getElementById('route-plan').innerHTML = renderAttempts(await response.json());
+    }
+    async function previewPlan() {
+        const response = await fetch('/admin/route-plan/preview', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                model: document.getElementById('plan-model').value,
+                messages: [{role: 'user', content: document.getElementById('preview-message').value}],
+                task_type: document.getElementById('preview-task').value,
+                simulated_tier: document.getElementById('preview-tier').value || null
+            })
+        });
+        const data = await response.json();
+        document.getElementById('route-preview').innerHTML = response.ok ? renderAttempts(data) : '<div class="text-red-400">' + esc(data.error && data.error.message) + '</div>';
     }
     </script>"#;
     render_shell("Routing", "routing", &content, scripts, state)

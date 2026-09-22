@@ -3,9 +3,6 @@ use crate::api::openai::chat::*;
 use crate::api::openai::embeddings::*;
 use crate::app::state::AppState;
 use crate::config::schema::Config;
-use crate::discovery::model_intelligence::{
-    ModelRequestRequirements, filter_by_model_intelligence,
-};
 use crate::providers::registry::ProviderRegistry;
 use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
 use crate::router::fallback::{FallbackDecision, should_fallback};
@@ -13,8 +10,8 @@ use crate::router::policy::RoutePolicy;
 use crate::router::selection::{
     TokenEstimate, apply_policy_engine, assign_attempt_priorities, build_attempt_plan_for_target,
     filter_by_health, filter_by_model_enabled_for_endpoint, filter_by_paid_policy,
-    prioritize_for_tool_use, record_context_failure_hint, record_rate_limit_hint,
-    should_skip_for_context_hint, should_skip_for_rate_limit_hint,
+    record_context_failure_hint, record_rate_limit_hint, should_skip_for_context_hint,
+    should_skip_for_rate_limit_hint,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -44,38 +41,40 @@ impl RouteEngine {
 pub async fn route_chat_request(
     state: AppState,
     request: NormalizedChatRequest,
-    request_id: String,
+    context: crate::router::context::RoutingContext,
 ) -> Result<ChatResponse, ApiError> {
     let started_at = std::time::Instant::now();
+    let request_id = context.public_request_id.clone();
     let config = state.config();
     let registry = &state.provider_registry;
-    let policy = RoutePolicy::from_config(&config);
-
-    // Resolve model group
-    let resolved_targets =
-        crate::router::model_groups::resolve_model_group_targets(&state, &request.model)
-            .await
-            .unwrap_or_else(|| {
-                vec![crate::router::model_groups::ModelTarget::any_provider(
-                    request.model.clone(),
-                )]
-            });
-    let resolved_models = resolved_targets
-        .iter()
-        .map(|target| target.label())
-        .collect::<Vec<_>>();
+    let prepared = crate::router::planner::prepare_chat_plan(
+        &state,
+        &request,
+        &context,
+        crate::router::planner::PlanMode::Execute,
+    )
+    .await?;
+    let lock_candidate = prepared
+        .decision
+        .as_ref()
+        .is_some_and(|decision| decision.lock_candidate);
+    let agent_decision = prepared.decision;
+    let lease = prepared.lease;
+    let plan = prepared.attempts;
+    let resolved_models = prepared.resolved_models;
+    let token_estimate = prepared.token_estimate;
+    let adaptive = agent_decision.is_some();
     let resolved_model_label = resolved_models.join(", ");
-
-    // Build attempt plan
-    let mut plan = Vec::new();
-    for target in &resolved_targets {
-        let model_plan =
-            build_attempt_plan_for_target(&policy, registry, target, EndpointKind::ChatCompletions)
-                .await;
-        plan.extend(model_plan);
+    if let Some(decision) = &agent_decision {
+        crate::metrics::prometheus::record_agent_decision(
+            &decision.source,
+            &decision.tier,
+            &decision.phase,
+        );
+        crate::metrics::prometheus::record_pin_outcome(&decision.pin);
+        crate::metrics::prometheus::record_classifier_outcome(&decision.classifier_status);
+        crate::observability::record_agent_decision(&state, &request_id, decision).await;
     }
-    assign_attempt_priorities(&mut plan);
-
     if plan.is_empty() {
         crate::observability::record_route_plan(
             &state,
@@ -106,36 +105,6 @@ pub async fn route_chat_request(
             resolved_models
         )));
     }
-
-    // Filter by health and breaker state
-    let mut plan = filter_by_model_enabled_for_endpoint(
-        filter_by_paid_policy(filter_by_health(plan, &state), &state),
-        &state,
-        EndpointKind::ChatCompletions,
-    )
-    .await;
-    plan = filter_by_model_intelligence(plan, &state, ModelRequestRequirements::for_chat(&request))
-        .await;
-    if request.tools.is_some() {
-        plan = prioritize_for_tool_use(plan, &state).await;
-    }
-    plan = apply_policy_engine(
-        plan,
-        &state,
-        &policy,
-        &request.model,
-        EndpointKind::ChatCompletions,
-        chat_token_estimate(&request),
-    )
-    .await;
-    plan = crate::projects::filter_project_policy(
-        plan,
-        &state,
-        &request_id,
-        &request.model,
-        chat_token_estimate(&request),
-    )
-    .await?;
 
     if plan.is_empty() {
         crate::observability::record_route_plan(
@@ -187,6 +156,7 @@ pub async fn route_chat_request(
 
     // Execute the plan: try providers in order
     let mut last_error = None;
+    let mut budget_blocked: Option<ApiError> = None;
     let prompt_size_hint = request.prompt_size_hint();
     for attempt in &plan {
         let attempt_started_at = std::time::Instant::now();
@@ -200,6 +170,9 @@ pub async fn route_chat_request(
                 "recent context budget failure hint",
             )
             .await;
+            if lock_candidate {
+                return Err(affinity_target_unavailable());
+            }
             continue;
         }
         if should_skip_for_rate_limit_hint(&state, attempt) {
@@ -211,6 +184,9 @@ pub async fn route_chat_request(
                 "recent rate limit hint",
             )
             .await;
+            if lock_candidate {
+                return Err(affinity_target_unavailable());
+            }
             continue;
         }
 
@@ -226,6 +202,9 @@ pub async fn route_chat_request(
                     "circuit breaker open",
                 )
                 .await;
+                if lock_candidate {
+                    return Err(affinity_target_unavailable());
+                }
                 continue;
             }
         }
@@ -243,6 +222,9 @@ pub async fn route_chat_request(
                     "provider adapter missing from registry",
                 )
                 .await;
+                if lock_candidate {
+                    return Err(affinity_target_unavailable());
+                }
                 continue;
             }
         };
@@ -258,6 +240,9 @@ pub async fn route_chat_request(
                 "tools not supported",
             )
             .await;
+            if lock_candidate {
+                return Err(affinity_target_unavailable());
+            }
             continue;
         }
         if request.response_format.is_some() && !capabilities.supports_json_mode {
@@ -270,6 +255,9 @@ pub async fn route_chat_request(
                 "json mode not supported",
             )
             .await;
+            if lock_candidate {
+                return Err(affinity_target_unavailable());
+            }
             continue;
         }
 
@@ -294,6 +282,37 @@ pub async fn route_chat_request(
 
         // Attempt the request
         crate::observability::record_attempt_started(&state, &request_id, "chat", attempt).await;
+        let inference_hold = match begin_inference_hold(
+            &state,
+            adaptive,
+            &context.project.project_id,
+            &context.project.api_key_prefix,
+            &request_id,
+            provider_id,
+            &attempt.model_id,
+            &request.model,
+            provider_cfg.free_only,
+            &token_estimate,
+        )
+        .await
+        {
+            Ok(hold) => hold,
+            Err(error) => {
+                crate::observability::record_skip(
+                    &state,
+                    &request_id,
+                    "chat",
+                    attempt,
+                    "budget_denied",
+                )
+                .await;
+                if lock_candidate {
+                    return Err(error);
+                }
+                budget_blocked = Some(error);
+                continue;
+            }
+        };
         match adapter
             .chat_completions(
                 &ctx,
@@ -323,7 +342,7 @@ pub async fn route_chat_request(
 
                 // Record usage and metrics
                 let usage_ref = response.usage.as_ref().map(provider_usage_to_openai_usage);
-                let _ = crate::usage::accounting::record_usage(
+                let recorded = crate::usage::accounting::record_usage(
                     &state,
                     crate::usage::accounting::UsageRecord {
                         provider_id,
@@ -336,6 +355,16 @@ pub async fn route_chat_request(
                         endpoint_kind: "chat",
                         streaming: false,
                     },
+                )
+                .await;
+                settle_if_recorded(inference_hold, recorded.is_ok()).await;
+                finalize_agent_success(
+                    &state,
+                    &request_id,
+                    agent_decision.as_ref(),
+                    lease.as_ref(),
+                    attempt,
+                    &response,
                 )
                 .await;
 
@@ -358,6 +387,7 @@ pub async fn route_chat_request(
                 });
             }
             Err(e) => {
+                drop(inference_hold);
                 warn!(provider = %provider_id, error = %e, "Provider attempt failed");
                 crate::observability::record_attempt_result(
                     &state,
@@ -414,6 +444,29 @@ pub async fn route_chat_request(
                                 },
                             )
                             .await;
+                            let retry_hold = match begin_inference_hold(
+                                &state,
+                                adaptive,
+                                &context.project.project_id,
+                                &context.project.api_key_prefix,
+                                &request_id,
+                                provider_id,
+                                &attempt.model_id,
+                                &request.model,
+                                provider_cfg.free_only,
+                                &token_estimate,
+                            )
+                            .await
+                            {
+                                Ok(hold) => hold,
+                                Err(error) => {
+                                    if lock_candidate {
+                                        return Err(error);
+                                    }
+                                    budget_blocked = Some(error);
+                                    break;
+                                }
+                            };
                             match adapter
                                 .chat_completions(
                                     &ctx,
@@ -438,7 +491,7 @@ pub async fn route_chat_request(
                                     .await;
                                     let usage_ref =
                                         response.usage.as_ref().map(provider_usage_to_openai_usage);
-                                    let _ = crate::usage::accounting::record_usage(
+                                    let recorded = crate::usage::accounting::record_usage(
                                         &state,
                                         crate::usage::accounting::UsageRecord {
                                             provider_id,
@@ -451,6 +504,16 @@ pub async fn route_chat_request(
                                             endpoint_kind: "chat",
                                             streaming: false,
                                         },
+                                    )
+                                    .await;
+                                    settle_if_recorded(retry_hold, recorded.is_ok()).await;
+                                    finalize_agent_success(
+                                        &state,
+                                        &request_id,
+                                        agent_decision.as_ref(),
+                                        lease.as_ref(),
+                                        attempt,
+                                        &response,
                                     )
                                     .await;
                                     return Ok(ChatResponse {
@@ -518,6 +581,29 @@ pub async fn route_chat_request(
                         )
                         .await;
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        let delay_hold = match begin_inference_hold(
+                            &state,
+                            adaptive,
+                            &context.project.project_id,
+                            &context.project.api_key_prefix,
+                            &request_id,
+                            provider_id,
+                            &attempt.model_id,
+                            &request.model,
+                            provider_cfg.free_only,
+                            &token_estimate,
+                        )
+                        .await
+                        {
+                            Ok(hold) => hold,
+                            Err(error) => {
+                                if lock_candidate {
+                                    return Err(error);
+                                }
+                                budget_blocked = Some(error);
+                                continue;
+                            }
+                        };
                         match adapter
                             .chat_completions(
                                 &ctx,
@@ -542,7 +628,7 @@ pub async fn route_chat_request(
                                 .await;
                                 let usage_ref =
                                     response.usage.as_ref().map(provider_usage_to_openai_usage);
-                                let _ = crate::usage::accounting::record_usage(
+                                let recorded = crate::usage::accounting::record_usage(
                                     &state,
                                     crate::usage::accounting::UsageRecord {
                                         provider_id,
@@ -555,6 +641,16 @@ pub async fn route_chat_request(
                                         endpoint_kind: "chat",
                                         streaming: false,
                                     },
+                                )
+                                .await;
+                                settle_if_recorded(delay_hold, recorded.is_ok()).await;
+                                finalize_agent_success(
+                                    &state,
+                                    &request_id,
+                                    agent_decision.as_ref(),
+                                    lease.as_ref(),
+                                    attempt,
+                                    &response,
                                 )
                                 .await;
                                 return Ok(ChatResponse {
@@ -644,6 +740,32 @@ pub async fn route_chat_request(
     }
 
     // All providers exhausted
+    if last_error.is_none() {
+        if let Some(error) = budget_blocked {
+            let (http_status, code) = match &error {
+                ApiError::AgentRouting {
+                    http_status, code, ..
+                } => (*http_status, *code),
+                _ => (503, "budget_denied"),
+            };
+            record_route_failure(
+                &state,
+                RouteFailure {
+                    request_id: &request_id,
+                    endpoint_kind: "chat",
+                    requested_model: &request.model,
+                    selected_provider_id: plan.last().map(|p| p.provider_id.as_str()),
+                    selected_model_id: plan.last().map(|p| p.model_id.as_str()),
+                    status: code,
+                    http_status,
+                    started_at,
+                    streaming: false,
+                },
+            )
+            .await;
+            return Err(error);
+        }
+    }
     let msg = match last_error {
         Some(ref e) => format!("All providers failed. Last error: {}", e),
         None => format!("No available providers for model(s): {:?}", resolved_models),
@@ -954,13 +1076,6 @@ pub async fn route_embeddings_request(
     ))
 }
 
-fn chat_token_estimate(request: &NormalizedChatRequest) -> TokenEstimate {
-    TokenEstimate {
-        input_tokens: chars_to_token_hint(request.prompt_size_hint()),
-        output_tokens: request.max_tokens.unwrap_or(1024),
-    }
-}
-
 fn embeddings_token_estimate(request: &NormalizedEmbeddingsRequest) -> TokenEstimate {
     let input_chars = request.input.iter().map(|item| item.len()).sum::<usize>();
     TokenEstimate {
@@ -985,6 +1100,58 @@ fn api_error_for_exhausted(message: String, last_error: Option<&ProviderError>) 
         },
         _ => ApiError::RouteExhausted(message),
     }
+}
+
+fn affinity_target_unavailable() -> ApiError {
+    ApiError::AgentRouting {
+        http_status: 503,
+        code: "affinity_target_unavailable",
+        message: "the required affinity target is temporarily unavailable".into(),
+        retry_after: Some(1),
+    }
+}
+
+async fn finalize_agent_success(
+    state: &AppState,
+    request_id: &str,
+    decision: Option<&crate::router::planner::AgentDecision>,
+    lease: Option<&crate::router::affinity::AffinityLease>,
+    attempt: &crate::router::selection::RouteAttempt,
+    response: &crate::api::openai::chat::ProviderChatResponse,
+) {
+    let Some(decision) = decision else {
+        return;
+    };
+    let tool_ids = response
+        .tool_calls
+        .as_ref()
+        .map(|calls| calls.iter().map(|call| call.id.clone()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if let Some(lease) = lease {
+        lease.commit_success(
+            &attempt.provider_id,
+            &attempt.model_id,
+            decision.tier_value,
+            &decision.revision,
+            &tool_ids,
+            crate::router::continuation::continuation_support(&attempt.provider_id),
+            std::time::Duration::from_secs(state.config().routing.agent.session_idle_ttl_seconds),
+        );
+    }
+    let _ = crate::usage::accounting::annotate_request_decision(
+        state,
+        request_id,
+        crate::usage::accounting::DecisionStamp {
+            session_digest: decision.session_digest.as_deref(),
+            subtask_digest: decision.subtask_digest.as_deref(),
+            task_phase: Some(&decision.phase),
+            tier: Some(&decision.tier),
+            selection_source: Some(&decision.source),
+            profile_revision: Some(&decision.revision),
+            classifier_status: Some(&decision.classifier_status),
+        },
+    )
+    .await;
 }
 
 fn retry_after_from_epoch(reset_at: i64) -> Option<u64> {
@@ -1017,6 +1184,46 @@ fn provider_usage_to_openai_usage(
         prompt_cache_hit_tokens: usage.prompt_cache_hit_tokens,
         prompt_cache_miss_tokens: usage.prompt_cache_miss_tokens,
         reasoning_tokens: usage.reasoning_tokens,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn begin_inference_hold(
+    state: &AppState,
+    adaptive: bool,
+    project_id: &str,
+    api_key_prefix: &str,
+    request_id: &str,
+    provider_id: &str,
+    model_id: &str,
+    requested_model: &str,
+    free_only: bool,
+    estimate: &TokenEstimate,
+) -> Result<Option<crate::router::admission::PaidHold>, ApiError> {
+    if !adaptive {
+        return Ok(None);
+    }
+    crate::router::admission::reserve_adaptive_paid(
+        state,
+        project_id,
+        api_key_prefix,
+        request_id,
+        "inference",
+        provider_id,
+        model_id,
+        requested_model,
+        free_only,
+        estimate.input_tokens,
+        estimate.output_tokens,
+    )
+    .await
+}
+
+async fn settle_if_recorded(hold: Option<crate::router::admission::PaidHold>, recorded: bool) {
+    if recorded {
+        if let Some(hold) = hold {
+            hold.settle().await;
+        }
     }
 }
 

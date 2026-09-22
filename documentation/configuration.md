@@ -77,6 +77,40 @@ provider_order = [                  # Fallback ordering
 "preview:union-alpha" = 180000
 "openrouter/another-slow-model" = 150000
 
+[routing.agent]
+enabled = false                    # Opt-in subtask tiers and scoped affinity
+mode = "rules"                     # rules | shadow | adaptive
+session_idle_ttl_seconds = 600
+session_max_lifetime_seconds = 3600
+max_sessions = 10000
+max_sessions_per_project = 1000
+max_candidates = 256
+
+# Illustrative only. These groups are not created automatically.
+# [routing.agent.profiles.agent-auto]
+# default_tier = "standard"
+# economy_group = "agent-economy"
+# standard_group = "agent-standard"
+# advanced_group = "agent-advanced"
+# affinity = "prefer"
+
+[routing.agent.classifier]
+enabled = false
+provider_id = ""
+model_id = ""
+include_task_excerpt = false
+scope = "subtask_boundary"        # subtask_boundary | per_request
+confidence_threshold = 0.8
+timeout_ms = 300
+max_input_bytes = 8192
+max_output_tokens = 128
+max_concurrency = 32
+max_concurrency_per_project = 4
+cache_capacity = 10000
+cache_ttl_seconds = 300
+sample_rate = 1.0
+allowed_project_ids = []
+
 [routing.budgets]
 max_cost_per_request_usd = 0.01
 max_cost_per_day_usd = 2.00
@@ -304,6 +338,12 @@ IDs (`local`, `ollama`, `llama-cpp`, and `lmstudio`) always qualify, and any
 provider whose configured `base_url` uses `localhost`, `127.0.0.1`, or `::1`
 also qualifies. Local providers still use the normal adapter, health, breaker,
 fallback, usage, and metrics paths.
+
+`[routing.agent]` is the opt-in subtask router. Leave `enabled = false` unless
+you have created the profile's model groups. See
+[subtask routing](agent-routing.md) for headers, affinity, classification, and
+rollback. Profile names in the example above are not built-in defaults.
+Automatic classification stays experimental and off.
 
 For chat requests that include OpenAI `tools`, TokenScavenger applies a
 tool-aware reprioritization pass before policy scoring so agentic workloads and

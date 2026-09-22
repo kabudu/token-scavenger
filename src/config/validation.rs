@@ -180,7 +180,200 @@ pub fn validate_config(cfg: &Config) -> ConfigValidation {
         }
     }
 
+    validate_agent_routing(cfg, &mut v);
+
     v
+}
+
+fn validate_agent_routing(cfg: &Config, v: &mut ConfigValidation) {
+    let agent = &cfg.routing.agent;
+    if agent.session_idle_ttl_seconds == 0 {
+        v.errors
+            .push("routing.agent.session_idle_ttl_seconds must be > 0".into());
+    }
+    if agent.session_max_lifetime_seconds == 0 {
+        v.errors
+            .push("routing.agent.session_max_lifetime_seconds must be > 0".into());
+    }
+    if agent.session_idle_ttl_seconds > agent.session_max_lifetime_seconds {
+        v.errors.push(
+            "routing.agent.session_idle_ttl_seconds must not exceed session_max_lifetime_seconds"
+                .into(),
+        );
+    }
+    if agent.max_sessions == 0 || agent.max_sessions > 10_000 {
+        v.errors
+            .push("routing.agent.max_sessions must be between 1 and 10000".into());
+    }
+    if agent.max_sessions_per_project == 0 || agent.max_sessions_per_project > agent.max_sessions {
+        v.errors.push(
+            "routing.agent.max_sessions_per_project must be between 1 and max_sessions".into(),
+        );
+    }
+    if agent.max_candidates == 0 || agent.max_candidates > 256 {
+        v.errors
+            .push("routing.agent.max_candidates must be between 1 and 256".into());
+    }
+    if agent.enabled && agent.profiles.is_empty() {
+        v.errors.push(
+            "routing.agent.enabled requires at least one routing.agent.profiles entry".into(),
+        );
+    }
+
+    let mut visiting = std::collections::HashSet::new();
+    let mut visited = std::collections::HashSet::new();
+    for (name, profile) in &agent.profiles {
+        if name.trim().is_empty() || name.len() > 64 {
+            v.errors.push(format!(
+                "routing.agent profile name '{name}' must be 1–64 characters"
+            ));
+        }
+        for group in profile.groups() {
+            if group.trim().is_empty() {
+                v.errors.push(format!(
+                    "routing.agent.profiles.{name} has an empty tier group"
+                ));
+            }
+            if group == name {
+                v.errors.push(format!(
+                    "routing.agent.profiles.{name} group '{group}' points at its own profile"
+                ));
+            }
+        }
+        if profile_cycle(agent, name, &mut visiting, &mut visited) {
+            v.errors.push(format!(
+                "routing.agent.profiles.{name} participates in a profile cycle"
+            ));
+        }
+    }
+
+    for (index, rule) in agent.rules.iter().enumerate() {
+        if !agent.profiles.contains_key(&rule.profile) {
+            v.errors.push(format!(
+                "routing.agent.rules[{index}] references unknown profile '{}'",
+                rule.profile
+            ));
+        }
+        if let Some(task) = &rule.task_type {
+            if task.is_empty() || task.len() > 64 {
+                v.errors.push(format!(
+                    "routing.agent.rules[{index}].task_type must be 1–64 characters when set"
+                ));
+            }
+        }
+        if let Some(phase) = &rule.phase {
+            if !matches!(
+                phase.as_str(),
+                "auto" | "planner" | "tool_result" | "finalize" | "initial"
+            ) {
+                v.errors.push(format!(
+                    "routing.agent.rules[{index}].phase is not a known phase"
+                ));
+            }
+        }
+        if rule
+            .min_input_bytes
+            .is_some_and(|min| rule.max_input_bytes.is_some_and(|max| min > max))
+        {
+            v.errors.push(format!(
+                "routing.agent.rules[{index}] min_input_bytes exceeds max_input_bytes"
+            ));
+        }
+    }
+
+    let classifier = &agent.classifier;
+    if classifier.enabled {
+        if classifier.provider_id.trim().is_empty() || classifier.model_id.trim().is_empty() {
+            v.errors
+                .push("routing.agent.classifier.enabled requires provider_id and model_id".into());
+        }
+        if !classifier.provider_id.is_empty()
+            && !cfg
+                .providers
+                .iter()
+                .any(|provider| provider.id == classifier.provider_id)
+        {
+            v.errors.push(format!(
+                "routing.agent.classifier.provider_id '{}' is not a configured provider",
+                classifier.provider_id
+            ));
+        }
+        if !(0.0..=1.0).contains(&classifier.confidence_threshold)
+            || !classifier.confidence_threshold.is_finite()
+        {
+            v.errors.push(
+                "routing.agent.classifier.confidence_threshold must be between 0 and 1".into(),
+            );
+        }
+        if classifier.timeout_ms == 0 || classifier.timeout_ms > 5_000 {
+            v.errors
+                .push("routing.agent.classifier.timeout_ms must be between 1 and 5000".into());
+        }
+        if classifier.max_input_bytes == 0 || classifier.max_input_bytes > 8192 {
+            v.errors
+                .push("routing.agent.classifier.max_input_bytes must be between 1 and 8192".into());
+        }
+        if classifier.max_output_tokens == 0 || classifier.max_output_tokens > 128 {
+            v.errors.push(
+                "routing.agent.classifier.max_output_tokens must be between 1 and 128".into(),
+            );
+        }
+        if classifier.max_concurrency == 0 || classifier.max_concurrency > 32 {
+            v.errors
+                .push("routing.agent.classifier.max_concurrency must be between 1 and 32".into());
+        }
+        if classifier.max_concurrency_per_project == 0
+            || classifier.max_concurrency_per_project > classifier.max_concurrency
+        {
+            v.errors.push(
+                "routing.agent.classifier.max_concurrency_per_project must be between 1 and max_concurrency"
+                    .into(),
+            );
+        }
+        if classifier.cache_capacity == 0 || classifier.cache_capacity > 10_000 {
+            v.errors
+                .push("routing.agent.classifier.cache_capacity must be between 1 and 10000".into());
+        }
+        if classifier.cache_ttl_seconds == 0 {
+            v.errors
+                .push("routing.agent.classifier.cache_ttl_seconds must be > 0".into());
+        }
+        if !(0.0..=1.0).contains(&classifier.sample_rate) || !classifier.sample_rate.is_finite() {
+            v.errors
+                .push("routing.agent.classifier.sample_rate must be between 0 and 1".into());
+        }
+        if classifier.allowed_project_ids.is_empty() {
+            v.warnings.push(
+                "routing.agent.classifier.enabled but allowed_project_ids is empty, so no project can classify"
+                    .into(),
+            );
+        }
+    }
+}
+
+fn profile_cycle(
+    agent: &crate::config::schema::AgentRoutingConfig,
+    name: &str,
+    visiting: &mut std::collections::HashSet<String>,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    if visited.contains(name) {
+        return false;
+    }
+    if !visiting.insert(name.to_string()) {
+        return true;
+    }
+    if let Some(profile) = agent.profiles.get(name) {
+        for group in profile.groups() {
+            if agent.profiles.contains_key(group) && profile_cycle(agent, group, visiting, visited)
+            {
+                return true;
+            }
+        }
+    }
+    visiting.remove(name);
+    visited.insert(name.to_string());
+    false
 }
 
 #[cfg(test)]
