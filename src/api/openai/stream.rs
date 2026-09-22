@@ -181,11 +181,15 @@ async fn send_stream_event(
 async fn mark_stream_complete(
     state: &AppState,
     request_id: &str,
-    pin: &mut Option<crate::router::affinity::StreamPin>,
+    pin: &std::sync::Arc<std::sync::Mutex<Option<crate::router::affinity::StreamPin>>>,
     decision: Option<&crate::router::planner::AgentDecision>,
 ) {
-    if let Some(pin) = pin.as_mut() {
-        pin.completed = true;
+    if let Some(pin) = pin
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_mut()
+    {
+        pin.upstream_complete = true;
     }
     if let Some(decision) = decision {
         let _ = crate::usage::accounting::annotate_request_decision(
@@ -206,12 +210,13 @@ async fn mark_stream_complete(
 }
 
 fn observe_forwarded_pin(
-    pin: &mut Option<crate::router::affinity::StreamPin>,
+    pin: &std::sync::Arc<std::sync::Mutex<Option<crate::router::affinity::StreamPin>>>,
     provider_id: &str,
     model_id: &str,
     event: &StreamEvent,
 ) {
-    let Some(pin) = pin.as_mut() else {
+    let mut guard = pin.lock().unwrap_or_else(|error| error.into_inner());
+    let Some(pin) = guard.as_mut() else {
         return;
     };
     let tool_id = match event {
@@ -419,6 +424,7 @@ pub async fn create_chat_stream(
         )),
         _ => None,
     };
+    let stream_pin = std::sync::Arc::new(std::sync::Mutex::new(stream_pin));
     if let Some(decision) = &prepared.decision {
         crate::metrics::prometheus::record_agent_decision(
             &decision.source,
@@ -539,8 +545,9 @@ pub async fn create_chat_stream(
         None::<crate::router::admission::PaidHold>,
     ));
     let task_budget_hold = budget_hold.clone();
+    let task_stream_pin = stream_pin.clone();
     tokio::spawn(async move {
-        let mut affinity_pin = stream_pin;
+        let affinity_pin = task_stream_pin;
         let prompt_size_hint = request_clone.prompt_size_hint();
         let mut terminal_error = None;
         let mut terminal_failure_code = if lock_candidate {
@@ -756,9 +763,8 @@ pub async fn create_chat_stream(
                                         None,
                                     )
                                     .await;
-                                    if send_stream_event(&tx, StreamEvent::Done).await {
-                                        mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
-                                    }
+                                    mark_stream_complete(&state, &task_request_id, &affinity_pin, stream_decision.as_ref()).await;
+                                    let _ = send_stream_event(&tx, StreamEvent::Done).await;
                                     return;
                                 }
                                 Ok(Ok(())) => {
@@ -869,13 +875,15 @@ pub async fn create_chat_stream(
                     }
 
                     if forwarded_meaningful_event {
-                        observe_forwarded_pin(&mut affinity_pin, provider_id, model_id, &event);
+                        observe_forwarded_pin(&affinity_pin, provider_id, model_id, &event);
                         let done = matches!(event, StreamEvent::Done);
+                        if done {
+                            mark_stream_complete(&state, &task_request_id, &affinity_pin, stream_decision.as_ref()).await;
+                        }
                         if !send_stream_event(&tx, event).await {
                             return;
                         }
                         if done {
-                            mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
                             info!(
                                 provider = %provider_id,
                                 model = %model_id,
@@ -898,7 +906,7 @@ pub async fn create_chat_stream(
 
                     if stream_event_has_content(&event) {
                         forwarded_meaningful_event = true;
-                        observe_forwarded_pin(&mut affinity_pin, provider_id, model_id, &event);
+                        observe_forwarded_pin(&affinity_pin, provider_id, model_id, &event);
                         record_stream_timing_async(
                             &state,
                             &task_request_id,
@@ -965,9 +973,8 @@ pub async fn create_chat_stream(
                                 None,
                             )
                             .await;
-                            if send_stream_event(&tx, StreamEvent::Done).await {
-                                mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
-                            }
+                            mark_stream_complete(&state, &task_request_id, &affinity_pin, stream_decision.as_ref()).await;
+                            let _ = send_stream_event(&tx, StreamEvent::Done).await;
                             return;
                         }
                         Ok(Ok(())) => {
@@ -1151,27 +1158,18 @@ pub async fn create_chat_stream(
                                 model = %model_id,
                                 "Recovered empty upstream stream with non-streaming response"
                             );
-                            let mut delivered = true;
+                            mark_stream_complete(
+                                &state,
+                                &task_request_id,
+                                &affinity_pin,
+                                stream_decision.as_ref(),
+                            )
+                            .await;
                             for event in events {
-                                observe_forwarded_pin(
-                                    &mut affinity_pin,
-                                    provider_id,
-                                    model_id,
-                                    &event,
-                                );
+                                observe_forwarded_pin(&affinity_pin, provider_id, model_id, &event);
                                 if !send_stream_event(&tx, event).await {
-                                    delivered = false;
                                     break;
                                 }
-                            }
-                            if delivered {
-                                mark_stream_complete(
-                                    &state,
-                                    &task_request_id,
-                                    &mut affinity_pin,
-                                    stream_decision.as_ref(),
-                                )
-                                .await;
                             }
                             return;
                         }
@@ -1290,6 +1288,14 @@ pub async fn create_chat_stream(
                 StreamEvent::Done => {
                     if let Some(hold) = budget_hold.lock().await.take() {
                         drop(hold);
+                    }
+                    if let Some(mut pin) = stream_pin
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .take()
+                    {
+                        pin.completed = true;
+                        drop(pin);
                     }
                     yield Ok(Event::default().data("[DONE]"));
                     break;

@@ -112,6 +112,7 @@ pub async fn prepare_chat_plan(
     let revision = task_policy::policy_revision(
         &serde_json::to_string(&config.routing.agent).unwrap_or_default(),
     );
+    authorize_profile_alias(state, context, &profile_name).await?;
     let report = task_policy::detect_phase(request, context.hints.phase);
     if report.phase == Phase::Ambiguous
         && context.hints.affinity == Some(crate::router::context::AffinityHint::Required)
@@ -132,6 +133,13 @@ pub async fn prepare_chat_plan(
         }),
         false,
     );
+    if affinity == AffinityMode::Required && context.hints.session.is_none() {
+        return Err(agent_error(
+            400,
+            "session_required",
+            "required affinity needs an x-ts-session identifier",
+        ));
+    }
 
     let mut lease = None;
     let mut pin_outcome = PinOutcome::Miss;
@@ -159,6 +167,15 @@ pub async fn prepare_chat_plan(
             PinOutcome::Hit
         } else {
             PinOutcome::Miss
+        };
+    }
+    if pin
+        .as_ref()
+        .is_some_and(|previous| previous.policy_revision != revision)
+    {
+        pin = None;
+        pin_outcome = PinOutcome::Bypassed {
+            reason: "pin_policy_revision",
         };
     }
     if affinity != AffinityMode::Off
@@ -277,7 +294,7 @@ pub async fn prepare_chat_plan(
     }
 
     let group = profile.group_for(decision_tier.tier).to_string();
-    authorize_alias(state, context, &profile_name, &group, &profile).await?;
+    authorize_alias(state, context, &profile_name, &group).await?;
     let (mut attempts, resolved_models) = standard_attempts(
         state,
         request,
@@ -288,6 +305,11 @@ pub async fn prepare_chat_plan(
     )
     .await?;
     attempts = order_attempts(state, attempts, &config);
+    if affinity != AffinityMode::Off && request.tools.is_some() {
+        // An initial tool call on an opaque-continuation adapter would create a
+        // conversation that this proxy cannot resume on the next round.
+        attempts.retain(|attempt| continuation::is_replayable(&attempt.provider_id));
+    }
     let mut lock_candidate = false;
     if let Some(pin) = &pin {
         if report.continuation && !continuation::is_replayable(&pin.provider_id) {
@@ -508,7 +530,6 @@ async fn authorize_alias(
     context: &RoutingContext,
     alias: &str,
     group: &str,
-    profile: &crate::config::schema::AgentProfileConfig,
 ) -> Result<(), ApiError> {
     if !context.project.enforce_policy {
         return Ok(());
@@ -518,16 +539,42 @@ async fn authorize_alias(
     else {
         return Err(ApiError::Forbidden);
     };
+    if !policy.enabled {
+        return Err(ApiError::Forbidden);
+    }
     if policy.allowed_model_groups.is_empty() {
         return Ok(());
     }
     let alias_allowed = policy.allowed_model_groups.iter().any(|name| name == alias);
-    let group_allowed = policy.allowed_model_groups.iter().any(|name| name == group)
-        || profile.groups().contains(&group);
+    let group_allowed = policy.allowed_model_groups.iter().any(|name| name == group);
     if alias_allowed && group_allowed {
         return Ok(());
     }
     Err(ApiError::Forbidden)
+}
+
+async fn authorize_profile_alias(
+    state: &AppState,
+    context: &RoutingContext,
+    alias: &str,
+) -> Result<(), ApiError> {
+    if !context.project.enforce_policy {
+        return Ok(());
+    }
+    let Some(policy) =
+        crate::projects::load_project_policy(&state.db, &context.project.project_id).await?
+    else {
+        return Err(ApiError::Forbidden);
+    };
+    if !policy.enabled {
+        return Err(ApiError::Forbidden);
+    }
+    if !policy.allowed_model_groups.is_empty()
+        && !policy.allowed_model_groups.iter().any(|name| name == alias)
+    {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
 }
 
 async fn classifier_allowed(state: &AppState, context: &RoutingContext) -> bool {
@@ -555,10 +602,24 @@ async fn classifier_allowed(state: &AppState, context: &RoutingContext) -> bool 
     else {
         return false;
     };
+    if !policy.enabled {
+        return false;
+    }
     if matches!(policy.privacy_profile, PrivacyProfile::LocalOnly) && !provider_is_local(provider) {
         return false;
     }
     if matches!(policy.privacy_profile, PrivacyProfile::FreeOnly) && !provider.free_only {
+        return false;
+    }
+    if !policy.provider_allowlist.is_empty()
+        && !policy
+            .provider_allowlist
+            .iter()
+            .any(|id| id == &provider.id)
+    {
+        return false;
+    }
+    if policy.provider_denylist.iter().any(|id| id == &provider.id) {
         return false;
     }
     if !provider.free_only && !policy.allow_paid_fallback {

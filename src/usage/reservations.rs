@@ -122,19 +122,10 @@ impl BudgetLedger {
         if self.seeded.load(Ordering::Acquire) {
             return Ok(());
         }
-        sqlx::query(
-            "UPDATE spend_reservations
-             SET state = 'settled'
-             WHERE state = 'reserved'
-               AND EXISTS (
-                   SELECT 1 FROM usage_events u
-                   WHERE u.request_id = spend_reservations.request_id
-                     AND u.purpose = spend_reservations.purpose
-               )",
-        )
-        .execute(db)
-        .await
-        .map_err(internal)?;
+        // A request may have several provider attempts with the same purpose.
+        // A usage row for one attempt cannot prove that another reservation was
+        // billed or settled. Until reservations and usage share an attempt ID,
+        // retain all crash-uncertain charges rather than risk undercounting.
         sqlx::query("UPDATE spend_reservations SET state = 'retained' WHERE state = 'reserved'")
             .execute(db)
             .await
@@ -366,6 +357,31 @@ mod tests {
         assert_eq!(restarted.outstanding_micros("project:default"), 2_000);
         assert!(!restarted.paid_admission_blocked());
         let _ = reservation;
+    }
+
+    #[tokio::test]
+    async fn unrelated_attempt_usage_does_not_clear_a_crash_uncertain_charge() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("src/db/migrations")
+            .run(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO request_log (request_id, endpoint_kind, requested_model, status) VALUES ('req', 'chat', 'agent-auto', 'pending')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO usage_events (request_id, provider_id, purpose, estimated_cost_usd) VALUES ('req', 'first-provider', 'inference', 0.001)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO spend_reservations (request_id, project_id, purpose, scope_key, amount_micros, state) VALUES ('req', 'default', 'inference', 'global:today', 2000, 'reserved')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let restarted = BudgetLedger::new();
+        restarted.ensure_seeded(&pool).await.unwrap();
+        assert_eq!(restarted.outstanding_micros("global:today"), 2_000);
     }
 
     #[tokio::test]

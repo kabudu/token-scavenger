@@ -46,7 +46,7 @@ Create the `agent-auto` profile and its model groups yourself. The example does 
 
 A profile maps `economy`, `standard`, and `advanced` onto existing model groups. Ordered rules match task label, phase, tool/json/vision requirements, and input-size bands. The first match wins. An unknown label uses the profile default. An explicit tier hint is allowed only when that profile defines the tier. A continuation of a matched tool call reuses the pinned tier.
 
-Project policy must allow the public profile name. The profile's three groups are the operator's delegation for that alias. The alias does not allow any other group, and provider, privacy, and paid policies still apply to the chosen target.
+When a project has an `allowed_model_groups` list, it must include both the public profile name and each tier group that project may use. A tier hint or classifier decision cannot grant another group. Provider, privacy, and paid policies still apply to the chosen target and to the classifier target.
 
 `max_candidates` rejects a profile that expands past the configured cap (hard maximum 256) instead of truncating it.
 
@@ -59,6 +59,8 @@ Affinity state is process-local. A restart drops every pin. More than one replic
 | `off` | No pin. |
 | `prefer` | Reuse the pin when it is still eligible inside the same free/paid partition. A paid pin does not jump ahead of an eligible free candidate. |
 | `required` | Do not switch. A missing or incomplete tool continuation returns `409 session_state_unavailable`. A temporarily unhealthy target returns `503 affinity_target_unavailable`. |
+
+`required` needs `x-ts-session`; omitting it returns `400 session_required`. When tools are present and affinity is enabled, the router excludes adapters whose tool history cannot be replayed by this proxy.
 
 Idle expiry defaults to 600 seconds and is refreshed only after a successful turn. Absolute lifetime defaults to 3600 seconds. One request may be in flight for an exact session and subtask (`409 subtask_busy`). Distinct subtasks run concurrently. At the configured cap, new affinity scopes return `429 affinity_capacity_exceeded` with `Retry-After`; requests without a session still route.
 

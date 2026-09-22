@@ -1351,19 +1351,17 @@ pub async fn prioritize_for_tool_use(
         return plan;
     }
 
+    let pairs = plan
+        .iter()
+        .map(|attempt| (attempt.provider_id.clone(), attempt.model_id.clone()))
+        .collect::<Vec<_>>();
+    let tools = load_tool_flags(&state.db, &pairs).await;
     let mut scored = Vec::with_capacity(plan.len());
     for (original_index, attempt) in plan.drain(..).enumerate() {
-        let supports_tools = sqlx::query_as::<_, (bool,)>(
-            "SELECT supports_tools FROM models WHERE provider_id = ? AND upstream_model_id = ?",
-        )
-        .bind(&attempt.provider_id)
-        .bind(&attempt.model_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .map(|row| row.0)
-        .unwrap_or(true);
+        let supports_tools = tools
+            .get(&(attempt.provider_id.clone(), attempt.model_id.clone()))
+            .copied()
+            .unwrap_or(true);
 
         let provider_rank = tool_reliability_rank(&attempt.provider_id);
         scored.push((
@@ -1403,6 +1401,34 @@ pub async fn prioritize_for_tool_use(
     }
 
     scored.into_iter().map(|(attempt, _)| attempt).collect()
+}
+
+async fn load_tool_flags(
+    db: &sqlx::SqlitePool,
+    pairs: &[(String, String)],
+) -> std::collections::HashMap<(String, String), bool> {
+    let mut flags = std::collections::HashMap::new();
+    for chunk in pairs.chunks(80) {
+        let placeholders = chunk
+            .iter()
+            .map(|_| "(?, ?)")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT provider_id, upstream_model_id, supports_tools FROM models
+             WHERE (provider_id, upstream_model_id) IN (VALUES {placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, (String, String, bool)>(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        if let Ok(rows) = query.fetch_all(db).await {
+            for (provider_id, model_id, supported) in rows {
+                flags.insert((provider_id, model_id), supported);
+            }
+        }
+    }
+    flags
 }
 
 #[derive(Debug)]

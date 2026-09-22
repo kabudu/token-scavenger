@@ -60,12 +60,15 @@ The `message` is intended for logs and operator diagnostics. Client retry logic 
 | `429` | `quota_exhausted` | Configured provider quota is exhausted until a reset window. | Back off until the indicated reset, or choose another model group. |
 | `503` | `route_exhausted` | No viable route remained for reasons other than rate limits, such as unhealthy providers, open circuit breakers, unsupported models, or upstream 5xx failures. | Retry later or use a different model group; inspect `/metrics` and the UI. |
 | `400` | `unsupported_continuation` | A required tool continuation targets a provider that needs opaque state this proxy does not store. | Start a new subtask on a replayable provider. |
+| `400` | `session_required` | Required affinity was requested without `x-ts-session`. | Supply a session identifier or use a profile that permits stateless routing. |
 | `409` | `session_state_unavailable` | Required affinity has no usable pin, often after restart or an incomplete stream. | Retry the subtask from a complete history or start a new session. `Retry-After` may be set. |
 | `409` | `ambiguous_continuation` | Tool-call ids are partial, duplicated, or orphaned. | Send a matched tool history. The proxy will not repair it. |
 | `409` | `subtask_busy` | This session and subtask already has a request in flight. | Retry that subtask. Other subtasks are unaffected. |
 | `429` | `affinity_capacity_exceeded` | The process is at its affinity scope cap. | Retry later, or omit session headers. `Retry-After` is set. |
 | `503` | `affinity_target_unavailable` | The required pin's provider is temporarily ineligible. | Retry the same target. The proxy does not switch it. |
 | `500` | `internal_error` | TokenScavenger hit an internal error. | Retry cautiously and inspect logs. |
+
+Chat and embeddings responses include the effective `X-Request-Id` used by request traces and usage records. A supplied `X-Request-Id` is kept on its first use; if it collides with an active or persisted request, the proxy issues a new ID and returns it in that response header. Use the returned ID for diagnostics.
 
 ## Rate Limits and Backoff
 

@@ -238,6 +238,114 @@ async fn required_tool_continuation_without_a_pin_is_a_conflict() {
 }
 
 #[tokio::test]
+async fn required_affinity_needs_a_session_and_accepts_two_tool_rounds() {
+    let mut agent = rules_agent();
+    agent.profiles.get_mut("agent-auto").unwrap().affinity = AffinityMode::Required;
+    let state = app_with_profiles(agent).await;
+    let app = tokenscavenger::app::startup::build_router(state.clone());
+    let no_session = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [{"role": "user", "content": "start"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_session.status(), StatusCode::BAD_REQUEST);
+
+    let first = app
+        .clone()
+        .oneshot(chat("agent-auto", "plan", "two-rounds"))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let continued = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .header("x-request-id", "two-rounds-follow")
+                .header("x-ts-session", "run-1")
+                .header("x-ts-subtask", "two-rounds")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [
+                            {"role": "user", "content": "look up two things"},
+                            {"role": "assistant", "content": "", "tool_calls": [{"id": "a", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]},
+                            {"role": "tool", "tool_call_id": "a", "content": "first"},
+                            {"role": "assistant", "content": "", "tool_calls": [{"id": "b", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]},
+                            {"role": "tool", "tool_call_id": "b", "content": "second"}
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(continued.status(), StatusCode::OK);
+    let decision = decision_value(&state, "two-rounds-follow").await;
+    assert_eq!(decision["phase"], "tool_result");
+    assert_eq!(decision["pin"], "pin_hit");
+}
+
+#[tokio::test]
+async fn concurrent_reused_client_request_ids_get_distinct_trace_rows() {
+    let mock = common::MockProviderState {
+        delay_ms: 100,
+        ..Default::default()
+    };
+    let (base_url, _server) = common::start_mock_server(mock).await;
+    let state = app_with_profiles_at(rules_agent(), &base_url).await;
+    let app = tokenscavenger::app::startup::build_router(state.clone());
+    let mut left = chat("agent-auto", "plan", "left-id");
+    let mut right = chat("agent-auto", "extract", "right-id");
+    left.headers_mut()
+        .insert("x-request-id", "same-id".parse().unwrap());
+    right
+        .headers_mut()
+        .insert("x-request-id", "same-id".parse().unwrap());
+    let (left, right) = tokio::join!(app.clone().oneshot(left), app.oneshot(right));
+    let left = left.unwrap();
+    let right = right.unwrap();
+    assert_eq!(left.status(), StatusCode::OK);
+    assert_eq!(right.status(), StatusCode::OK);
+    let left_id = left
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let right_id = right
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_ne!(left_id, right_id);
+    let rows: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM request_log WHERE request_id IN (?, ?)")
+            .bind(left_id)
+            .bind(right_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(rows.0, 2);
+}
+
+#[tokio::test]
 async fn preview_does_not_create_a_request_row() {
     let state = app_with_profiles(rules_agent()).await;
     let app = tokenscavenger::app::startup::build_router(state.clone());
@@ -544,6 +652,48 @@ async fn completed_stream_pins_the_subtask_and_a_dropped_stream_does_not() {
     assert_eq!(decision["pin"], "pin_hit");
 }
 
+#[tokio::test]
+async fn queued_done_without_consumer_delivery_does_not_complete_a_pin() {
+    let mock = common::MockProviderState::default();
+    let (base_url, _server) = common::start_mock_server(mock).await;
+    let mut agent = rules_agent();
+    agent.profiles.get_mut("agent-auto").unwrap().affinity = AffinityMode::Required;
+    let state = app_with_profiles_at(agent, &base_url).await;
+    let app = tokenscavenger::app::startup::build_router(state);
+    let response = app
+        .clone()
+        .oneshot(stream_chat("queued-done"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    drop(response);
+
+    let mut status = StatusCode::CONFLICT;
+    let mut body = String::new();
+    for attempt in 0..40 {
+        let continued = app
+            .clone()
+            .oneshot(tool_continuation("queued-done", attempt))
+            .await
+            .unwrap();
+        status = continued.status();
+        body = String::from_utf8_lossy(
+            &axum::body::to_bytes(continued.into_body(), 65536)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        if body.contains("subtask_busy") {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            continue;
+        }
+        break;
+    }
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("session_state_unavailable"), "{body}");
+}
+
 fn stream_chat(subtask: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
@@ -665,7 +815,13 @@ async fn admin_project_key_can_call_a_profile() {
     let mut config = Config::default();
     config.server.master_api_key = "master-secret".into();
     config.routing.provider_order = vec!["groq".into()];
-    config.routing.agent = rules_agent();
+    let mut agent = rules_agent();
+    agent.mode = AgentRoutingMode::Adaptive;
+    agent.classifier.enabled = true;
+    agent.classifier.provider_id = "groq".into();
+    agent.classifier.model_id = "classifier-model".into();
+    agent.classifier.allowed_project_ids = vec!["desk".into()];
+    config.routing.agent = agent;
     config.providers = vec![ProviderConfig {
         id: "groq".into(),
         enabled: true,
@@ -697,7 +853,7 @@ async fn admin_project_key_can_call_a_profile() {
                     serde_json::json!({
                         "project_id": "desk",
                         "display_name": "Desk",
-                        "allowed_model_groups": ["agent-auto"]
+                        "allowed_model_groups": ["agent-auto", "advanced"]
                     })
                     .to_string(),
                 ))
@@ -729,6 +885,7 @@ async fn admin_project_key_can_call_a_profile() {
     let api_key = issued_json["api_key"].as_str().unwrap();
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -759,4 +916,201 @@ async fn admin_project_key_can_call_a_profile() {
     assert_eq!(project.0, "desk");
     let decision = decision_value(&state, "desk-1").await;
     assert_eq!(decision["tier"], "advanced");
+
+    // A second caller may reuse a correlation header. It must receive a new
+    // storage ID instead of overwriting this project's row or attribution.
+    let collision = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", "Bearer master-secret")
+                .header("content-type", "application/json")
+                .header("x-request-id", "desk-1")
+                .header("x-ts-task-type", "plan")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [{"role": "user", "content": "plan another chapter"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(collision.status(), StatusCode::OK);
+    let collision_id = collision
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_ne!(collision_id, "desk-1");
+    let rows: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM request_log WHERE request_id IN (?, 'desk-1')")
+            .bind(collision_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(rows.0, 2);
+    let original_project: (String,) =
+        sqlx::query_as("SELECT project_id FROM request_log WHERE request_id = 'desk-1'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(original_project.0, "desk");
+    let second_project: (String,) =
+        sqlx::query_as("SELECT project_id FROM request_log WHERE request_id = ?")
+            .bind(collision_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(second_project.0, "default");
+
+    let restricted = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/projects/desk")
+                .header("authorization", "Bearer master-secret")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "display_name": "Desk",
+                        "allowed_model_groups": ["agent-auto", "economy"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restricted.status(), StatusCode::OK);
+    let denied = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .header("x-request-id", "desk-denied")
+                .header("x-ts-session", "desk-new-run")
+                .header("x-ts-subtask", "plan")
+                .header("x-ts-task-type", "plan")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [{"role": "user", "content": "plan the chapter"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+    let denied_provider = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/projects/desk")
+                .header("authorization", "Bearer master-secret")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "display_name": "Desk",
+                        "allowed_model_groups": ["agent-auto", "standard"],
+                        "provider_denylist": ["groq"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_provider.status(), StatusCode::OK);
+    let no_classification = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .header("x-request-id", "desk-no-classifier")
+                .header("x-ts-task-type", "unrecognised")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [{"role": "user", "content": "a new task"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_classification.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let classifier_usage: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM usage_events WHERE request_id = 'desk-no-classifier' AND purpose = 'classification'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(classifier_usage.0, 0);
+
+    let no_alias = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/admin/projects/desk")
+                .header("authorization", "Bearer master-secret")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "display_name": "Desk",
+                        "allowed_model_groups": ["standard"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_alias.status(), StatusCode::OK);
+    let rejected_before_classifier = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .header("x-request-id", "desk-no-alias")
+                .header("x-ts-task-type", "unrecognised")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [{"role": "user", "content": "a new task"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected_before_classifier.status(), StatusCode::FORBIDDEN);
+    let classifier_usage: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM usage_events WHERE request_id = 'desk-no-alias' AND purpose = 'classification'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(classifier_usage.0, 0);
 }

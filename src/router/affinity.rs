@@ -175,6 +175,14 @@ impl AffinityStore {
         let _guard = self.admission.lock().unwrap_or_else(|err| err.into_inner());
         let now = self.now_ms();
         if let Some(mut entry) = self.scopes.get_mut(&key) {
+            if entry.in_flight {
+                return Err(agent_error(
+                    409,
+                    "subtask_busy",
+                    "this session subtask already has a request in flight",
+                    Some(1),
+                ));
+            }
             if entry.absolute_deadline_ms <= now
                 || entry
                     .last_success_ms
@@ -189,14 +197,6 @@ impl AffinityStore {
                 entry.created_ms = now;
                 entry.absolute_deadline_ms = now.saturating_add(max_lifetime.as_millis() as u64);
                 entry.generation = entry.generation.saturating_add(1);
-            }
-            if entry.in_flight {
-                return Err(agent_error(
-                    409,
-                    "subtask_busy",
-                    "this session subtask already has a request in flight",
-                    Some(1),
-                ));
             }
             entry.in_flight = true;
             entry.idle_deadline_ms = now.saturating_add(idle_ttl.as_millis() as u64);
@@ -254,6 +254,7 @@ impl AffinityStore {
     }
 
     pub fn sweep(&self) {
+        let _guard = self.admission.lock().unwrap_or_else(|err| err.into_inner());
         let now = self.now_ms();
         let expired: Vec<String> = self
             .scopes
@@ -268,7 +269,6 @@ impl AffinityStore {
             })
             .map(|entry| entry.key().clone())
             .collect();
-        let _guard = self.admission.lock().unwrap_or_else(|err| err.into_inner());
         for key in expired {
             if let Some((_, entry)) = self.scopes.remove(&key) {
                 if entry.in_flight {
@@ -305,6 +305,7 @@ impl AffinityStore {
         incomplete: bool,
         idle_ttl: Duration,
     ) {
+        let _guard = self.admission.lock().unwrap_or_else(|err| err.into_inner());
         let now = self.now_ms();
         let mut digests = Vec::new();
         let mut bytes = 0usize;
@@ -406,6 +407,7 @@ impl Drop for AffinityLease {
 pub struct StreamPin {
     lease: AffinityLease,
     pub visible: bool,
+    pub upstream_complete: bool,
     pub completed: bool,
     pub provider_id: String,
     pub model_id: String,
@@ -426,6 +428,7 @@ impl StreamPin {
         Self {
             lease,
             visible: false,
+            upstream_complete: false,
             completed: false,
             provider_id: String::new(),
             model_id: String::new(),
@@ -455,7 +458,7 @@ impl StreamPin {
 
 impl Drop for StreamPin {
     fn drop(&mut self) {
-        if self.completed && !self.provider_id.is_empty() {
+        if self.upstream_complete && self.completed && !self.provider_id.is_empty() {
             self.lease.commit_success(
                 &self.provider_id,
                 &self.model_id,
@@ -568,6 +571,49 @@ mod tests {
             Duration::from_secs(3600),
         );
         assert!(again.is_ok());
+    }
+
+    #[test]
+    fn expiry_cannot_orphan_an_active_lease() {
+        let store = store();
+        let active = store
+            .try_admit(
+                "scope".into(),
+                "default",
+                10,
+                10,
+                Duration::from_secs(2),
+                Duration::from_secs(2),
+            )
+            .unwrap();
+        store.advance(Duration::from_secs(3));
+        assert!(matches!(
+            store.try_admit(
+                "scope".into(),
+                "default",
+                10,
+                10,
+                Duration::from_secs(2),
+                Duration::from_secs(2),
+            ),
+            Err(ApiError::AgentRouting {
+                code: "subtask_busy",
+                ..
+            })
+        ));
+        drop(active);
+        assert!(
+            store
+                .try_admit(
+                    "scope".into(),
+                    "default",
+                    10,
+                    10,
+                    Duration::from_secs(2),
+                    Duration::from_secs(2),
+                )
+                .is_ok()
+        );
     }
 
     #[test]

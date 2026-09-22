@@ -87,15 +87,11 @@ impl RoutingHints {
 
 /// Immutable per-request routing identity.
 ///
-/// `public_request_id` is the echoed correlation id (client `X-Request-Id` or a
-/// generated UUID) and is what `request_log` stores so existing clients can
-/// find their row. `internal_request_id` is always server-generated and is the
-/// only id used for in-process ownership of affinity leases and classifier
-/// attempts. Project context is captured here from authentication, not looked
-/// up later by a client-supplied id.
+/// `public_request_id` becomes the unique effective storage and trace id after
+/// the route handler claims it. A colliding client correlation id is replaced
+/// with a generated UUID. Project context is captured from authentication.
 pub struct RoutingContext {
     pub public_request_id: String,
-    pub internal_request_id: String,
     pub project: ClientProjectContext,
     pub hints: RoutingHints,
     pub deadline: Instant,
@@ -111,7 +107,6 @@ impl std::fmt::Debug for RoutingContext {
         formatter
             .debug_struct("RoutingContext")
             .field("public_request_id", &self.public_request_id)
-            .field("internal_request_id", &self.internal_request_id)
             .field("project_id", &self.project.project_id)
             .field("principal_id", &self.project.principal_id)
             .field("hints", &self.hints)
@@ -128,7 +123,6 @@ pub fn routing_context(
 ) -> Result<RoutingContext, ApiError> {
     Ok(RoutingContext {
         public_request_id: public_request_id(headers),
-        internal_request_id: uuid::Uuid::new_v4().to_string(),
         project,
         hints: parse_routing_headers(headers)?,
         deadline: Instant::now() + timeout,

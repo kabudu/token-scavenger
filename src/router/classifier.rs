@@ -103,8 +103,14 @@ pub struct AdmissionGuard<'a> {
 impl Drop for AdmissionGuard<'_> {
     fn drop(&mut self) {
         self.admission.global.fetch_sub(1, Ordering::AcqRel);
-        if let Some(mut count) = self.admission.per_project.get_mut(&self.project_id) {
-            *count = count.saturating_sub(1);
+        if let dashmap::mapref::entry::Entry::Occupied(mut entry) =
+            self.admission.per_project.entry(self.project_id.clone())
+        {
+            if *entry.get() <= 1 {
+                entry.remove();
+            } else {
+                *entry.get_mut() -= 1;
+            }
         }
     }
 }
@@ -613,5 +619,18 @@ mod tests {
         assert!(admission.try_acquire("other", 1, 1).is_none());
         drop(first);
         assert!(admission.try_acquire("other", 1, 1).is_some());
+    }
+
+    #[test]
+    fn admission_project_counters_do_not_accumulate() {
+        let admission = ClassifierAdmission::new();
+        for project in 0..1_000 {
+            let guard = admission
+                .try_acquire(&format!("project-{project}"), 1, 1)
+                .unwrap();
+            drop(guard);
+        }
+        assert!(admission.per_project.is_empty());
+        assert_eq!(admission.in_flight(), 0);
     }
 }

@@ -35,7 +35,7 @@ pub struct FailureRecord<'a> {
 
 /// Record a usage event for a completed request.
 pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(), sqlx::Error> {
-    let project = crate::projects::remove_request_project(state, record.request_id)
+    let project = crate::projects::project_for_request(state, record.request_id)
         .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
     let usage = record.usage.unwrap_or(&UsageResponse {
         prompt_tokens: 0,
@@ -125,6 +125,7 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
     .await?;
 
     // Emit metrics
+    crate::projects::remove_request_project(state, record.request_id);
     crate::metrics::prometheus::record_request(
         record.provider_id,
         record.model_id,
@@ -180,7 +181,7 @@ pub async fn record_failure(
     state: &AppState,
     record: FailureRecord<'_>,
 ) -> Result<(), sqlx::Error> {
-    let project = crate::projects::remove_request_project(state, record.request_id)
+    let project = crate::projects::project_for_request(state, record.request_id)
         .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
     let error_summary = record.error_summary.map(|summary| {
         let config = state.config();
@@ -216,6 +217,7 @@ pub async fn record_failure(
     .execute(&state.db)
     .await?;
 
+    crate::projects::remove_request_project(state, record.request_id);
     crate::metrics::prometheus::record_request(
         record.selected_provider_id.unwrap_or("none"),
         record.selected_model_id.unwrap_or(record.requested_model),

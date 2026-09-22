@@ -135,70 +135,59 @@ struct StructuralPhase {
 }
 
 fn structural_phase(messages: &[ChatMessage]) -> StructuralPhase {
-    let Some(assistant_index) = messages.iter().rposition(|message| {
-        message.role == "assistant"
+    let mut expected = std::collections::HashSet::new();
+    let mut received = std::collections::HashSet::new();
+    let mut round_ids = Vec::new();
+    let mut duplicate = false;
+    let mut orphan = false;
+    let mut partial = false;
+    let mut ends_with_results = false;
+    for message in messages {
+        if message.role == "assistant"
             && message
                 .tool_calls
                 .as_ref()
                 .is_some_and(|calls| !calls.is_empty())
-    }) else {
-        return StructuralPhase {
-            phase: Phase::Initial,
-            partial: false,
-            orphan: messages.iter().any(|message| message.role == "tool"),
-            duplicate: false,
-            matched_ids: Vec::new(),
-        };
-    };
-
-    let assistant = &messages[assistant_index];
-    let mut assistant_ids = Vec::new();
-    let mut duplicate = false;
-    if let Some(calls) = &assistant.tool_calls {
-        for call in calls {
-            if assistant_ids.iter().any(|id| id == &call.id) || call.id.is_empty() {
-                duplicate = true;
+        {
+            if !expected.is_empty() && received.len() != expected.len() {
+                partial = true;
             }
-            assistant_ids.push(call.id.clone());
-        }
-    }
-
-    let mut tool_ids = Vec::new();
-    let mut user_after_tools = false;
-    for message in messages.iter().skip(assistant_index + 1) {
-        if message.role == "tool" {
-            if let Some(id) = &message.tool_call_id {
-                if tool_ids.iter().any(|existing| existing == id) {
+            expected.clear();
+            received.clear();
+            round_ids.clear();
+            for call in message.tool_calls.as_ref().unwrap() {
+                if call.id.is_empty() || !expected.insert(call.id.as_str()) {
                     duplicate = true;
                 }
-                tool_ids.push(id.clone());
-            } else {
-                duplicate = true;
+                round_ids.push(call.id.clone());
             }
-        } else if message.role == "user" || message.role == "assistant" {
-            user_after_tools = true;
+            ends_with_results = false;
+        } else if message.role == "tool" {
+            match message.tool_call_id.as_deref() {
+                Some(id) if expected.contains(id) => {
+                    if !received.insert(id) {
+                        duplicate = true;
+                    }
+                    ends_with_results = received.len() == expected.len();
+                }
+                _ => orphan = true,
+            }
+        } else {
+            if !expected.is_empty() && received.len() != expected.len() {
+                partial = true;
+            }
+            expected.clear();
+            received.clear();
+            ends_with_results = false;
         }
     }
+    if !expected.is_empty() && received.len() != expected.len() {
+        partial = true;
+    }
 
-    let orphan = tool_ids
-        .iter()
-        .any(|id| !assistant_ids.iter().any(|aid| aid == id))
-        || messages
-            .iter()
-            .take(assistant_index)
-            .any(|message| message.role == "tool");
-    let partial = assistant_ids
-        .iter()
-        .any(|id| !tool_ids.iter().any(|tid| tid == id));
-    let matched = !assistant_ids.is_empty()
-        && !partial
-        && !orphan
-        && !duplicate
-        && tool_ids.len() == assistant_ids.len();
-
-    let phase = if duplicate || orphan || (partial && !tool_ids.is_empty()) {
+    let phase = if duplicate || orphan || partial {
         Phase::Ambiguous
-    } else if matched && !user_after_tools {
+    } else if ends_with_results {
         Phase::ToolResult
     } else {
         Phase::Initial
@@ -206,10 +195,14 @@ fn structural_phase(messages: &[ChatMessage]) -> StructuralPhase {
 
     StructuralPhase {
         phase,
-        partial: partial && !tool_ids.is_empty(),
+        partial,
         orphan,
         duplicate,
-        matched_ids: if matched { assistant_ids } else { Vec::new() },
+        matched_ids: if ends_with_results {
+            round_ids
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -409,6 +402,34 @@ mod tests {
         assert_eq!(partial.phase, Phase::Ambiguous);
         assert!(partial.partial_tool_results);
         assert!(partial.header_overridden);
+    }
+
+    #[test]
+    fn completed_prior_tool_round_is_not_an_orphan() {
+        let mut first_call = message("assistant", "");
+        first_call.tool_calls = Some(vec![tool_call("a")]);
+        let mut first_result = message("tool", "first");
+        first_result.tool_call_id = Some("a".into());
+        let mut second_call = message("assistant", "");
+        second_call.tool_calls = Some(vec![tool_call("b")]);
+        let mut second_result = message("tool", "second");
+        second_result.tool_call_id = Some("b".into());
+
+        let history = vec![
+            message("user", "look up both"),
+            first_call,
+            first_result,
+            second_call.clone(),
+            second_result,
+        ];
+        let report = detect_phase(&request(history), None);
+        assert_eq!(report.phase, Phase::ToolResult);
+        assert_eq!(report.matched_tool_ids, vec!["b"]);
+        assert!(!report.orphan_tool_ids);
+
+        let missing = detect_phase(&request(vec![second_call]), None);
+        assert_eq!(missing.phase, Phase::Ambiguous);
+        assert!(missing.partial_tool_results);
     }
 
     #[test]
