@@ -62,6 +62,8 @@ Affinity state is process-local. A restart drops every pin. More than one replic
 
 Idle expiry defaults to 600 seconds and is refreshed only after a successful turn. Absolute lifetime defaults to 3600 seconds. One request may be in flight for an exact session and subtask (`409 subtask_busy`). Distinct subtasks run concurrently. At the configured cap, new affinity scopes return `429 affinity_capacity_exceeded` with `Retry-After`; requests without a session still route.
 
+A pin becomes final only after the proxy has forwarded the completed turn to the caller. If the client drops a stream after the first content chunk, the pin stays incomplete. A later required tool continuation of that subtask returns `409 session_state_unavailable`.
+
 Pinning does not preserve Gemini thought signatures and does not guarantee a prompt-cache hit.
 
 ## Continuation portability

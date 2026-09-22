@@ -20,62 +20,7 @@ async fn app_with_profiles(agent: AgentRoutingConfig) -> AppState {
         ..Default::default()
     };
     let (base_url, _handle) = common::start_mock_server(mock).await;
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    sqlx::migrate!("src/db/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    let mut config = Config::default();
-    config.server.master_api_key = String::new();
-    config.routing.provider_order = vec!["groq".into()];
-    config.routing.agent = agent;
-    config.providers = vec![ProviderConfig {
-        id: "groq".into(),
-        enabled: true,
-        base_url: Some(format!("{base_url}/v1")),
-        api_key: Some("test-key".into()),
-        free_only: true,
-        discover_models: false,
-        embedding_support: Default::default(),
-    }];
-    let state = AppState::new(
-        config,
-        pool,
-        Default::default(),
-        tokio::sync::broadcast::channel(1).0,
-    );
-    state.provider_registry.init_from_config(&state).await;
-    sqlx::query(
-        "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
-         VALUES ('groq', 'Groq', 1, 'http://127.0.0.1', 1)",
-    )
-    .execute(&state.db)
-    .await
-    .unwrap();
-    for model in ["cheap-model", "smart-model", "test-model"] {
-        sqlx::query(
-            "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_tools, discovered_at, updated_at)
-             VALUES ('groq', ?, ?, 1, 1, 1, 1, datetime('now'), datetime('now'))",
-        )
-        .bind(model)
-        .bind(model)
-        .execute(&state.db)
-        .await
-        .unwrap();
-    }
-    for (name, target) in [
-        ("economy", "cheap-model"),
-        ("standard", "cheap-model"),
-        ("advanced", "smart-model"),
-    ] {
-        sqlx::query("INSERT INTO model_groups (name, target_json, enabled) VALUES (?, ?, 1)")
-            .bind(name)
-            .bind(format!("[\"{target}\"]"))
-            .execute(&state.db)
-            .await
-            .unwrap();
-    }
-    state
+    app_with_profiles_at(agent, &base_url).await
 }
 
 fn rules_agent() -> AgentRoutingConfig {
@@ -432,4 +377,386 @@ async fn concurrent_paid_calls_cannot_both_pass_one_daily_ceiling() {
         }),
         "{statuses:?}"
     );
+}
+
+async fn decision_value(state: &AppState, request_id: &str) -> serde_json::Value {
+    let (details,): (String,) = sqlx::query_as(
+        "SELECT details_json FROM request_trace_events
+         WHERE request_id = ? AND event_type = 'agent_decision'",
+    )
+    .bind(request_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    serde_json::from_str(&details).unwrap()
+}
+
+#[tokio::test]
+async fn classifier_calls_the_provider_once_and_then_uses_the_cache() {
+    let state = app_with_profiles(classifier_agent()).await;
+    let app = tokenscavenger::app::startup::build_router(state.clone());
+    for id in ["class-1", "class-2"] {
+        let response = app
+            .clone()
+            .oneshot(chat("agent-auto", "lookup", id))
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+    let first = decision_value(&state, "req-class-1").await;
+    let second = decision_value(&state, "req-class-2").await;
+    assert_eq!(first["tier"], "economy");
+    assert_eq!(first["classifier_status"], "classified");
+    assert_eq!(first["classifier_cache"], "miss");
+    assert_eq!(second["tier"], "economy");
+    assert_eq!(second["classifier_status"], "classifier_cache_hit");
+    assert_eq!(second["classifier_cache"], "hit");
+    let calls: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM usage_events WHERE purpose = 'classification'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(calls.0, 1);
+}
+
+fn classifier_agent() -> AgentRoutingConfig {
+    let mut agent = rules_agent();
+    agent.mode = AgentRoutingMode::Adaptive;
+    agent.rules.clear();
+    agent.classifier.enabled = true;
+    agent.classifier.provider_id = "groq".into();
+    agent.classifier.model_id = "classifier-model".into();
+    agent.classifier.allowed_project_ids = vec!["default".into()];
+    agent.classifier.confidence_threshold = 0.5;
+    agent
+}
+
+#[tokio::test]
+async fn completed_stream_pins_the_subtask_and_a_dropped_stream_does_not() {
+    let hold = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mock = common::MockProviderState {
+        hold_stream_after_first_chunk: Some(hold.clone()),
+        ..Default::default()
+    };
+    let (base_url, _server) = common::start_mock_server(mock).await;
+    let mut agent = rules_agent();
+    agent.profiles.get_mut("agent-auto").unwrap().affinity = AffinityMode::Required;
+    let state = app_with_profiles_at(agent, &base_url).await;
+    let app = tokenscavenger::app::startup::build_router(state.clone());
+
+    let response = app
+        .clone()
+        .oneshot(stream_chat("stream-pin"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(400),
+        axum::body::to_bytes(response.into_body(), 1024),
+    )
+    .await;
+    hold.notify_one();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let mut continued_body = String::new();
+    let mut continued_status = StatusCode::OK;
+    for attempt in 0..40 {
+        let continued = app
+            .clone()
+            .oneshot(tool_continuation("stream-pin", attempt))
+            .await
+            .unwrap();
+        continued_status = continued.status();
+        let bytes = axum::body::to_bytes(continued.into_body(), 65536)
+            .await
+            .unwrap();
+        continued_body = String::from_utf8_lossy(&bytes).into_owned();
+        if continued_status == StatusCode::CONFLICT && continued_body.contains("subtask_busy") {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            continue;
+        }
+        break;
+    }
+    assert_eq!(continued_status, StatusCode::CONFLICT, "{continued_body}");
+    let json: serde_json::Value = serde_json::from_str(&continued_body).unwrap();
+    assert_eq!(json["error"]["code"], "session_state_unavailable");
+
+    let complete = common::MockProviderState::default();
+    let (base_url, _server) = common::start_mock_server(complete).await;
+    let mut agent = rules_agent();
+    agent.profiles.get_mut("agent-auto").unwrap().affinity = AffinityMode::Prefer;
+    let state = app_with_profiles_at(agent, &base_url).await;
+    let app = tokenscavenger::app::startup::build_router(state.clone());
+    let response = app.clone().oneshot(stream_chat("stream-ok")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = axum::body::to_bytes(response.into_body(), 65536)
+        .await
+        .unwrap();
+    let mut follow_id = String::new();
+    let mut follow_status = StatusCode::CONFLICT;
+    let mut follow_body = String::new();
+    for attempt in 0..40 {
+        follow_id = format!("req-stream-follow-{attempt}");
+        let follow = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .header("x-request-id", &follow_id)
+                    .header("x-ts-session", "stream-run")
+                    .header("x-ts-subtask", "stream-ok")
+                    .header("x-ts-task-type", "extract")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "model": "agent-auto",
+                            "messages": [{"role": "user", "content": "extract"}]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        follow_status = follow.status();
+        let bytes = axum::body::to_bytes(follow.into_body(), 65536)
+            .await
+            .unwrap();
+        follow_body = String::from_utf8_lossy(&bytes).into_owned();
+        if follow_status == StatusCode::CONFLICT && follow_body.contains("subtask_busy") {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            continue;
+        }
+        break;
+    }
+    assert_eq!(follow_status, StatusCode::OK, "{follow_body}");
+    let decision = decision_value(&state, &follow_id).await;
+    assert_eq!(decision["pin"], "pin_hit");
+}
+
+fn stream_chat(subtask: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("x-request-id", format!("req-{subtask}"))
+        .header("x-ts-session", "stream-run")
+        .header("x-ts-subtask", subtask)
+        .header("x-ts-affinity", "required")
+        .body(Body::from(
+            serde_json::json!({
+                "model": "agent-auto",
+                "stream": true,
+                "messages": [{"role": "user", "content": "write the draft"}]
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
+fn tool_continuation(subtask: &str, attempt: usize) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("x-request-id", format!("req-{subtask}-next-{attempt}"))
+        .header("x-ts-session", "stream-run")
+        .header("x-ts-subtask", subtask)
+        .header("x-ts-affinity", "required")
+        .body(Body::from(
+            serde_json::json!({
+                "model": "agent-auto",
+                "messages": [
+                    {"role": "assistant", "content": "", "tool_calls": [{
+                        "id": "a",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"}
+                    }]},
+                    {"role": "tool", "tool_call_id": "a", "content": "one"}
+                ]
+            })
+            .to_string(),
+        ))
+        .unwrap()
+}
+
+async fn app_with_profiles_at(agent: AgentRoutingConfig, base_url: &str) -> AppState {
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut config = Config::default();
+    config.server.master_api_key = String::new();
+    config.routing.provider_order = vec!["groq".into()];
+    config.routing.agent = agent;
+    config.providers = vec![ProviderConfig {
+        id: "groq".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: Some("test-key".into()),
+        free_only: true,
+        discover_models: false,
+        embedding_support: Default::default(),
+    }];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    state.provider_registry.init_from_config(&state).await;
+    seed_groq(&state).await;
+    state
+}
+
+async fn seed_groq(state: &AppState) {
+    sqlx::query(
+        "INSERT INTO providers (provider_id, display_name, enabled, base_url, free_only)
+         VALUES ('groq', 'Groq', 1, 'http://127.0.0.1', 1)",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    for model in ["cheap-model", "smart-model", "test-model"] {
+        sqlx::query(
+            "INSERT INTO models (provider_id, upstream_model_id, public_model_id, enabled, free_tier, supports_chat, supports_tools, discovered_at, updated_at)
+             VALUES ('groq', ?, ?, 1, 1, 1, 1, datetime('now'), datetime('now'))",
+        )
+        .bind(model)
+        .bind(model)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+    for (name, target) in [
+        ("economy", "cheap-model"),
+        ("standard", "cheap-model"),
+        ("advanced", "smart-model"),
+    ] {
+        sqlx::query("INSERT INTO model_groups (name, target_json, enabled) VALUES (?, ?, 1)")
+            .bind(name)
+            .bind(format!("[\"{target}\"]"))
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn admin_project_key_can_call_a_profile() {
+    let mock = common::MockProviderState::default();
+    let (base_url, _server) = common::start_mock_server(mock).await;
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    let mut config = Config::default();
+    config.server.master_api_key = "master-secret".into();
+    config.routing.provider_order = vec!["groq".into()];
+    config.routing.agent = rules_agent();
+    config.providers = vec![ProviderConfig {
+        id: "groq".into(),
+        enabled: true,
+        base_url: Some(format!("{base_url}/v1")),
+        api_key: Some("test-key".into()),
+        free_only: true,
+        discover_models: false,
+        embedding_support: Default::default(),
+    }];
+    let state = AppState::new(
+        config,
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
+    );
+    state.provider_registry.init_from_config(&state).await;
+    seed_groq(&state).await;
+    let app = tokenscavenger::app::startup::build_router(state.clone());
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/projects")
+                .header("authorization", "Bearer master-secret")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "project_id": "desk",
+                        "display_name": "Desk",
+                        "allowed_model_groups": ["agent-auto"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let issued = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/projects/desk/keys")
+                .header("authorization", "Bearer master-secret")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"label": "laptop"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(issued.status(), StatusCode::OK);
+    let issued_body = axum::body::to_bytes(issued.into_body(), 65536)
+        .await
+        .unwrap();
+    let issued_json: serde_json::Value = serde_json::from_slice(&issued_body).unwrap();
+    let api_key = issued_json["api_key"].as_str().unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .header("x-request-id", "desk-1")
+                .header("x-ts-session", "desk-run")
+                .header("x-ts-subtask", "plan")
+                .header("x-ts-task-type", "plan")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "agent-auto",
+                        "messages": [{"role": "user", "content": "plan the chapter"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let project: (String,) =
+        sqlx::query_as("SELECT project_id FROM request_log WHERE request_id = 'desk-1'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(project.0, "desk");
+    let decision = decision_value(&state, "desk-1").await;
+    assert_eq!(decision["tier"], "advanced");
 }

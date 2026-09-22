@@ -5,7 +5,10 @@ use crate::providers::registry::ProviderRegistry;
 use crate::providers::traits::EndpointKind;
 use crate::router::model_groups::ModelTarget;
 use crate::router::policy::RoutePolicy;
-use crate::usage::pricing_catalog::{PricingUsage, calculate_cost, lookup_rate};
+use crate::usage::pricing_catalog::{
+    PricingRate, PricingUsage, calculate_cost, normalize_model_id,
+};
+use std::collections::HashMap;
 
 /// A single entry in the attempt plan.
 #[derive(Debug, Clone)]
@@ -148,18 +151,29 @@ pub async fn explain_policy_plan(
 ) -> Vec<RoutePlanExplanation> {
     let objective = policy.objective_for_model_group(requested_model);
     let total_attempts = plan.len().max(1);
+    let facts = load_scoring_facts(state, &plan, endpoint_kind, token_estimate).await;
+    let budget = load_budget_snapshot(state, policy, requested_model, &plan).await;
     let mut explanations = Vec::with_capacity(plan.len());
 
     for attempt in plan {
+        let key = (attempt.provider_id.clone(), attempt.model_id.clone());
+        let (estimated_cost_usd, cost_confidence) = facts
+            .costs
+            .get(&key)
+            .cloned()
+            .unwrap_or((None, "unknown_price".to_string()));
         let score = score_candidate(
             &attempt,
-            state,
             objective,
-            endpoint_kind,
-            token_estimate,
             total_attempts,
-        )
-        .await;
+            ScoreInputs {
+                estimated_cost_usd,
+                cost_confidence,
+                observed_latency_ms: facts.latency.get(&key).copied(),
+                recent_failure_rate: facts.failures.get(&key).copied().unwrap_or(0.0),
+                quality: facts.quality.get(&key).copied().unwrap_or((0.0, 0.5)),
+            },
+        );
         let mut included = true;
         let mut reasons = Vec::new();
 
@@ -169,13 +183,12 @@ pub async fn explain_policy_plan(
         }
 
         let budget_reasons = budget_skip_reasons(
-            state,
             policy,
             requested_model,
             &attempt,
             score.estimated_cost_usd,
-        )
-        .await;
+            &budget,
+        );
         if !budget_reasons.is_empty() {
             included = false;
             reasons.extend(budget_reasons);
@@ -215,20 +228,28 @@ pub async fn explain_policy_plan(
     explanations
 }
 
-async fn score_candidate(
+struct ScoreInputs {
+    estimated_cost_usd: Option<f64>,
+    cost_confidence: String,
+    observed_latency_ms: Option<i64>,
+    recent_failure_rate: f64,
+    quality: (f64, f64),
+}
+
+fn score_candidate(
     attempt: &RouteAttempt,
-    state: &AppState,
     objective: RoutingObjective,
-    endpoint_kind: EndpointKind,
-    token_estimate: TokenEstimate,
     total_attempts: usize,
+    inputs: ScoreInputs,
 ) -> CandidateScore {
-    let (estimated_cost_usd, cost_confidence) =
-        estimate_attempt_cost(state, attempt, token_estimate).await;
-    let observed_latency_ms = observed_latency_ms(state, attempt).await;
-    let recent_failure_rate = recent_failure_rate(state, attempt).await;
-    let (quality_score, context_score) =
-        quality_and_context_score(state, attempt, endpoint_kind).await;
+    let ScoreInputs {
+        estimated_cost_usd,
+        cost_confidence,
+        observed_latency_ms,
+        recent_failure_rate,
+        quality,
+    } = inputs;
+    let (quality_score, context_score) = quality;
     let cost_score = match estimated_cost_usd {
         Some(cost) => 1.0 / (1.0 + (cost * 1000.0)),
         None => 0.0,
@@ -297,122 +318,15 @@ async fn score_candidate(
     }
 }
 
-async fn estimate_attempt_cost(
-    state: &AppState,
-    attempt: &RouteAttempt,
-    token_estimate: TokenEstimate,
-) -> (Option<f64>, String) {
-    let config = state.config();
-    let free_only = config
-        .providers
-        .iter()
-        .find(|provider| provider.id == attempt.provider_id)
-        .map(|provider| provider.free_only)
-        .unwrap_or(true);
-    if free_only {
-        return (Some(0.0), "free_tier".to_string());
-    }
-
-    let usage = PricingUsage {
-        input_tokens: token_estimate.input_tokens,
-        output_tokens: token_estimate.output_tokens,
-        ..Default::default()
-    };
-    match lookup_rate(&state.db, &attempt.provider_id, &attempt.model_id).await {
-        Ok(Some(rate)) => {
-            let estimate = calculate_cost(&rate, &usage);
-            (Some(estimate.amount_usd), estimate.confidence)
-        }
-        Ok(None) => (None, "unknown_price".to_string()),
-        Err(error) => {
-            tracing::warn!(
-                provider = %attempt.provider_id,
-                model = %attempt.model_id,
-                %error,
-                "Failed to estimate policy candidate cost"
-            );
-            (None, "pricing_lookup_error".to_string())
-        }
-    }
-}
-
-async fn observed_latency_ms(state: &AppState, attempt: &RouteAttempt) -> Option<i64> {
-    sqlx::query_as::<_, (Option<i64>,)>(
-        "SELECT CAST(AVG(latency_ms) AS INTEGER)
-         FROM request_log
-         WHERE selected_provider_id = ? AND selected_model_id = ? AND status = 'success'
-           AND latency_ms IS NOT NULL AND received_at >= datetime('now', '-1 day')",
-    )
-    .bind(&attempt.provider_id)
-    .bind(&attempt.model_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|row| row.0)
-}
-
-async fn recent_failure_rate(state: &AppState, attempt: &RouteAttempt) -> f64 {
-    let Some((failures, total)) = sqlx::query_as::<_, (i64, i64)>(
-        "SELECT
-            COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0),
-            COUNT(*)
-         FROM request_log
-         WHERE selected_provider_id = ? AND selected_model_id = ?
-           AND received_at >= datetime('now', '-1 day')",
-    )
-    .bind(&attempt.provider_id)
-    .bind(&attempt.model_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten() else {
-        return 0.0;
-    };
-
-    if total == 0 {
-        0.0
-    } else {
-        (failures as f64 / total as f64).clamp(0.0, 1.0)
-    }
-}
-
-async fn quality_and_context_score(
-    state: &AppState,
-    attempt: &RouteAttempt,
+fn quality_and_context_score(
+    provider_id: &str,
+    model_id: &str,
     endpoint_kind: EndpointKind,
+    caps: ModelCaps,
 ) -> (f64, f64) {
-    let caps = sqlx::query_as::<
-        _,
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            i64,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        "SELECT m.supports_tools, m.supports_json_mode, m.supports_vision, m.supports_embeddings,
-                m.priority, m.metadata_json, p.discovery_state, m.discovered_at, m.updated_at
-         FROM models m
-         LEFT JOIN providers p ON p.provider_id = m.provider_id
-         WHERE m.provider_id = ? AND m.upstream_model_id = ?",
-    )
-    .bind(&attempt.provider_id)
-    .bind(&attempt.model_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or((true, true, false, false, 100, None, None, None, None));
-
     let intelligence = crate::discovery::model_intelligence::infer_model_intelligence(
-        &attempt.provider_id,
-        &attempt.model_id,
+        provider_id,
+        model_id,
         caps.5.as_deref(),
         caps.3,
         caps.6.as_deref(),
@@ -420,8 +334,7 @@ async fn quality_and_context_score(
         caps.8.as_deref(),
     );
 
-    let provider_quality =
-        (tool_reliability_rank(&attempt.provider_id) as f64 / 100.0).clamp(0.0, 1.0);
+    let provider_quality = (tool_reliability_rank(provider_id) as f64 / 100.0).clamp(0.0, 1.0);
     let capability_score = match endpoint_kind {
         EndpointKind::ChatCompletions => {
             (if caps.0 { 0.30 } else { 0.0 })
@@ -482,12 +395,12 @@ fn context_score(metadata_json: Option<&str>) -> f64 {
     ((context_window as f64).log10() / (2_000_000_f64).log10()).clamp(0.0, 1.0)
 }
 
-async fn budget_skip_reasons(
-    state: &AppState,
+fn budget_skip_reasons(
     policy: &RoutePolicy,
     requested_model: &str,
     attempt: &RouteAttempt,
     estimated_cost_usd: Option<f64>,
+    budget: &BudgetSnapshot,
 ) -> Vec<String> {
     if !has_hard_budget(policy, requested_model, &attempt.provider_id) {
         return Vec::new();
@@ -508,9 +421,7 @@ async fn budget_skip_reasons(
     }
 
     if let Some(limit) = policy.budgets.max_cost_per_day_usd {
-        let day = crate::usage::reservations::utc_day();
-        let spent = spent_today(state, None, None).await
-            + reserved_usd(state, &crate::usage::reservations::scope_global_day(&day));
+        let spent = budget.global_spent;
         if spent + estimated_cost_usd > limit {
             reasons.push(format!(
                 "filtered by daily budget: projected {:.6} > limit {:.6}",
@@ -525,12 +436,11 @@ async fn budget_skip_reasons(
         .max_cost_per_provider_per_day_usd
         .get(&attempt.provider_id)
     {
-        let day = crate::usage::reservations::utc_day();
-        let spent = spent_today(state, Some(&attempt.provider_id), None).await
-            + reserved_usd(
-                state,
-                &crate::usage::reservations::scope_provider_day(&attempt.provider_id, &day),
-            );
+        let spent = budget
+            .provider_spent
+            .get(&attempt.provider_id)
+            .copied()
+            .unwrap_or(0.0);
         if spent + estimated_cost_usd > *limit {
             reasons.push(format!(
                 "filtered by provider daily budget: projected {:.6} > limit {:.6}",
@@ -545,12 +455,7 @@ async fn budget_skip_reasons(
         .max_cost_per_model_group_per_day_usd
         .get(requested_model)
     {
-        let day = crate::usage::reservations::utc_day();
-        let spent = spent_today(state, None, Some(requested_model)).await
-            + reserved_usd(
-                state,
-                &crate::usage::reservations::scope_group_day(requested_model, &day),
-            );
+        let spent = budget.group_spent;
         if spent + estimated_cost_usd > *limit {
             reasons.push(format!(
                 "filtered by model-group daily budget: projected {:.6} > limit {:.6}",
@@ -561,6 +466,474 @@ async fn budget_skip_reasons(
     }
 
     reasons
+}
+
+struct ScoringFacts {
+    costs: HashMap<(String, String), (Option<f64>, String)>,
+    latency: HashMap<(String, String), i64>,
+    failures: HashMap<(String, String), f64>,
+    quality: HashMap<(String, String), (f64, f64)>,
+}
+
+struct BudgetSnapshot {
+    global_spent: f64,
+    group_spent: f64,
+    provider_spent: HashMap<String, f64>,
+}
+
+type ModelCaps = (
+    bool,
+    bool,
+    bool,
+    bool,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+fn default_model_caps() -> ModelCaps {
+    (true, true, false, false, 100, None, None, None, None)
+}
+
+async fn load_scoring_facts(
+    state: &AppState,
+    plan: &[RouteAttempt],
+    endpoint_kind: EndpointKind,
+    token_estimate: TokenEstimate,
+) -> ScoringFacts {
+    let pairs = unique_pairs(plan);
+    let latency = load_latency(state, &pairs).await;
+    let failures = load_failure_rates(state, &pairs).await;
+    let caps = load_model_caps(state, &pairs).await;
+    let costs = load_attempt_costs(state, plan, token_estimate).await;
+    let mut quality = HashMap::new();
+    for attempt in plan {
+        let key = (attempt.provider_id.clone(), attempt.model_id.clone());
+        let row = caps.get(&key).cloned().unwrap_or_else(default_model_caps);
+        quality.insert(
+            key,
+            quality_and_context_score(&attempt.provider_id, &attempt.model_id, endpoint_kind, row),
+        );
+    }
+    ScoringFacts {
+        costs,
+        latency,
+        failures,
+        quality,
+    }
+}
+
+fn unique_pairs(plan: &[RouteAttempt]) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for attempt in plan {
+        let pair = (attempt.provider_id.clone(), attempt.model_id.clone());
+        if !pairs.contains(&pair) {
+            pairs.push(pair);
+        }
+    }
+    pairs
+}
+
+async fn load_latency(
+    state: &AppState,
+    pairs: &[(String, String)],
+) -> HashMap<(String, String), i64> {
+    let mut latency = HashMap::new();
+    for chunk in pairs.chunks(80) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = pair_placeholders(chunk.len());
+        let sql = format!(
+            "SELECT selected_provider_id, selected_model_id, CAST(AVG(latency_ms) AS INTEGER)
+             FROM request_log
+             WHERE status = 'success' AND latency_ms IS NOT NULL
+               AND received_at >= datetime('now', '-1 day')
+               AND (selected_provider_id, selected_model_id) IN (VALUES {placeholders})
+             GROUP BY selected_provider_id, selected_model_id"
+        );
+        let mut query = sqlx::query_as::<_, (String, String, Option<i64>)>(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        let Ok(rows) = query.fetch_all(&state.db).await else {
+            continue;
+        };
+        for (provider_id, model_id, average) in rows {
+            if let Some(average) = average {
+                latency.insert((provider_id, model_id), average);
+            }
+        }
+    }
+    latency
+}
+
+async fn load_failure_rates(
+    state: &AppState,
+    pairs: &[(String, String)],
+) -> HashMap<(String, String), f64> {
+    let mut rates = HashMap::new();
+    for chunk in pairs.chunks(80) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = pair_placeholders(chunk.len());
+        let sql = format!(
+            "SELECT selected_provider_id, selected_model_id,
+                    COALESCE(SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END), 0),
+                    COUNT(*)
+             FROM request_log
+             WHERE received_at >= datetime('now', '-1 day')
+               AND (selected_provider_id, selected_model_id) IN (VALUES {placeholders})
+             GROUP BY selected_provider_id, selected_model_id"
+        );
+        let mut query = sqlx::query_as::<_, (String, String, i64, i64)>(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        let Ok(rows) = query.fetch_all(&state.db).await else {
+            continue;
+        };
+        for (provider_id, model_id, failures, total) in rows {
+            let rate = if total == 0 {
+                0.0
+            } else {
+                (failures as f64 / total as f64).clamp(0.0, 1.0)
+            };
+            rates.insert((provider_id, model_id), rate);
+        }
+    }
+    rates
+}
+
+async fn load_model_caps(
+    state: &AppState,
+    pairs: &[(String, String)],
+) -> HashMap<(String, String), ModelCaps> {
+    let mut caps = HashMap::new();
+    for chunk in pairs.chunks(80) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = pair_placeholders(chunk.len());
+        let sql = format!(
+            "SELECT m.provider_id, m.upstream_model_id, m.supports_tools, m.supports_json_mode,
+                    m.supports_vision, m.supports_embeddings, m.priority, m.metadata_json,
+                    p.discovery_state, m.discovered_at, m.updated_at
+             FROM models m
+             LEFT JOIN providers p ON p.provider_id = m.provider_id
+             WHERE (m.provider_id, m.upstream_model_id) IN (VALUES {placeholders})"
+        );
+        let mut query = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                bool,
+                bool,
+                bool,
+                bool,
+                i64,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        let Ok(rows) = query.fetch_all(&state.db).await else {
+            continue;
+        };
+        for (
+            provider_id,
+            model_id,
+            supports_tools,
+            supports_json_mode,
+            supports_vision,
+            supports_embeddings,
+            priority,
+            metadata_json,
+            discovery_state,
+            discovered_at,
+            updated_at,
+        ) in rows
+        {
+            caps.insert(
+                (provider_id, model_id),
+                (
+                    supports_tools,
+                    supports_json_mode,
+                    supports_vision,
+                    supports_embeddings,
+                    priority,
+                    metadata_json,
+                    discovery_state,
+                    discovered_at,
+                    updated_at,
+                ),
+            );
+        }
+    }
+    caps
+}
+
+async fn load_attempt_costs(
+    state: &AppState,
+    plan: &[RouteAttempt],
+    token_estimate: TokenEstimate,
+) -> HashMap<(String, String), (Option<f64>, String)> {
+    let mut costs = HashMap::new();
+    let mut paid = Vec::new();
+    let config = state.config();
+    for attempt in plan {
+        let key = (attempt.provider_id.clone(), attempt.model_id.clone());
+        if costs.contains_key(&key) || paid.contains(&key) {
+            continue;
+        }
+        let free_only = config
+            .providers
+            .iter()
+            .find(|provider| provider.id == attempt.provider_id)
+            .map(|provider| provider.free_only)
+            .unwrap_or(true);
+        if free_only {
+            costs.insert(key, (Some(0.0), "free_tier".to_string()));
+        } else {
+            paid.push(key);
+        }
+    }
+    if paid.is_empty() {
+        return costs;
+    }
+    let usage = PricingUsage {
+        input_tokens: token_estimate.input_tokens,
+        output_tokens: token_estimate.output_tokens,
+        ..PricingUsage::default()
+    };
+    let mut lookup_pairs = paid.clone();
+    for (provider_id, model_id) in &paid {
+        let normalized = normalize_model_id(provider_id, model_id);
+        if normalized.as_ref() != model_id {
+            let pair = (provider_id.clone(), normalized.into_owned());
+            if !lookup_pairs.contains(&pair) {
+                lookup_pairs.push(pair);
+            }
+        }
+    }
+    let rates = match load_pricing_rates(state, &lookup_pairs).await {
+        Ok(rates) => rates,
+        Err(error) => {
+            tracing::warn!(%error, "Failed to estimate policy candidate cost");
+            for key in paid {
+                costs.insert(key, (None, "pricing_lookup_error".to_string()));
+            }
+            return costs;
+        }
+    };
+    for (provider_id, model_id) in paid {
+        let normalized = normalize_model_id(&provider_id, &model_id);
+        let rate = rates
+            .get(&(provider_id.clone(), model_id.clone()))
+            .cloned()
+            .or_else(|| {
+                if normalized.as_ref() == model_id {
+                    None
+                } else {
+                    rates
+                        .get(&(provider_id.clone(), normalized.into_owned()))
+                        .cloned()
+                }
+            });
+        let priced = match rate {
+            Some(rate) => {
+                let estimate = calculate_cost(&rate, &usage);
+                (Some(estimate.amount_usd), estimate.confidence)
+            }
+            None => (None, "unknown_price".to_string()),
+        };
+        costs.insert((provider_id, model_id), priced);
+    }
+    costs
+}
+
+async fn load_pricing_rates(
+    state: &AppState,
+    pairs: &[(String, String)],
+) -> Result<HashMap<(String, String), PricingRate>, sqlx::Error> {
+    let mut rates = HashMap::new();
+    for chunk in pairs.chunks(80) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = pair_placeholders(chunk.len());
+        let sql = format!(
+            "SELECT id, provider_id, model_id, input_per_1m, cached_input_per_1m, output_per_1m,
+                    reasoning_per_1m, confidence, source_kind
+             FROM model_pricing
+             WHERE effective_until IS NULL
+               AND (provider_id, model_id) IN (VALUES {placeholders})"
+        );
+        let mut query = sqlx::query_as::<
+            _,
+            (
+                i64,
+                String,
+                String,
+                Option<f64>,
+                Option<f64>,
+                Option<f64>,
+                Option<f64>,
+                String,
+                String,
+            ),
+        >(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        for (
+            id,
+            provider_id,
+            model_id,
+            input_per_1m,
+            cached_input_per_1m,
+            output_per_1m,
+            reasoning_per_1m,
+            confidence,
+            source_kind,
+        ) in query.fetch_all(&state.db).await?
+        {
+            let candidate = PricingRate {
+                id: Some(id),
+                provider_id: provider_id.clone(),
+                model_id: model_id.clone(),
+                input_per_1m,
+                cached_input_per_1m,
+                output_per_1m,
+                reasoning_per_1m,
+                confidence,
+                source_kind,
+            };
+            let key = (provider_id, model_id);
+            match rates.get(&key) {
+                Some(existing) if pricing_rate_wins(existing, &candidate) => {}
+                _ => {
+                    rates.insert(key, candidate);
+                }
+            }
+        }
+    }
+    Ok(rates)
+}
+
+fn pricing_rate_wins(existing: &PricingRate, candidate: &PricingRate) -> bool {
+    let left = pricing_source_rank(&existing.source_kind);
+    let right = pricing_source_rank(&candidate.source_kind);
+    left < right || (left == right && existing.id.unwrap_or(0) >= candidate.id.unwrap_or(0))
+}
+
+fn pricing_source_rank(kind: &str) -> u8 {
+    match kind {
+        "operator_override" => 0,
+        "fetched_structured" => 1,
+        "scraped_html" => 2,
+        _ => 3,
+    }
+}
+
+fn pair_placeholders(count: usize) -> String {
+    std::iter::repeat_n("(?, ?)", count)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+async fn load_budget_snapshot(
+    state: &AppState,
+    policy: &RoutePolicy,
+    requested_model: &str,
+    plan: &[RouteAttempt],
+) -> BudgetSnapshot {
+    let day = crate::usage::reservations::utc_day();
+    let global_spent = if policy.budgets.max_cost_per_day_usd.is_some() {
+        spent_today(state, None, None).await
+            + reserved_usd(state, &crate::usage::reservations::scope_global_day(&day))
+    } else {
+        0.0
+    };
+    let group_spent = if policy
+        .budgets
+        .max_cost_per_model_group_per_day_usd
+        .contains_key(requested_model)
+    {
+        spent_today(state, None, Some(requested_model)).await
+            + reserved_usd(
+                state,
+                &crate::usage::reservations::scope_group_day(requested_model, &day),
+            )
+    } else {
+        0.0
+    };
+    let providers = policy
+        .budgets
+        .max_cost_per_provider_per_day_usd
+        .keys()
+        .filter(|provider_id| {
+            plan.iter()
+                .any(|attempt| attempt.provider_id == **provider_id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut provider_spent = HashMap::new();
+    if !providers.is_empty() {
+        let historical = provider_spend_today(state, &providers).await;
+        for provider_id in providers {
+            let spent = historical.get(&provider_id).copied().unwrap_or(0.0)
+                + reserved_usd(
+                    state,
+                    &crate::usage::reservations::scope_provider_day(&provider_id, &day),
+                );
+            provider_spent.insert(provider_id, spent);
+        }
+    }
+    BudgetSnapshot {
+        global_spent,
+        group_spent,
+        provider_spent,
+    }
+}
+
+async fn provider_spend_today(state: &AppState, providers: &[String]) -> HashMap<String, f64> {
+    let mut spent = HashMap::new();
+    for chunk in providers.chunks(80) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT usage_events.provider_id, COALESCE(SUM(usage_events.estimated_cost_usd), 0.0)
+             FROM usage_events
+             JOIN request_log USING (request_id)
+             WHERE usage_events.timestamp >= date('now')
+               AND usage_events.provider_id IN ({placeholders})
+             GROUP BY usage_events.provider_id"
+        );
+        let mut query = sqlx::query_as::<_, (String, f64)>(&sql);
+        for provider_id in chunk {
+            query = query.bind(provider_id);
+        }
+        let Ok(rows) = query.fetch_all(&state.db).await else {
+            continue;
+        };
+        for (provider_id, amount) in rows {
+            spent.insert(provider_id, amount);
+        }
+    }
+    spent
 }
 
 fn reserved_usd(state: &AppState, scope: &str) -> f64 {

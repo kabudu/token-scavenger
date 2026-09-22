@@ -171,6 +171,13 @@ pub fn format_sse_payload(event: &StreamEvent) -> String {
     }
 }
 
+async fn send_stream_event(
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    event: StreamEvent,
+) -> bool {
+    tx.send(event).await.is_ok()
+}
+
 async fn mark_stream_complete(
     state: &AppState,
     request_id: &str,
@@ -749,8 +756,9 @@ pub async fn create_chat_stream(
                                         None,
                                     )
                                     .await;
-                                    let _ = tx.send(StreamEvent::Done).await;
-                                    mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
+                                    if send_stream_event(&tx, StreamEvent::Done).await {
+                                        mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
+                                    }
                                     return;
                                 }
                                 Ok(Ok(())) => {
@@ -863,11 +871,11 @@ pub async fn create_chat_stream(
                     if forwarded_meaningful_event {
                         observe_forwarded_pin(&mut affinity_pin, provider_id, model_id, &event);
                         let done = matches!(event, StreamEvent::Done);
+                        if !send_stream_event(&tx, event).await {
+                            return;
+                        }
                         if done {
                             mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
-                        }
-                        let _ = tx.send(event).await;
-                        if done {
                             info!(
                                 provider = %provider_id,
                                 model = %model_id,
@@ -901,9 +909,13 @@ pub async fn create_chat_stream(
                             attempt_started_at.elapsed().as_millis() as i64,
                         );
                         for buffered_event in buffered.drain(..) {
-                            let _ = tx.send(buffered_event).await;
+                            if !send_stream_event(&tx, buffered_event).await {
+                                return;
+                            }
                         }
-                        let _ = tx.send(event).await;
+                        if !send_stream_event(&tx, event).await {
+                            return;
+                        }
                     } else if matches!(event, StreamEvent::Done) {
                             ended_empty = true;
                             warn!(
@@ -953,8 +965,9 @@ pub async fn create_chat_stream(
                                 None,
                             )
                             .await;
-                            let _ = tx.send(StreamEvent::Done).await;
-                            mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
+                            if send_stream_event(&tx, StreamEvent::Done).await {
+                                mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
+                            }
                             return;
                         }
                         Ok(Ok(())) => {
@@ -1138,6 +1151,7 @@ pub async fn create_chat_stream(
                                 model = %model_id,
                                 "Recovered empty upstream stream with non-streaming response"
                             );
+                            let mut delivered = true;
                             for event in events {
                                 observe_forwarded_pin(
                                     &mut affinity_pin,
@@ -1145,15 +1159,20 @@ pub async fn create_chat_stream(
                                     model_id,
                                     &event,
                                 );
-                                let _ = tx.send(event).await;
+                                if !send_stream_event(&tx, event).await {
+                                    delivered = false;
+                                    break;
+                                }
                             }
-                            mark_stream_complete(
-                                &state,
-                                &task_request_id,
-                                &mut affinity_pin,
-                                stream_decision.as_ref(),
-                            )
-                            .await;
+                            if delivered {
+                                mark_stream_complete(
+                                    &state,
+                                    &task_request_id,
+                                    &mut affinity_pin,
+                                    stream_decision.as_ref(),
+                                )
+                                .await;
+                            }
                             return;
                         }
                         warn!(

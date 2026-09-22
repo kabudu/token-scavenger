@@ -656,4 +656,76 @@ mod tests {
         assert_eq!(store.live_scopes(), 1);
         drop(lease);
     }
+
+    #[test]
+    #[ignore = "30-minute affinity churn; run explicitly and record RSS"]
+    fn thirty_minute_churn_keeps_affinity_memory_bounded() {
+        let store = store();
+        let started = std::time::Instant::now();
+        let mut max_live = 0usize;
+        let mut max_rss_kb = 0u64;
+        let mut cycles = 0u64;
+        let mut admitted = 0u64;
+        let mut sequence = 0u64;
+        let start_rss_kb = process_rss_kb().unwrap_or(0);
+        while started.elapsed() < std::time::Duration::from_secs(30 * 60) {
+            for _ in 0..200 {
+                sequence += 1;
+                let key = format!("churn-{sequence}");
+                let Ok(lease) = store.try_admit(
+                    key,
+                    "proj",
+                    10_000,
+                    10_000,
+                    Duration::from_secs(1),
+                    Duration::from_secs(2),
+                ) else {
+                    continue;
+                };
+                admitted += 1;
+                if sequence % 2 == 0 {
+                    lease.commit_success(
+                        "groq",
+                        "cheap",
+                        AgentTier::Economy,
+                        "rev",
+                        &[],
+                        ContinuationSupport::Replayable,
+                        Duration::from_secs(1),
+                    );
+                }
+                drop(lease);
+            }
+            store.advance(Duration::from_secs(3));
+            store.sweep();
+            max_live = max_live.max(store.live_scopes());
+            if let Some(rss) = process_rss_kb() {
+                max_rss_kb = max_rss_kb.max(rss);
+            }
+            cycles += 1;
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let summary = format!(
+            "cycles={cycles} admitted={admitted} max_live={} final_live={} start_rss_kb={start_rss_kb} max_rss_kb={max_rss_kb}\n",
+            max_live,
+            store.live_scopes()
+        );
+        let _ = std::fs::write("/tmp/tokenscavenger-affinity-soak.txt", &summary);
+        assert!(store.live_scopes() <= 10_000, "{summary}");
+        assert!(max_live <= 10_000, "{summary}");
+        assert!(admitted > 10_000, "{summary}");
+    }
+
+    fn process_rss_kb() -> Option<u64> {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+            .output()
+            .ok()?;
+        String::from_utf8(output.stdout)
+            .ok()?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    }
 }

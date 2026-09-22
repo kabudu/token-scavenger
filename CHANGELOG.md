@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Policy scoring loads latency, failure rate, model capability, and price rows in batches. The weights and the price-source winner are unchanged.
+
 ### Fixed
 
+- A dropped chat stream no longer marks an affinity pin complete. The next required tool continuation of that subtask returns `409 session_state_unavailable`.
 - Updated the public website metadata, release copy, and manual installation commands to reference v0.5.0.
 
 ## [0.5.0] - 2026-09-16

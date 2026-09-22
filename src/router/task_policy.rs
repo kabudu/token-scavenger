@@ -462,4 +462,65 @@ mod tests {
         assert_eq!(decision.tier, AgentTier::Standard);
         assert_eq!(decision.source, TierSource::Default);
     }
+
+    #[test]
+    fn two_hundred_concurrent_rule_decisions_stay_under_two_milliseconds() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let profile = AgentProfileConfig {
+            default_tier: AgentTier::Standard,
+            economy_group: "e".into(),
+            standard_group: "s".into(),
+            advanced_group: "a".into(),
+            affinity: Default::default(),
+        };
+        let rules = vec![AgentRuleConfig {
+            profile: "agent-auto".into(),
+            task_type: Some("extract".into()),
+            phase: None,
+            tools_required: None,
+            json_required: None,
+            vision_required: None,
+            min_input_bytes: None,
+            max_input_bytes: None,
+            tier: AgentTier::Economy,
+        }];
+        let request = request(vec![message("user", "extract the citations")]);
+        let gate = Arc::new(Barrier::new(200));
+        let mut handles = Vec::with_capacity(200);
+        for _ in 0..200 {
+            let gate = Arc::clone(&gate);
+            let profile = profile.clone();
+            let rules = rules.clone();
+            let request = request.clone();
+            handles.push(thread::spawn(move || {
+                gate.wait();
+                let started = Instant::now();
+                let report = detect_phase(&request, None);
+                let decision = select_tier_without_classifier(
+                    &profile,
+                    &rules,
+                    "agent-auto",
+                    &report,
+                    Some("extract"),
+                    None,
+                    None,
+                    None,
+                );
+                assert_eq!(decision.tier, AgentTier::Economy);
+                started.elapsed()
+            }));
+        }
+        let mut samples: Vec<Duration> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("decision thread"))
+            .collect();
+        samples.sort();
+        let p95 = samples[189];
+        let p99 = samples[197];
+        assert!(p95 <= Duration::from_millis(2), "p95 {p95:?} p99 {p99:?}");
+        assert!(p99 <= Duration::from_millis(5), "p95 {p95:?} p99 {p99:?}");
+    }
 }
