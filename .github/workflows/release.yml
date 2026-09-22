@@ -277,7 +277,7 @@ jobs:
           ./tokenscavenger config
           ```
 
-          Or use the operator web UI at `http://localhost:8000/ui` — changes take effect
+          Or use the operator web UI at `http://localhost:8000/ui`; changes take effect
           without restarting the application.
           EOF
           cat release-notes.md
