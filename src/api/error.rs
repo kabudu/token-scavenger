@@ -44,6 +44,14 @@ pub enum ApiError {
     UnsupportedFeature(String),
     #[error("Internal error: {0}")]
     InternalError(String),
+    /// Stable agent-routing failure. `code` is the public error code.
+    #[error("{message}")]
+    AgentRouting {
+        http_status: u16,
+        code: &'static str,
+        message: String,
+        retry_after: Option<u64>,
+    },
 }
 
 impl IntoResponse for ApiError {
@@ -103,6 +111,25 @@ impl IntoResponse for ApiError {
                 "internal_server_error".into(),
                 msg.clone(),
             ),
+            ApiError::AgentRouting {
+                http_status,
+                code,
+                message,
+                ..
+            } => {
+                let error_type = match *http_status {
+                    409 => "conflict_error",
+                    429 => "rate_limit_error",
+                    503 => "provider_error",
+                    _ => "invalid_request_error",
+                };
+                (
+                    StatusCode::from_u16(*http_status).unwrap_or(StatusCode::BAD_REQUEST),
+                    (*code).to_string(),
+                    error_type.into(),
+                    message.clone(),
+                )
+            }
         };
 
         let body = ApiErrorBody {
@@ -115,11 +142,18 @@ impl IntoResponse for ApiError {
         };
 
         let mut response = (status, Json(body)).into_response();
-        if let ApiError::RateLimited {
-            retry_after: Some(seconds),
-            ..
-        } = self
-        {
+        let retry_after = match &self {
+            ApiError::RateLimited {
+                retry_after: Some(seconds),
+                ..
+            }
+            | ApiError::AgentRouting {
+                retry_after: Some(seconds),
+                ..
+            } => Some(*seconds),
+            _ => None,
+        };
+        if let Some(seconds) = retry_after {
             if let Ok(value) = seconds.to_string().parse() {
                 response.headers_mut().insert(header::RETRY_AFTER, value);
             }

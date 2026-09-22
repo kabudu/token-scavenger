@@ -76,7 +76,18 @@ pub async fn record_usage(state: &AppState, record: UsageRecord<'_>) -> Result<(
 
     sqlx::query(
         "INSERT INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, project_id, api_key_prefix)
-         VALUES (?, ?, ?, ?, ?, 'success', 200, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, 'success', 200, ?, ?, ?, ?)
+         ON CONFLICT(request_id) DO UPDATE SET
+            endpoint_kind = excluded.endpoint_kind,
+            requested_model = excluded.requested_model,
+            selected_provider_id = excluded.selected_provider_id,
+            selected_model_id = excluded.selected_model_id,
+            status = 'success',
+            http_status = 200,
+            latency_ms = excluded.latency_ms,
+            streaming = excluded.streaming,
+            project_id = excluded.project_id,
+            api_key_prefix = excluded.api_key_prefix"
     )
     .bind(record.request_id)
     .bind(record.endpoint_kind)
@@ -177,8 +188,17 @@ pub async fn record_failure(
         crate::observability::short_error(&redacted)
     });
     sqlx::query(
-        "INSERT OR IGNORE INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, error_code, error_summary, project_id, api_key_prefix)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO request_log (request_id, endpoint_kind, requested_model, selected_provider_id, selected_model_id, status, http_status, latency_ms, streaming, error_code, error_summary, project_id, api_key_prefix)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(request_id) DO UPDATE SET
+            status = excluded.status,
+            http_status = excluded.http_status,
+            latency_ms = excluded.latency_ms,
+            error_code = excluded.error_code,
+            error_summary = excluded.error_summary,
+            selected_provider_id = COALESCE(excluded.selected_provider_id, request_log.selected_provider_id),
+            selected_model_id = COALESCE(excluded.selected_model_id, request_log.selected_model_id)
+         WHERE request_log.status = 'pending'"
     )
     .bind(record.request_id)
     .bind(record.endpoint_kind)
@@ -222,6 +242,195 @@ pub async fn record_failure(
         "Failed request recorded"
     );
 
+    Ok(())
+}
+
+pub async fn ensure_pending_request(
+    state: &AppState,
+    request_id: &str,
+    requested_model: &str,
+    streaming: bool,
+) -> Result<(), sqlx::Error> {
+    let project = crate::projects::project_for_request(state, request_id)
+        .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
+    sqlx::query(
+        "INSERT OR IGNORE INTO request_log
+         (request_id, endpoint_kind, requested_model, status, http_status, latency_ms, streaming, project_id, api_key_prefix)
+         VALUES (?, 'chat', ?, 'pending', 0, 0, ?, ?, ?)",
+    )
+    .bind(request_id)
+    .bind(requested_model)
+    .bind(streaming)
+    .bind(project.project_id)
+    .bind(project.api_key_prefix)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+pub struct DecisionStamp<'a> {
+    pub session_digest: Option<&'a str>,
+    pub subtask_digest: Option<&'a str>,
+    pub task_phase: Option<&'a str>,
+    pub tier: Option<&'a str>,
+    pub selection_source: Option<&'a str>,
+    pub profile_revision: Option<&'a str>,
+    pub classifier_status: Option<&'a str>,
+}
+
+pub async fn annotate_request_decision(
+    state: &AppState,
+    request_id: &str,
+    stamp: DecisionStamp<'_>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE request_log SET
+            session_digest = ?,
+            subtask_digest = ?,
+            task_phase = ?,
+            tier = ?,
+            selection_source = ?,
+            profile_revision = ?,
+            classifier_status = ?
+         WHERE request_id = ?",
+    )
+    .bind(stamp.session_digest)
+    .bind(stamp.subtask_digest)
+    .bind(stamp.task_phase)
+    .bind(stamp.tier)
+    .bind(stamp.selection_source)
+    .bind(stamp.profile_revision)
+    .bind(stamp.classifier_status)
+    .bind(request_id)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+pub struct InternalUsage<'a> {
+    pub parent_request_id: &'a str,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub purpose: &'a str,
+    pub usage: Option<&'a UsageResponse>,
+    pub unknown_usage: bool,
+    pub latency_ms: i64,
+}
+
+/// Persist classifier or other internal usage against the parent request.
+/// Does not remove the parent project context and does not insert a second
+/// external request row.
+pub async fn record_internal_usage(
+    state: &AppState,
+    record: InternalUsage<'_>,
+) -> Result<(), sqlx::Error> {
+    let project = crate::projects::project_for_request(state, record.parent_request_id)
+        .unwrap_or_else(crate::projects::ClientProjectContext::master_default);
+    sqlx::query(
+        "INSERT OR IGNORE INTO request_log
+         (request_id, endpoint_kind, requested_model, status, http_status, latency_ms, streaming, project_id, api_key_prefix)
+         VALUES (?, 'chat', '', 'pending', 0, 0, 0, ?, ?)",
+    )
+    .bind(record.parent_request_id)
+    .bind(&project.project_id)
+    .bind(&project.api_key_prefix)
+    .execute(&state.db)
+    .await?;
+
+    let usage = record.usage.cloned().unwrap_or(UsageResponse {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        prompt_cache_hit_tokens: None,
+        prompt_cache_miss_tokens: None,
+        reasoning_tokens: None,
+    });
+    let pricing_usage = crate::usage::pricing_catalog::PricingUsage {
+        input_tokens: usage.prompt_tokens,
+        cached_input_tokens: usage.prompt_cache_hit_tokens,
+        cache_miss_input_tokens: usage.prompt_cache_miss_tokens,
+        output_tokens: usage.completion_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+    };
+    let free_tier = state
+        .config()
+        .providers
+        .iter()
+        .find(|provider| provider.id == record.provider_id)
+        .map(|provider| provider.free_only)
+        .unwrap_or(true);
+    let cost = if record.unknown_usage {
+        let mut estimate = crate::usage::pricing_catalog::unknown_price_estimate(
+            record.provider_id,
+            record.model_id,
+            &pricing_usage,
+        );
+        estimate.confidence = "unknown".to_string();
+        estimate
+    } else if free_tier {
+        crate::usage::pricing_catalog::free_tier_estimate()
+    } else {
+        match crate::usage::pricing_catalog::lookup_rate(
+            &state.db,
+            record.provider_id,
+            record.model_id,
+        )
+        .await?
+        {
+            Some(rate) => crate::usage::pricing_catalog::calculate_cost(&rate, &pricing_usage),
+            None => {
+                let mut estimate = crate::usage::pricing_catalog::unknown_price_estimate(
+                    record.provider_id,
+                    record.model_id,
+                    &pricing_usage,
+                );
+                estimate.confidence = "unknown".to_string();
+                estimate
+            }
+        }
+    };
+    let attempt_id = format!(
+        "{}:{}:{}",
+        record.parent_request_id,
+        record.purpose,
+        uuid::Uuid::new_v4()
+    );
+    sqlx::query(
+        "INSERT INTO usage_events
+         (request_id, provider_id, model_id, input_tokens, output_tokens, estimated_cost_usd, cost_confidence, free_tier, cached_input_tokens, cache_miss_input_tokens, reasoning_tokens, pricing_model_id, cost_formula_json, cost_calculated_at, project_id, api_key_prefix, purpose, parent_request_id, attempt_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)",
+    )
+    .bind(record.parent_request_id)
+    .bind(record.provider_id)
+    .bind(record.model_id)
+    .bind(usage.prompt_tokens as i64)
+    .bind(usage.completion_tokens as i64)
+    .bind(cost.amount_usd)
+    .bind(&cost.confidence)
+    .bind(free_tier)
+    .bind(usage.prompt_cache_hit_tokens.map(|value| value as i64))
+    .bind(usage.prompt_cache_miss_tokens.map(|value| value as i64))
+    .bind(usage.reasoning_tokens.map(|value| value as i64))
+    .bind(cost.pricing_model_id)
+    .bind(cost.formula_json.to_string())
+    .bind(&project.project_id)
+    .bind(&project.api_key_prefix)
+    .bind(record.purpose)
+    .bind(record.parent_request_id)
+    .bind(&attempt_id)
+    .execute(&state.db)
+    .await?;
+    crate::metrics::prometheus::record_internal_usage(
+        record.purpose,
+        if record.unknown_usage {
+            "unknown"
+        } else {
+            &cost.confidence
+        },
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        cost.amount_usd,
+    );
     Ok(())
 }
 

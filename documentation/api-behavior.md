@@ -59,6 +59,12 @@ The `message` is intended for logs and operator diagnostics. Client retry logic 
 | `429` | `rate_limit_exceeded` | An upstream provider rate limit or quota condition prevented completion and no fallback succeeded. | Back off. Respect `Retry-After` when present. |
 | `429` | `quota_exhausted` | Configured provider quota is exhausted until a reset window. | Back off until the indicated reset, or choose another model group. |
 | `503` | `route_exhausted` | No viable route remained for reasons other than rate limits, such as unhealthy providers, open circuit breakers, unsupported models, or upstream 5xx failures. | Retry later or use a different model group; inspect `/metrics` and the UI. |
+| `400` | `unsupported_continuation` | A required tool continuation targets a provider that needs opaque state this proxy does not store. | Start a new subtask on a replayable provider. |
+| `409` | `session_state_unavailable` | Required affinity has no usable pin, often after restart or an incomplete stream. | Retry the subtask from a complete history or start a new session. `Retry-After` may be set. |
+| `409` | `ambiguous_continuation` | Tool-call ids are partial, duplicated, or orphaned. | Send a matched tool history. The proxy will not repair it. |
+| `409` | `subtask_busy` | This session and subtask already has a request in flight. | Retry that subtask. Other subtasks are unaffected. |
+| `429` | `affinity_capacity_exceeded` | The process is at its affinity scope cap. | Retry later, or omit session headers. `Retry-After` is set. |
+| `503` | `affinity_target_unavailable` | The required pin's provider is temporarily ineligible. | Retry the same target. The proxy does not switch it. |
 | `500` | `internal_error` | TokenScavenger hit an internal error. | Retry cautiously and inspect logs. |
 
 ## Rate Limits and Backoff
@@ -151,6 +157,11 @@ providers with stronger observed tool-call behavior.
 This is designed for agent clients that need real streamed `tool_calls` and
 correct tool-result continuation turns. Ordinary chat requests without `tools`
 keep the configured model-group and provider order.
+
+Opt-in subtask routing uses the reserved `x-ts-*` headers on the same chat
+endpoint. `POST /admin/route-plan/preview` explains a representative body
+without taking a lease or writing usage. See
+[subtask routing](agent-routing.md).
 
 ## Auth and Compatibility Notes
 

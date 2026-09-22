@@ -70,6 +70,9 @@ pub struct ClientProjectContext {
     pub project_id: String,
     pub display_name: String,
     pub api_key_prefix: String,
+    /// Stable principal for affinity scope. Master/unauthenticated traffic shares
+    /// `master`. Project keys use `key:{id}` rather than the displayed prefix.
+    pub principal_id: String,
     pub enforce_policy: bool,
 }
 
@@ -79,6 +82,7 @@ impl ClientProjectContext {
             project_id: DEFAULT_PROJECT_ID.to_string(),
             display_name: "Default project".to_string(),
             api_key_prefix: MASTER_KEY_PREFIX.to_string(),
+            principal_id: MASTER_KEY_PREFIX.to_string(),
             enforce_policy: false,
         }
     }
@@ -251,7 +255,7 @@ pub async fn authenticate_project_key(
 ) -> Result<Option<ClientProjectContext>, ApiError> {
     let hash = hash_project_api_key(api_key);
     let row = sqlx::query(
-        "SELECT p.project_id, p.display_name, k.key_prefix
+        "SELECT p.project_id, p.display_name, k.key_prefix, k.id
          FROM project_api_keys k
          JOIN projects p ON p.project_id = k.project_id
          WHERE k.key_hash = ?
@@ -275,6 +279,7 @@ pub async fn authenticate_project_key(
     let project_id: String = row.get(0);
     let display_name: String = row.get(1);
     let api_key_prefix: String = row.get(2);
+    let key_id: i64 = row.get(3);
 
     let _ = sqlx::query(
         "UPDATE project_api_keys SET last_used_at = datetime('now') WHERE key_prefix = ?",
@@ -287,6 +292,7 @@ pub async fn authenticate_project_key(
         project_id,
         display_name,
         api_key_prefix,
+        principal_id: format!("key:{key_id}"),
         enforce_policy: true,
     }))
 }
@@ -501,7 +507,13 @@ pub async fn project_policy_skip_reasons(
             }
         }
         if let Some(limit) = policy.max_cost_per_day_usd {
-            let spent = project_spend_today(state, &policy.project_id).await?;
+            let day = crate::usage::reservations::utc_day();
+            let spent = project_spend_today(state, &policy.project_id).await?
+                + crate::usage::reservations::micros_to_usd(
+                    state.budget_ledger.outstanding_micros(
+                        &crate::usage::reservations::scope_project_day(&policy.project_id, &day),
+                    ),
+                );
             if spent + estimated_cost > limit {
                 reasons.push(format!(
                     "filtered by project daily budget: projected {:.6} > limit {:.6}",
@@ -514,7 +526,13 @@ pub async fn project_policy_skip_reasons(
             policy.organization_id.as_deref(),
             policy.max_cost_per_org_per_day_usd,
         ) {
-            let spent = scoped_spend_today(state, "organization_id", org_id).await?;
+            let day = crate::usage::reservations::utc_day();
+            let spent = scoped_spend_today(state, "organization_id", org_id).await?
+                + crate::usage::reservations::micros_to_usd(
+                    state.budget_ledger.outstanding_micros(
+                        &crate::usage::reservations::scope_org_day(org_id, &day),
+                    ),
+                );
             if spent + estimated_cost > limit {
                 reasons.push(format!(
                     "filtered by organization daily budget: projected {:.6} > limit {:.6}",
@@ -527,7 +545,13 @@ pub async fn project_policy_skip_reasons(
             policy.environment.as_deref(),
             policy.max_cost_per_environment_per_day_usd,
         ) {
-            let spent = scoped_spend_today(state, "environment", environment).await?;
+            let day = crate::usage::reservations::utc_day();
+            let spent = scoped_spend_today(state, "environment", environment).await?
+                + crate::usage::reservations::micros_to_usd(
+                    state.budget_ledger.outstanding_micros(
+                        &crate::usage::reservations::scope_env_day(environment, &day),
+                    ),
+                );
             if spent + estimated_cost > limit {
                 reasons.push(format!(
                     "filtered by environment daily budget: projected {:.6} > limit {:.6}",
@@ -767,6 +791,7 @@ async fn key_budget_skip_reasons(
                 "filtered by key daily cost budget because paid price is unknown".to_string(),
             ]);
         };
+        let day = crate::usage::reservations::utc_day();
         let spent = sqlx::query_as::<_, (f64,)>(
             "SELECT COALESCE(SUM(estimated_cost_usd), 0.0)
              FROM usage_events
@@ -777,7 +802,10 @@ async fn key_budget_skip_reasons(
         .await
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .map(|row| row.0)
-        .unwrap_or(0.0);
+        .unwrap_or(0.0)
+            + crate::usage::reservations::micros_to_usd(state.budget_ledger.outstanding_micros(
+                &crate::usage::reservations::scope_key_day(api_key_prefix, &day),
+            ));
         if spent + estimated_cost > limit {
             reasons.push(format!(
                 "filtered by key daily cost budget: projected {:.6} > limit {:.6}",

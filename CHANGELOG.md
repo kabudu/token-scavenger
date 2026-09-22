@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added opt-in subtask routing under `[routing.agent]`. Named profiles map task labels onto economy, standard, and advanced model groups, with process-local affinity for a single subtask. The feature is disabled by default. Automatic classification is implemented and experimental; rules mode does not call a classifier. See `documentation/agent-routing.md`.
+
 ### Changed
 
 ### Fixed

@@ -4,17 +4,11 @@ use crate::api::openai::chat::UsageResponse;
 use crate::api::openai::chat::{NormalizedChatRequest, ProviderChatResponse};
 use crate::app::state::AppState;
 use crate::config::schema::Config;
-use crate::discovery::model_intelligence::{
-    ModelRequestRequirements, filter_by_model_intelligence,
-};
-use crate::providers::traits::{EndpointKind, ProviderContext, ProviderError};
-use crate::router::policy::RoutePolicy;
+use crate::providers::traits::{ProviderContext, ProviderError};
 use crate::router::selection::{
-    RouteAttempt, TokenEstimate, apply_policy_engine, assign_attempt_priorities,
-    build_attempt_plan_for_target, filter_by_health, filter_by_model_enabled_for_endpoint,
-    filter_by_paid_policy, prioritize_for_tool_use, record_context_failure_hint,
-    record_rate_limit_hint, record_stream_silence_hint, should_skip_for_context_hint,
-    should_skip_for_rate_limit_hint, should_skip_for_stream_silence_hint_with_alternative,
+    RouteAttempt, record_context_failure_hint, record_rate_limit_hint, record_stream_silence_hint,
+    should_skip_for_context_hint, should_skip_for_rate_limit_hint,
+    should_skip_for_stream_silence_hint_with_alternative,
 };
 use axum::response::sse::Event;
 use futures::stream::Stream;
@@ -175,6 +169,49 @@ pub fn format_sse_payload(event: &StreamEvent) -> String {
         .to_string(),
         StreamEvent::Done => "[DONE]".to_string(),
     }
+}
+
+async fn mark_stream_complete(
+    state: &AppState,
+    request_id: &str,
+    pin: &mut Option<crate::router::affinity::StreamPin>,
+    decision: Option<&crate::router::planner::AgentDecision>,
+) {
+    if let Some(pin) = pin.as_mut() {
+        pin.completed = true;
+    }
+    if let Some(decision) = decision {
+        let _ = crate::usage::accounting::annotate_request_decision(
+            state,
+            request_id,
+            crate::usage::accounting::DecisionStamp {
+                session_digest: decision.session_digest.as_deref(),
+                subtask_digest: decision.subtask_digest.as_deref(),
+                task_phase: Some(decision.phase.as_str()),
+                tier: Some(decision.tier.as_str()),
+                selection_source: Some(decision.source.as_str()),
+                profile_revision: Some(decision.revision.as_str()),
+                classifier_status: Some(decision.classifier_status.as_str()),
+            },
+        )
+        .await;
+    }
+}
+
+fn observe_forwarded_pin(
+    pin: &mut Option<crate::router::affinity::StreamPin>,
+    provider_id: &str,
+    model_id: &str,
+    event: &StreamEvent,
+) {
+    let Some(pin) = pin.as_mut() else {
+        return;
+    };
+    let tool_id = match event {
+        StreamEvent::ToolCallChunk { tool_call_id, .. } => tool_call_id.clone(),
+        _ => None,
+    };
+    pin.observe(provider_id, model_id, tool_id.as_deref());
 }
 
 fn stream_event_has_content(event: &StreamEvent) -> bool {
@@ -346,38 +383,51 @@ fn stream_error_event(error: &ProviderError, config: &Config) -> StreamEvent {
 pub async fn create_chat_stream(
     state: AppState,
     request: NormalizedChatRequest,
-    request_id: String,
+    context: crate::router::context::RoutingContext,
 ) -> Result<impl Stream<Item = Result<Event, Infallible>>, ApiError> {
     let started_at = Instant::now();
+    let request_id = context.public_request_id.clone();
     let config = state.config();
-    let registry = &state.provider_registry;
-    let policy = RoutePolicy::from_config(&config);
-
-    // Resolve model group
-    let resolved_targets =
-        crate::router::model_groups::resolve_model_group_targets(&state, &request.model)
-            .await
-            .unwrap_or_else(|| {
-                vec![crate::router::model_groups::ModelTarget::any_provider(
-                    request.model.clone(),
-                )]
-            });
-    let resolved_models = resolved_targets
-        .iter()
-        .map(|target| target.label())
-        .collect::<Vec<_>>();
-    let resolved_model_label = resolved_models.join(", ");
-
-    // Build attempt plan
-    let mut plan = Vec::new();
-    for target in &resolved_targets {
-        let model_plan =
-            build_attempt_plan_for_target(&policy, registry, target, EndpointKind::ChatCompletions)
-                .await;
-        plan.extend(model_plan);
+    let _registry = &state.provider_registry;
+    let prepared = crate::router::planner::prepare_chat_plan(
+        &state,
+        &request,
+        &context,
+        crate::router::planner::PlanMode::Execute,
+    )
+    .await?;
+    let idle_ttl =
+        std::time::Duration::from_secs(state.config().routing.agent.session_idle_ttl_seconds);
+    let pin_tier = prepared
+        .decision
+        .as_ref()
+        .map(|decision| decision.tier_value);
+    let pin_revision = prepared
+        .decision
+        .as_ref()
+        .map(|decision| decision.revision.clone());
+    let stream_pin = match (prepared.lease, pin_tier, pin_revision) {
+        (Some(lease), Some(tier), Some(revision)) => Some(crate::router::affinity::StreamPin::new(
+            lease, tier, revision, idle_ttl,
+        )),
+        _ => None,
+    };
+    if let Some(decision) = &prepared.decision {
+        crate::metrics::prometheus::record_agent_decision(
+            &decision.source,
+            &decision.tier,
+            &decision.phase,
+        );
+        crate::metrics::prometheus::record_pin_outcome(&decision.pin);
+        crate::observability::record_agent_decision(&state, &request_id, decision).await;
     }
-    assign_attempt_priorities(&mut plan);
-
+    let lock_candidate = prepared
+        .decision
+        .as_ref()
+        .is_some_and(|decision| decision.lock_candidate);
+    let plan = prepared.attempts;
+    let resolved_models = prepared.resolved_models;
+    let resolved_model_label = resolved_models.join(", ");
     if plan.is_empty() {
         crate::observability::record_route_plan(
             &state,
@@ -410,47 +460,6 @@ pub async fn create_chat_stream(
             resolved_models
         )));
     }
-
-    let mut plan = filter_by_model_enabled_for_endpoint(
-        filter_by_paid_policy(filter_by_health(plan, &state), &state),
-        &state,
-        EndpointKind::ChatCompletions,
-    )
-    .await;
-    plan = filter_by_model_intelligence(plan, &state, ModelRequestRequirements::for_chat(&request))
-        .await;
-    if request.tools.is_some() {
-        plan = prioritize_for_tool_use(plan, &state).await;
-    }
-    plan = apply_policy_engine(
-        plan,
-        &state,
-        &policy,
-        &request.model,
-        EndpointKind::ChatCompletions,
-        TokenEstimate {
-            input_tokens: request
-                .prompt_size_hint()
-                .div_ceil(4)
-                .min(u32::MAX as usize) as u32,
-            output_tokens: request.max_tokens.unwrap_or(1024),
-        },
-    )
-    .await;
-    plan = crate::projects::filter_project_policy(
-        plan,
-        &state,
-        &request_id,
-        &request.model,
-        TokenEstimate {
-            input_tokens: request
-                .prompt_size_hint()
-                .div_ceil(4)
-                .min(u32::MAX as usize) as u32,
-            output_tokens: request.max_tokens.unwrap_or(1024),
-        },
-    )
-    .await?;
 
     if plan.is_empty() {
         crate::observability::record_route_plan(
@@ -514,12 +523,27 @@ pub async fn create_chat_stream(
     let task_request_id = request_id.clone();
     let task_started_at = started_at;
 
+    let stream_decision = prepared.decision.clone();
+    let adaptive = stream_decision.is_some();
+    let budget_project_id = context.project.project_id.clone();
+    let budget_key_prefix = context.project.api_key_prefix.clone();
+    let budget_estimate = prepared.token_estimate;
+    let budget_hold = std::sync::Arc::new(tokio::sync::Mutex::new(
+        None::<crate::router::admission::PaidHold>,
+    ));
+    let task_budget_hold = budget_hold.clone();
     tokio::spawn(async move {
+        let mut affinity_pin = stream_pin;
         let prompt_size_hint = request_clone.prompt_size_hint();
         let mut terminal_error = None;
-        let mut terminal_failure_code = "route_exhausted";
+        let mut terminal_failure_code = if lock_candidate {
+            "affinity_target_unavailable"
+        } else {
+            "route_exhausted"
+        };
         let mut terminal_failure_summary =
             "all planned streaming attempts were unavailable".to_string();
+        let mut budget_http_status = 429i64;
         'attempts: for attempt in &plan {
             let provider_id = &attempt.provider_id;
             let model_id = &attempt.model_id;
@@ -635,6 +659,45 @@ pub async fn create_chat_stream(
                 });
             }
 
+            if let Some(previous) = task_budget_hold.lock().await.take() {
+                drop(previous);
+            }
+            match crate::router::engine::begin_inference_hold(
+                &state,
+                adaptive,
+                &budget_project_id,
+                &budget_key_prefix,
+                &task_request_id,
+                provider_id,
+                model_id,
+                &request_clone.model,
+                provider_cfg.free_only,
+                &budget_estimate,
+            )
+            .await
+            {
+                Ok(hold) => *task_budget_hold.lock().await = hold,
+                Err(error) => {
+                    terminal_failure_code = "budget_denied";
+                    terminal_failure_summary = error.to_string();
+                    if let crate::api::error::ApiError::AgentRouting { http_status, .. } = &error {
+                        budget_http_status = i64::from(*http_status);
+                    }
+                    crate::observability::record_skip(
+                        &state,
+                        &task_request_id,
+                        "chat",
+                        attempt,
+                        "budget_denied",
+                    )
+                    .await;
+                    if lock_candidate {
+                        break 'attempts;
+                    }
+                    continue;
+                }
+            }
+
             let (attempt_tx, mut attempt_rx) = tokio::sync::mpsc::channel::<StreamEvent>(256);
             let attempt_request = NormalizedChatRequest {
                 model: attempt.model_id.clone(),
@@ -687,6 +750,7 @@ pub async fn create_chat_stream(
                                     )
                                     .await;
                                     let _ = tx.send(StreamEvent::Done).await;
+                                    mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
                                     return;
                                 }
                                 Ok(Ok(())) => {
@@ -797,7 +861,11 @@ pub async fn create_chat_stream(
                     }
 
                     if forwarded_meaningful_event {
+                        observe_forwarded_pin(&mut affinity_pin, provider_id, model_id, &event);
                         let done = matches!(event, StreamEvent::Done);
+                        if done {
+                            mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
+                        }
                         let _ = tx.send(event).await;
                         if done {
                             info!(
@@ -822,6 +890,7 @@ pub async fn create_chat_stream(
 
                     if stream_event_has_content(&event) {
                         forwarded_meaningful_event = true;
+                        observe_forwarded_pin(&mut affinity_pin, provider_id, model_id, &event);
                         record_stream_timing_async(
                             &state,
                             &task_request_id,
@@ -885,6 +954,7 @@ pub async fn create_chat_stream(
                             )
                             .await;
                             let _ = tx.send(StreamEvent::Done).await;
+                            mark_stream_complete(&state, &task_request_id, &mut affinity_pin, stream_decision.as_ref()).await;
                             return;
                         }
                         Ok(Ok(())) => {
@@ -1021,6 +1091,35 @@ pub async fn create_chat_stream(
                     "Retrying empty upstream stream as a non-streaming request"
                 );
                 let recovery_started_at = Instant::now();
+                if let Some(previous) = task_budget_hold.lock().await.take() {
+                    drop(previous);
+                }
+                match crate::router::engine::begin_inference_hold(
+                    &state,
+                    adaptive,
+                    &budget_project_id,
+                    &budget_key_prefix,
+                    &task_request_id,
+                    provider_id,
+                    model_id,
+                    &request_clone.model,
+                    provider_cfg.free_only,
+                    &budget_estimate,
+                )
+                .await
+                {
+                    Ok(hold) => *task_budget_hold.lock().await = hold,
+                    Err(error) => {
+                        terminal_failure_code = "budget_denied";
+                        terminal_failure_summary = error.to_string();
+                        if let crate::api::error::ApiError::AgentRouting { http_status, .. } =
+                            &error
+                        {
+                            budget_http_status = i64::from(*http_status);
+                        }
+                        break 'attempts;
+                    }
+                }
                 match adapter.chat_completions(&ctx, recovery_request).await {
                     Ok(response) => {
                         if let Some(events) = recovered_non_stream_events(response) {
@@ -1040,8 +1139,21 @@ pub async fn create_chat_stream(
                                 "Recovered empty upstream stream with non-streaming response"
                             );
                             for event in events {
+                                observe_forwarded_pin(
+                                    &mut affinity_pin,
+                                    provider_id,
+                                    model_id,
+                                    &event,
+                                );
                                 let _ = tx.send(event).await;
                             }
+                            mark_stream_complete(
+                                &state,
+                                &task_request_id,
+                                &mut affinity_pin,
+                                stream_decision.as_ref(),
+                            )
+                            .await;
                             return;
                         }
                         warn!(
@@ -1085,12 +1197,20 @@ pub async fn create_chat_stream(
         }
 
         // All providers failed pre-stream or an upstream ended an active stream with an error.
-        let (failure_status, failure_http_status, failure_outcome) = match terminal_error.as_ref() {
-            Some(ProviderError::RateLimited { .. }) => ("rate_limited", 429, "rate_limited"),
-            Some(ProviderError::QuotaExhausted { .. }) => {
-                ("quota_exhausted", 429, "quota_exhausted")
+        // The response consumer settles a successful usage event and retains a hold
+        // that never received one, including when this task already failed.
+        let (failure_status, failure_http_status, failure_outcome) = if terminal_failure_code
+            == "budget_denied"
+        {
+            ("budget_denied", budget_http_status, "budget_denied")
+        } else {
+            match terminal_error.as_ref() {
+                Some(ProviderError::RateLimited { .. }) => ("rate_limited", 429, "rate_limited"),
+                Some(ProviderError::QuotaExhausted { .. }) => {
+                    ("quota_exhausted", 429, "quota_exhausted")
+                }
+                _ => ("route_exhausted", 503, "route_exhausted"),
             }
-            _ => ("route_exhausted", 503, "route_exhausted"),
         };
         let safe_terminal_failure_summary =
             crate::util::redact::redact_config_secrets(&config_clone, &terminal_failure_summary);
@@ -1149,6 +1269,9 @@ pub async fn create_chat_stream(
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Done => {
+                    if let Some(hold) = budget_hold.lock().await.take() {
+                        drop(hold);
+                    }
                     yield Ok(Event::default().data("[DONE]"));
                     break;
                 }
@@ -1171,7 +1294,7 @@ pub async fn create_chat_stream(
                                 prompt_cache_miss_tokens: None,
                                 reasoning_tokens: None,
                             };
-                            if let Err(error) = crate::usage::accounting::record_usage(
+                            let recorded = crate::usage::accounting::record_usage(
                                 &usage_state,
                                 crate::usage::accounting::UsageRecord {
                                     provider_id: &ctx.provider_id,
@@ -1185,9 +1308,11 @@ pub async fn create_chat_stream(
                                     streaming: true,
                                 },
                             )
-                            .await
-                            {
+                            .await;
+                            if let Err(error) = &recorded {
                                 warn!(%error, "Failed to record streaming usage");
+                            } else if let Some(hold) = budget_hold.lock().await.take() {
+                                hold.settle().await;
                             }
                         } else {
                             warn!("Streaming usage event received before provider context was set");

@@ -508,7 +508,9 @@ async fn budget_skip_reasons(
     }
 
     if let Some(limit) = policy.budgets.max_cost_per_day_usd {
-        let spent = spent_today(state, None, None).await;
+        let day = crate::usage::reservations::utc_day();
+        let spent = spent_today(state, None, None).await
+            + reserved_usd(state, &crate::usage::reservations::scope_global_day(&day));
         if spent + estimated_cost_usd > limit {
             reasons.push(format!(
                 "filtered by daily budget: projected {:.6} > limit {:.6}",
@@ -523,7 +525,12 @@ async fn budget_skip_reasons(
         .max_cost_per_provider_per_day_usd
         .get(&attempt.provider_id)
     {
-        let spent = spent_today(state, Some(&attempt.provider_id), None).await;
+        let day = crate::usage::reservations::utc_day();
+        let spent = spent_today(state, Some(&attempt.provider_id), None).await
+            + reserved_usd(
+                state,
+                &crate::usage::reservations::scope_provider_day(&attempt.provider_id, &day),
+            );
         if spent + estimated_cost_usd > *limit {
             reasons.push(format!(
                 "filtered by provider daily budget: projected {:.6} > limit {:.6}",
@@ -538,7 +545,12 @@ async fn budget_skip_reasons(
         .max_cost_per_model_group_per_day_usd
         .get(requested_model)
     {
-        let spent = spent_today(state, None, Some(requested_model)).await;
+        let day = crate::usage::reservations::utc_day();
+        let spent = spent_today(state, None, Some(requested_model)).await
+            + reserved_usd(
+                state,
+                &crate::usage::reservations::scope_group_day(requested_model, &day),
+            );
         if spent + estimated_cost_usd > *limit {
             reasons.push(format!(
                 "filtered by model-group daily budget: projected {:.6} > limit {:.6}",
@@ -549,6 +561,10 @@ async fn budget_skip_reasons(
     }
 
     reasons
+}
+
+fn reserved_usd(state: &AppState, scope: &str) -> f64 {
+    crate::usage::reservations::micros_to_usd(state.budget_ledger.outstanding_micros(scope))
 }
 
 fn has_hard_budget(policy: &RoutePolicy, requested_model: &str, provider_id: &str) -> bool {
@@ -847,6 +863,42 @@ pub fn filter_by_paid_policy(plan: Vec<RouteAttempt>, state: &AppState) -> Vec<R
         .collect()
 }
 
+async fn load_model_flags(
+    db: &sqlx::SqlitePool,
+    pairs: &[(String, String)],
+) -> std::collections::HashMap<(String, String), (bool, bool, bool)> {
+    let mut flags = std::collections::HashMap::new();
+    for chunk in pairs.chunks(80) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = chunk
+            .iter()
+            .map(|_| "(?, ?)")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT provider_id, upstream_model_id, enabled, supports_chat, supports_embeddings
+             FROM models
+             WHERE (provider_id, upstream_model_id) IN (VALUES {placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, (String, String, bool, bool, bool)>(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        let Ok(rows) = query.fetch_all(db).await else {
+            continue;
+        };
+        for (provider_id, model_id, enabled, supports_chat, supports_embeddings) in rows {
+            flags.insert(
+                (provider_id, model_id),
+                (enabled, supports_chat, supports_embeddings),
+            );
+        }
+    }
+    flags
+}
+
 /// Filter an attempt plan by persisted model enablement.
 /// Only models with an explicit row in the models table are routable.
 /// Missing rows (model never discovered/seeded for this provider) are excluded.
@@ -863,26 +915,24 @@ pub async fn filter_by_model_enabled_for_endpoint(
     state: &AppState,
     endpoint_kind: EndpointKind,
 ) -> Vec<RouteAttempt> {
+    let pairs = plan
+        .iter()
+        .map(|attempt| (attempt.provider_id.clone(), attempt.model_id.clone()))
+        .collect::<Vec<_>>();
+    let flags = load_model_flags(&state.db, &pairs).await;
     let mut filtered = Vec::with_capacity(plan.len());
 
     for attempt in plan {
-        let model_state = sqlx::query_as::<_, (bool, bool, bool)>(
-            "SELECT enabled, supports_chat, supports_embeddings FROM models WHERE provider_id = ? AND upstream_model_id = ?",
-        )
-        .bind(&attempt.provider_id)
-        .bind(&attempt.model_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .map(|row| {
-            let endpoint_supported = match endpoint_kind {
-                EndpointKind::ChatCompletions => row.1,
-                EndpointKind::Embeddings => row.2,
-                EndpointKind::ModelList => true,
-            };
-            (row.0, endpoint_supported)
-        });
+        let model_state = flags
+            .get(&(attempt.provider_id.clone(), attempt.model_id.clone()))
+            .map(|row| {
+                let endpoint_supported = match endpoint_kind {
+                    EndpointKind::ChatCompletions => row.1,
+                    EndpointKind::Embeddings => row.2,
+                    EndpointKind::ModelList => true,
+                };
+                (row.0, endpoint_supported)
+            });
 
         match model_state {
             Some((true, true)) => filtered.push(attempt),
