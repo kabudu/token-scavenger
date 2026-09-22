@@ -2,17 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      bump_type:
-        description: "Version selection"
-        required: true
-        type: choice
-        default: current
-        options:
-          - current
-          - patch
-          - minor
-          - major
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,7 +9,7 @@ concurrency:
 
 jobs:
   prepare:
-    name: Select version & tag
+    name: Verify version & tag
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,48 +19,36 @@ jobs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-edit
-        run: cargo install cargo-edit
-
-      - name: Select release version
+      - name: Verify merged release version
         id: bump
         run: |
-          if [ "${{ github.event.inputs.bump_type }}" != "current" ]; then
-            cargo set-version --bump ${{ github.event.inputs.bump_type }}
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "Releases must be dispatched from master" >&2
+            exit 1
           fi
 
           NEW_VER=$(cargo metadata --format-version=1 --no-deps 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")
           echo "new_version=$NEW_VER" >> "$GITHUB_OUTPUT"
-          echo "Preparing release v$NEW_VER"
+          echo "Releasing merged version v$NEW_VER"
 
-          python3 scripts/changelog_release.py prepare \
+          python3 scripts/changelog_release.py extract \
             --file CHANGELOG.md \
-            --version "$NEW_VER" \
-            --date "$(date -u +%F)"
+            --version "$NEW_VER" >/dev/null
 
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add Cargo.toml Cargo.lock CHANGELOG.md 2>/dev/null || git add Cargo.toml CHANGELOG.md
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: prepare release v$NEW_VER"
-            git push origin HEAD:${{ github.ref_name }}
-          fi
-
-          if git rev-parse "v$NEW_VER" >/dev/null 2>&1 \
-            || git ls-remote --exit-code --tags origin "refs/tags/v$NEW_VER" >/dev/null 2>&1; then
-            if [ "${{ github.event.inputs.bump_type }}" = "current" ]; then
-              echo "Tag v$NEW_VER already exists — reusing for current-version release"
-              exit 0
+          if git ls-remote --exit-code --tags origin "refs/tags/v$NEW_VER" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/v$NEW_VER:refs/tags/v$NEW_VER"
+            if [ "$(git rev-parse "v$NEW_VER^{commit}")" != "$GITHUB_SHA" ]; then
+              echo "Tag v$NEW_VER does not point to the dispatched master commit" >&2
+              exit 1
             fi
-            echo "Tag v$NEW_VER already exists — aborting"
-            exit 1
+            echo "Reusing v$NEW_VER for a release workflow rerun"
+            exit 0
           fi
+
           git tag "v$NEW_VER"
           git push origin "v$NEW_VER"
 
@@ -207,7 +184,7 @@ jobs:
 
       - name: Generate checksums
         run: |
-          find dist -type f -name 'tokenscavenger-v*' | sort | while read f; do
+          find dist -type f -name 'tokenscavenger-v*' | sort | while IFS= read -r f; do
             sha256sum "$f" | awk -v asset="$(basename "$f")" '{print $1 "  " asset}' >> checksums.txt
           done
           cat checksums.txt

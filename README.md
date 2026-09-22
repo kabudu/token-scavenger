@@ -424,18 +424,19 @@ sidecar overrides file so they survive restarts.
 
 ## Releases
 
-New releases are created from the GitHub Actions workflow dispatch menu:
+New releases are prepared through a pull request, then published from the
+merged `master` branch:
 
-1. Navigate to **Actions → Release** in the GitHub repository
-2. Click **Run workflow**
-3. Choose `current` to release the version already in `Cargo.toml`, or choose
-   `patch` (1.0.0 → 1.0.1), `minor` (1.0.0 → 1.1.0), or `major` (1.0.0 → 2.0.0)
-   to bump before releasing.
-4. Click **Run workflow**
+1. Bump the version in `Cargo.toml` and `Cargo.lock`. Promote the changelog
+   entry with `python3 scripts/changelog_release.py prepare --version X.Y.Z`
+   and open a pull request with those changes.
+2. Wait for the required CI checks, then merge the pull request.
+3. Navigate to **Actions → Release** in the GitHub repository, choose `master`,
+   and click **Run workflow**.
 
 The workflow:
 
-- Uses the current `Cargo.toml` version or bumps it, then creates a git tag (`vX.Y.Z`)
+- Verifies the merged version and changelog, then creates a git tag (`vX.Y.Z`)
 - Builds binaries for Linux (x86_64), signed/notarized macOS (ARM64), and Windows (x86_64)
 - Creates a GitHub release with all binaries, checksums, an SPDX SBOM, and
   GitHub artifact attestations attached
