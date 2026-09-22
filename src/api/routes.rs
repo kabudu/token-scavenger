@@ -678,7 +678,7 @@ pub struct RoutePreviewRequest {
     simulated_tier: Option<String>,
 }
 
-/// POST /admin/route-plan/preview — side-effect-free plan for representative messages.
+/// POST /admin/route-plan/preview: side-effect-free plan for representative messages.
 pub async fn admin_route_plan_preview(
     State(state): State<AppState>,
     Json(body): Json<RoutePreviewRequest>,

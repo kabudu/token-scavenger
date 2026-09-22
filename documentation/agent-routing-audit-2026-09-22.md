@@ -1,4 +1,4 @@
-# Agent routing implementation audit — 22 September 2026
+# Agent routing implementation audit: 22 September 2026
 
 Scope: commits `7c0f54e` and `005c5fa` on `agent-subtask-routing`, compared with `.dev/implementation-agent-routing.md`, AGENTS.md, the existing routing and provider contracts, and the public HTTP tests. This audit applies the repository's lazarus-mode correctness, isolation, performance, failure, and operational review order. All fixes below are in the current working tree; this report does not claim they have been committed or released.
 
