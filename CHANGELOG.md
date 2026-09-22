@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Packaged the macOS binary at the archive root so manual unzip and Homebrew installation find it.
+
 ## [0.6.0] - 2026-09-22
 
 ### Added
