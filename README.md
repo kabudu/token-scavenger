@@ -37,7 +37,7 @@
 - **Model intelligence layer** with smart groups, task tags, modality flags,
   context-window awareness, and catalog freshness scoring
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
-- **18 built-in providers** with automatic model discovery, including local OpenAI-compatible upstreams
+- **19 built-in providers** with automatic model discovery, including local OpenAI-compatible upstreams
 - **Circuit breakers, retries & health monitoring**
 - **Prometheus metrics**, request traces, incident feed, and diagnostic bundles
 - **Embedded web UI** with live dashboard, observability, logs, and config editor
@@ -219,7 +219,7 @@ src/
   db/           SQLite pool, migrations (9 tables), helpers
   discovery/    Model discovery, curated catalog, merge logic
   metrics/      Prometheus counters/histograms, structured tracing
-  providers/    18 provider adapter implementations
+  providers/    19 provider adapter implementations
   resilience/   Circuit breakers, health tracking, retry/backoff
   router/       Route planning engine, policy, model groups, fallback
   ui/           Embedded operator web UI (9 views)

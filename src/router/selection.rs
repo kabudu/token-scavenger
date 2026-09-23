@@ -990,7 +990,7 @@ async fn spent_today(
 fn is_local_attempt(state: &AppState, attempt: &RouteAttempt) -> bool {
     if matches!(
         attempt.provider_id.as_str(),
-        "local" | "ollama" | "llama-cpp" | "lmstudio"
+        "local" | "ollama" | "llama-cpp" | "lmstudio" | "mlx"
     ) {
         return true;
     }

@@ -216,3 +216,16 @@ local_openai_adapter!(
         "Capabilities depend on the selected local model"
     ]
 );
+
+local_openai_adapter!(
+    MlxAdapter,
+    "mlx",
+    "MLX Server (mlx-lm)",
+    "http://127.0.0.1:8080/v1",
+    "https://github.com/ml-explore/mlx-lm",
+    [
+        "Uses the mlx-lm OpenAI-compatible server on Apple Silicon (mlx_lm.server)",
+        "Model availability depends on the model passed via --model, e.g. prism-ml/Ternary-Bonsai-27B-mlx-2bit",
+        "No API key required by default; set api_key only if the server is fronted by auth"
+    ]
+);

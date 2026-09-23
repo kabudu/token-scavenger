@@ -1785,6 +1785,7 @@ async fn test_provider_contract_matrix_and_failure_classification() {
         "ollama",
         "llama-cpp",
         "lmstudio",
+        "mlx",
     ];
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     let mut config = Config::default();
@@ -1840,6 +1841,94 @@ async fn test_provider_contract_matrix_and_failure_classification() {
         tokenscavenger::providers::shared::classify_error(500, "boom"),
         ProviderError::Other(_)
     ));
+}
+
+#[tokio::test]
+async fn test_mlx_adapter_alias_defaults_and_curated_seed() {
+    use tokenscavenger::providers::traits::{EndpointKind, ProviderAdapter};
+
+    // Both the canonical id and the mlx-lm alias must resolve to an adapter.
+    for id in ["mlx", "mlx-lm"] {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let mut config = Config::default();
+        config.providers = vec![tokenscavenger::config::schema::ProviderConfig {
+            id: id.to_string(),
+            enabled: true,
+            base_url: None,
+            api_key: None,
+            free_only: true,
+            discover_models: false,
+            embedding_support: Default::default(),
+        }];
+        let state = AppState::new(
+            config,
+            pool,
+            Default::default(),
+            tokio::sync::broadcast::channel(1).0,
+        );
+        state.provider_registry.init_from_config(&state).await;
+        assert_eq!(
+            state.provider_registry.list_ids().await,
+            vec![id.to_string()]
+        );
+        let adapter = state.provider_registry.get(id).await.unwrap();
+        assert_eq!(adapter.provider_id(), "mlx");
+        assert!(adapter.supports_endpoint(&EndpointKind::ChatCompletions));
+        assert!(adapter.supports_endpoint(&EndpointKind::Embeddings));
+        assert!(adapter.supports_endpoint(&EndpointKind::ModelList));
+    }
+
+    // Defaults: mlx_lm.server base URL with no auth header when no key is set.
+    let adapter = tokenscavenger::providers::local::MlxAdapter;
+    let config = tokenscavenger::config::schema::ProviderConfig {
+        id: "mlx".into(),
+        enabled: true,
+        base_url: None,
+        api_key: None,
+        free_only: true,
+        discover_models: true,
+        embedding_support: Default::default(),
+    };
+    assert_eq!(
+        adapter.base_url(&config).as_str(),
+        "http://127.0.0.1:8080/v1"
+    );
+    assert!(
+        !adapter
+            .default_headers(&config)
+            .contains_key(reqwest::header::AUTHORIZATION)
+    );
+
+    // Curated seed for the PrismML ternary 27B 2-bit MLX distribution.
+    let seed = tokenscavenger::discovery::curated::curated_catalog()
+        .into_iter()
+        .find(|model| {
+            model.provider_id == "mlx"
+                && model.upstream_model_id == "prism-ml/Ternary-Bonsai-27B-mlx-2bit"
+        })
+        .expect("mlx curated seed must exist");
+    assert!(seed.free_tier);
+    assert!(seed.endpoint_compatibility.contains(&"chat".to_string()));
+}
+
+#[tokio::test]
+async fn test_mlx_detect_reports_mock_server() {
+    let (base_url, handle) = common::start_mock_server(common::MockProviderState {
+        ..Default::default()
+    })
+    .await;
+    let client = reqwest::Client::new();
+    let status = tokenscavenger::mlx::detect(&client, &format!("{base_url}/v1")).await;
+    assert!(status.server_reachable);
+    assert_eq!(status.served_models, vec!["test-model".to_string()]);
+    assert_eq!(status.base_url, format!("{base_url}/v1"));
+
+    // An unroutable port must report unreachable without hanging or erroring.
+    let down = tokenscavenger::mlx::detect(&client, "http://127.0.0.1:1/v1").await;
+    assert!(!down.server_reachable);
+    assert!(down.served_models.is_empty());
+
+    handle.abort();
 }
 
 #[tokio::test]

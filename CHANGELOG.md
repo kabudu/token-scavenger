@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a built-in `mlx` provider adapter (alias `mlx-lm`) for the Apple Silicon `mlx-lm` OpenAI-compatible server, with a curated seed for `prism-ml/Ternary-Bonsai-27B-mlx-2bit` and local-only routing treatment.
+- Added read-only MLX runtime/server detection and status via `tokenscavenger mlx status`, `GET /admin/mlx/status`, and a Providers-view card, plus a `documentation/mlx.md` install/run guide. Detection never installs, downloads, starts, or stops anything.
+
 ### Changed
 
 ### Fixed
