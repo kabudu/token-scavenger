@@ -77,6 +77,32 @@ Restart TokenScavenger (or reload config). Discovery will pick up whatever
 model id the server reports; the curated seed covers
 `prism-ml/Ternary-Bonsai-27B-mlx-2bit` out of the box.
 
+### Mapping MLX to a different port
+
+When llama.cpp (or anything else) already owns port 8080, serve MLX on 8090:
+
+```bash
+python -m mlx_lm server \
+  --model prism-ml/Ternary-Bonsai-27B-mlx-2bit \
+  --host 127.0.0.1 --port 8090
+```
+
+Then point the provider at it:
+
+```toml
+[[providers]]
+id = "mlx"
+enabled = true
+base_url = "http://127.0.0.1:8090/v1"
+```
+
+Verify with an explicit base URL (this does not change saved config):
+
+```bash
+tokenscavenger mlx status --base-url http://127.0.0.1:8090/v1
+curl http://127.0.0.1:8090/v1/models
+```
+
 ## 4. Check status
 
 ```bash
