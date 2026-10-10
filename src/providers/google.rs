@@ -78,6 +78,61 @@ fn google_generate_content_body(request: &NormalizedChatRequest) -> serde_json::
     body
 }
 
+/// Translate OpenAI-style message content into Gemini `parts`.
+/// Plain strings become `{text}`. Multipart arrays keep `{text}` parts and
+/// convert `{image_url}` parts into `{inlineData}` for `data:` URLs. Remote
+/// HTTP(S) image URLs cannot be sent as bytes, so they fall back to their URL
+/// as text rather than being silently dropped.
+fn google_parts(content: &serde_json::Value) -> Vec<serde_json::Value> {
+    if let Some(text) = content.as_str() {
+        return vec![serde_json::json!({ "text": text })];
+    }
+    let Some(items) = content.as_array() else {
+        return Vec::new();
+    };
+    let mut parts = Vec::new();
+    for item in items {
+        let kind = item.get("type").and_then(|value| value.as_str());
+        match kind {
+            Some("text") => {
+                if let Some(text) = item.get("text").and_then(|value| value.as_str()) {
+                    parts.push(serde_json::json!({ "text": text }));
+                }
+            }
+            Some("image_url") => {
+                let url = item
+                    .get("image_url")
+                    .and_then(|value| {
+                        value
+                            .get("url")
+                            .and_then(|url| url.as_str())
+                            .or_else(|| value.as_str())
+                    })
+                    .unwrap_or("");
+                if let Some((mime, data)) = split_data_url(url) {
+                    parts.push(serde_json::json!({
+                        "inlineData": { "mimeType": mime, "data": data }
+                    }));
+                } else if !url.is_empty() {
+                    parts.push(serde_json::json!({ "text": url }));
+                }
+            }
+            _ => {}
+        }
+    }
+    parts
+}
+
+/// Split a `data:<mime>;base64,<data>` URL into its mime type and payload.
+fn split_data_url(url: &str) -> Option<(&str, &str)> {
+    let rest = url.strip_prefix("data:")?;
+    let (mime, data) = rest.split_once(";base64,")?;
+    if mime.is_empty() || data.is_empty() {
+        return None;
+    }
+    Some((mime, data))
+}
+
 fn google_contents(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
     let mut contents = Vec::new();
     let mut tool_call_names = std::collections::HashMap::new();
@@ -86,9 +141,18 @@ fn google_contents(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
         match message.role.as_str() {
             "assistant" => {
                 let mut parts = Vec::new();
-                if let Some(text) = message.content.as_ref().and_then(|c| c.as_str()) {
-                    if !text.is_empty() {
-                        parts.push(serde_json::json!({ "text": text }));
+                // Text arrives either as a plain string or inside multipart
+                // content blocks; image parts have no meaning in a model
+                // reply, so only text survives here.
+                if let Some(content) = message.content.as_ref() {
+                    for part in google_parts(content) {
+                        let is_nonempty_text = part
+                            .get("text")
+                            .and_then(|text| text.as_str())
+                            .is_some_and(|text| !text.is_empty());
+                        if is_nonempty_text {
+                            parts.push(part);
+                        }
                     }
                 }
                 if let Some(tool_calls) = message.tool_calls.as_ref() {
@@ -145,16 +209,17 @@ fn google_contents(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
                 }));
             }
             _ => {
-                let text = message
+                let parts = message
                     .content
                     .as_ref()
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                contents.push(serde_json::json!({
-                    "role": "user",
-                    "parts": [{"text": text}]
-                }));
+                    .map(google_parts)
+                    .unwrap_or_default();
+                if !parts.is_empty() {
+                    contents.push(serde_json::json!({
+                        "role": "user",
+                        "parts": parts
+                    }));
+                }
             }
         }
     }
@@ -301,19 +366,30 @@ impl ProviderAdapter for GoogleAdapter {
                             .get("displayName")
                             .and_then(|v| v.as_str())
                             .unwrap_or(&model_id);
-                        let supports_chat = m
+                        let methods = m
                             .get("supportedGenerationMethods")
-                            .and_then(|v| v.as_array())
+                            .and_then(|v| v.as_array());
+                        let supports_chat = methods
                             .map(|arr| arr.iter().any(|m| m.as_str() == Some("generateContent")))
                             .unwrap_or(false);
-                        if !supports_chat {
+                        let supports_embeddings = methods
+                            .map(|arr| arr.iter().any(|m| m.as_str() == Some("embedContent")))
+                            .unwrap_or(false);
+                        if !supports_chat && !supports_embeddings {
                             return None;
+                        }
+                        let mut endpoint_compatibility = Vec::new();
+                        if supports_chat {
+                            endpoint_compatibility.push("chat".into());
+                        }
+                        if supports_embeddings {
+                            endpoint_compatibility.push("embeddings".into());
                         }
                         Some(DiscoveredModel {
                             provider_id: "google".into(),
                             upstream_model_id: model_id.clone(),
                             display_name: Some(display.to_string()),
-                            endpoint_compatibility: vec!["chat".into()],
+                            endpoint_compatibility,
                             context_window: m.get("inputTokenLimit").and_then(|v| v.as_u64()),
                             free_tier: true,
                         })
@@ -723,6 +799,86 @@ mod tests {
             "lookup"
         );
         assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+    }
+
+    #[test]
+    fn google_translation_converts_image_parts_to_inline_data() {
+        let req = NormalizedChatRequest {
+            model: "gemini-test".into(),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: Some(serde_json::json!([
+                    {"type": "text", "text": "What colors?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/photo.jpg"},
+                    },
+                ])),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: false,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            user: None,
+        };
+
+        let body = google_generate_content_body(&req);
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0]["text"], "What colors?");
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(parts[1]["inlineData"]["data"], "iVBORw0KGgo=");
+        // Remote URLs cannot be sent as bytes; they degrade to text.
+        assert_eq!(parts[2]["text"], "https://example.com/photo.jpg");
+    }
+
+    #[test]
+    fn google_translation_keeps_assistant_text_from_multipart_content() {
+        let req = NormalizedChatRequest {
+            model: "gemini-test".into(),
+            messages: vec![ChatMessage {
+                role: "assistant".into(),
+                content: Some(serde_json::json!([
+                    {"type": "text", "text": "Seen."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                    },
+                ])),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: false,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            user: None,
+        };
+
+        let body = google_generate_content_body(&req);
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], "Seen.");
     }
 
     #[test]

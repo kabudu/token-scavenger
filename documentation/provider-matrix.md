@@ -118,7 +118,7 @@ TokenScavenger ships with 19 built-in provider adapters. This document details e
 | **Chat endpoint** | `POST /chat/completions` |
 | **Models endpoint** | `GET /models` |
 | **Format** | Fully OpenAI-compatible |
-| **Free models** | `llama3-70b-8192`, `llama3-8b-8192`, `mixtral-8x7b-32768` |
+| **Free models** | `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `groq/compound-mini` (Llama 3.x IDs retired August 2026) |
 | **Quirks** | None — fully OpenAI compatible |
 | **Rate limits** | Per-model rate limits, visible in Groq console |
 | **Docs** | https://console.groq.com/docs |
@@ -133,8 +133,8 @@ TokenScavenger ships with 19 built-in provider adapters. This document details e
 | **Stream endpoint** | `POST /models/{model}:streamGenerateContent` |
 | **Models endpoint** | `GET /models` |
 | **Format** | Native — uses `contents[{role, parts[{text}]}]` format |
-| **Free models** | `gemini-2.0-flash`, `gemini-1.5-flash` |
-| **Quirks** | ⚠️ Completely different format from OpenAI. Model is in URL path, not request body. Messages use `parts` array instead of simple `content` string. System instructions via separate `systemInstruction` field. |
+| **Free models** | `gemini-2.5-flash`, `gemini-2.5-flash-lite` (1.5 retired, 2.0 deprecated for new keys) |
+| **Quirks** | ⚠️ Completely different format from OpenAI. Model is in URL path, not request body. Messages use `parts` array instead of simple `content` string. System instructions via separate `systemInstruction` field. Function-call continuation can require thought signatures that TokenScavenger does not round-trip. Required subtask affinity refuses that continuation with `unsupported_continuation`. |
 | **Rate limits** | 60 requests/minute (free tier) |
 | **Docs** | https://ai.google.dev/gemini-api/docs |
 
@@ -152,16 +152,12 @@ TokenScavenger ships with 19 built-in provider adapters. This document details e
 | **Rate limits** | Separate limits for free vs paid users. Check via `GET /v1/key`. |
 | **Docs** | https://openrouter.ai/docs |
 
-TokenScavenger exposes Ox Alpha through the separate `preview:ox-alpha` model
-group. The upstream ID is `stealth/ox-alpha`. It is a free, temporary preview
-operated by an anonymous provider that retains prompts and completions and is
-subject to OpenRouter's additional Stealth Program terms. It is deliberately
-excluded from ordinary fallback groups and must not receive sensitive data.
-
-Union Alpha is exposed the same way through the `preview:union-alpha` model
-group (upstream ID `stealth/union-alpha`). The same temporary-availability and
-data-retention warnings apply: keep it out of ordinary fallback groups and do
-not send it sensitive data.
+The former `preview:ox-alpha` / `preview:union-alpha` groups targeting
+OpenRouter's temporary `stealth/*` previews were retired in October 2026 after
+the upstream previews ended. Use `chat:default` for general chat,
+`reasoning:deep` for long-horizon reasoning, or `free:openrouter` for the live
+free-model rotation instead. Existing databases have pristine copies of the
+retired groups pruned automatically by migration.
 
 ### Cerebras
 
@@ -171,7 +167,7 @@ not send it sensitive data.
 | **Auth** | `Authorization: Bearer <key>` |
 | **Chat endpoint** | `POST /chat/completions` |
 | **Format** | Fully OpenAI-compatible |
-| **Free models** | `llama3.1-8b`, `gpt-oss-120b` |
+| **Free models** | `llama3.1-8b`, `llama-3.3-70b`, `qwen-3-32b`, `gpt-oss-120b` |
 | **Quirks** | ⚠️ Extra `time_info` field in every response. Custom rate limit headers (`x-ratelimit-remaining-requests-day`, etc.). |
 | **Rate limits** | 30 RPM, 64K TPM per model (free tier) |
 | **Docs** | https://inference-docs.cerebras.ai |

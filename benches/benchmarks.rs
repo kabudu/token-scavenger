@@ -434,6 +434,67 @@ mod health {
     }
 }
 
+fn bench_phase_rules(c: &mut Criterion) {
+    use tokenscavenger::api::openai::chat::{ChatMessage, NormalizedChatRequest};
+    use tokenscavenger::config::schema::{AgentProfileConfig, AgentRuleConfig, AgentTier};
+    use tokenscavenger::router::task_policy::{self, detect_phase};
+
+    let request = NormalizedChatRequest {
+        model: "agent-auto".into(),
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: Some(serde_json::Value::String("extract the citations".into())),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }],
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        stream: false,
+        stop: None,
+        presence_penalty: None,
+        frequency_penalty: None,
+        user: None,
+        response_format: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let profile = AgentProfileConfig {
+        default_tier: AgentTier::Standard,
+        economy_group: "economy".into(),
+        standard_group: "standard".into(),
+        advanced_group: "advanced".into(),
+        affinity: Default::default(),
+    };
+    let rules = vec![AgentRuleConfig {
+        profile: "agent-auto".into(),
+        task_type: Some("extract".into()),
+        phase: None,
+        tools_required: None,
+        json_required: None,
+        vision_required: None,
+        min_input_bytes: None,
+        max_input_bytes: None,
+        tier: AgentTier::Economy,
+    }];
+    c.bench_function("agent_phase_and_rule", |b| {
+        b.iter(|| {
+            let report = detect_phase(black_box(&request), None);
+            task_policy::select_tier_without_classifier(
+                black_box(&profile),
+                black_box(&rules),
+                "agent-auto",
+                &report,
+                Some("extract"),
+                None,
+                None,
+                None,
+            )
+        });
+    });
+}
+
 criterion_group!(
     benches,
     route_plan::bench,
@@ -445,6 +506,7 @@ criterion_group!(
     model_groups::bench,
     sqlite_write::bench,
     health::bench,
+    bench_phase_rules,
 );
 
 criterion_main!(benches);

@@ -23,6 +23,9 @@ pub struct MockProviderState {
     pub fail_count: Arc<Mutex<u32>>,
     pub succeed_after: u32,
     pub usage_tokens: (u32, u32),
+    pub chat_requests: Arc<std::sync::atomic::AtomicU32>,
+    /// When set, the mock waits for notification after the first SSE chunk.
+    pub hold_stream_after_first_chunk: Option<Arc<tokio::sync::Notify>>,
 }
 
 /// Start a mock provider server on a random port. Returns (base_url, join_handle).
@@ -57,6 +60,9 @@ async fn chat_handler(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
+    state
+        .chat_requests
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     tokio::time::sleep(std::time::Duration::from_millis(state.delay_ms)).await;
 
     // Check fail-after count
@@ -72,18 +78,53 @@ async fn chat_handler(
             .into_response();
     }
 
+    let classifier = body
+        .get("messages")
+        .and_then(|messages| messages.as_array())
+        .is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("Classify the task into one tier"))
+            })
+        });
+    if classifier {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": "chatcmpl-classifier",
+                "object": "chat.completion",
+                "created": 1,
+                "model": body.get("model").and_then(|model| model.as_str()).unwrap_or("classifier"),
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "{\"tier\":\"economy\",\"confidence\":0.95}"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 8, "total_tokens": 16}
+            })),
+        )
+            .into_response();
+    }
+
     if stream {
         // Return SSE stream
+        let hold = state.hold_stream_after_first_chunk.clone();
         let stream = async_stream::stream! {
             yield Ok::<_, std::convert::Infallible>(
-                axum::response::sse::Event::default().data("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Mock\"},\"finish_reason\":null}]}\n\n")
+                axum::response::sse::Event::default().data(
+                    r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"test","choices":[{"index":0,"delta":{"content":"Mock"},"finish_reason":null}]}"#,
+                )
             );
+            if let Some(hold) = hold {
+                hold.notified().await;
+            }
             yield Ok(
-                axum::response::sse::Event::default().data("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" stream\"},\"finish_reason\":null}]}\n\n")
+                axum::response::sse::Event::default().data(
+                    r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"test","choices":[{"index":0,"delta":{"content":" stream"},"finish_reason":null}]}"#,
+                )
             );
-            yield Ok(
-                axum::response::sse::Event::default().data("data: [DONE]\n\n")
-            );
+            yield Ok(axum::response::sse::Event::default().data("[DONE]"));
         };
         Sse::new(stream).into_response()
     } else {

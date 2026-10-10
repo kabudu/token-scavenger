@@ -30,6 +30,10 @@
 - **Free-tier-first routing** with configurable fallback chains
 - **Tool-aware routing** for agentic clients, preferring stronger tool-call
   providers automatically when OpenAI `tools` are present
+- **Opt-in subtask routing** for labelled agent runs: rules choose an economy,
+  standard, or advanced model group per subtask, with process-local affinity
+  for that subtask's tool loop. Disabled by default. See
+  [subtask routing](documentation/agent-routing.md).
 - **Model intelligence layer** with smart groups, task tags, modality flags,
   context-window awareness, and catalog freshness scoring
 - **Full OpenAI-compatible API** (chat completions + streaming SSE, embeddings, `/v1/models`)
@@ -152,7 +156,7 @@ allow_paid_fallback = false
 recover_empty_stream_with_non_streaming = false
 
 [routing.stream_first_content_timeout_ms]
-"preview:ox-alpha" = 180000
+"reasoning:deep" = 180000
 
 [[providers]]
 id = "groq"
@@ -195,7 +199,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="llama3-70b-8192",  # or any model group
+    model="chat:default",  # or any model group
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
@@ -328,27 +332,25 @@ and the same CSV or redacted diagnostic exports exposed by the admin API.
 TokenScavenger normalizes model families, task tags, modality flags, context
 windows, JSON/tool support, reasoning hints, embeddings support, and catalog
 freshness into the merged model catalog. Built-in smart model groups such as
-`free:openrouter`, `preview:ox-alpha`, `fast:chat`, `cheap:code`,
-`reasoning:deep`, and `vision:balanced` sit on top
+`chat:default`, `fast:chat`, `cheap:code`, `reasoning:deep`,
+`vision:balanced`, `longctx:frontier`, `free:openrouter`, and the
+`agent-economy` / `agent-standard` / `agent-advanced` subtask tiers sit on top
 of the normal model-group system, so operators can edit or override them in the
 UI.
 
 `free:openrouter` is pinned to OpenRouter's stable `openrouter/free` router,
 which selects from the free models available at request time. This avoids
-shipping a short-lived stealth/alpha model ID. The selected upstream may log
+shipping short-lived model IDs. The selected upstream may log
 prompts and completions, so do not use this group for sensitive data without
 checking the current model and provider data policy.
 
-`preview:ox-alpha` explicitly targets OpenRouter's free `stealth/ox-alpha`
-reasoning preview for coding and long-running agentic work. It is intentionally
-not included in general fallback groups: the anonymous provider retains prompts
-and completions, the additional Stealth Program terms apply, and availability
-is temporary. Never send secrets, private source code, personal data, or other
-sensitive material through this group.
+The former `preview:ox-alpha` / `preview:union-alpha` groups targeting
+OpenRouter's temporary `stealth/*` previews were retired in October 2026.
+For coding and long-running agentic work, use `reasoning:deep` instead.
 
 Because long-horizon reasoning models may take longer to emit their first
-meaningful streaming event, TokenScavenger gives `preview:ox-alpha` a 180-second
-first-content timeout by default. Operators can override this by requested model
+meaningful streaming event, operators running `reasoning:deep` workloads can
+raise its first-content timeout by requested model
 group, qualified `provider/model`, or upstream model ID under
 `routing.stream_first_content_timeout_ms`.
 
@@ -420,18 +422,19 @@ sidecar overrides file so they survive restarts.
 
 ## Releases
 
-New releases are created from the GitHub Actions workflow dispatch menu:
+New releases are prepared through a pull request, then published from the
+merged `master` branch:
 
-1. Navigate to **Actions → Release** in the GitHub repository
-2. Click **Run workflow**
-3. Choose `current` to release the version already in `Cargo.toml`, or choose
-   `patch` (1.0.0 → 1.0.1), `minor` (1.0.0 → 1.1.0), or `major` (1.0.0 → 2.0.0)
-   to bump before releasing.
-4. Click **Run workflow**
+1. Bump the version in `Cargo.toml` and `Cargo.lock`. Promote the changelog
+   entry with `python3 scripts/changelog_release.py prepare --version X.Y.Z`
+   and open a pull request with those changes.
+2. Wait for the required CI checks, then merge the pull request.
+3. Navigate to **Actions → Release** in the GitHub repository, choose `master`,
+   and click **Run workflow**.
 
 The workflow:
 
-- Uses the current `Cargo.toml` version or bumps it, then creates a git tag (`vX.Y.Z`)
+- Verifies the merged version and changelog, then creates a git tag (`vX.Y.Z`)
 - Builds binaries for Linux (x86_64), signed/notarized macOS (ARM64), and Windows (x86_64)
 - Creates a GitHub release with all binaries, checksums, an SPDX SBOM, and
   GitHub artifact attestations attached

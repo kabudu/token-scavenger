@@ -185,7 +185,7 @@ curl http://localhost:8000/v1/models
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama3-70b-8192",
+    "model": "chat:default",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": false
   }'
@@ -207,7 +207,7 @@ See [API Behavior](api-behavior.md) for the full contract.
 curl -N http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llama3-70b-8192",
+    "model": "chat:default",
     "messages": [{"role": "user", "content": "Count to 5"}],
     "stream": true
   }'
@@ -251,7 +251,7 @@ Configure an OpenAI-compatible harness with:
 |---|---|
 | Base URL | `https://example-words.trycloudflare.com/v1` |
 | API key | The value configured as TokenScavenger's `master_api_key` |
-| Model | A catalog model or model group, such as `preview:ox-alpha` |
+| Model | A catalog model or model group, such as `chat:default` |
 
 For Cursor, add the tunnel URL as the custom OpenAI base URL, paste the TokenScavenger master key into the API-key field, and enable the desired TokenScavenger model or model group. Do not paste an upstream provider key such as the OpenRouter key into the harness; upstream credentials remain inside TokenScavenger.
 
@@ -280,14 +280,14 @@ client = OpenAI(
 
 # Non-streaming
 response = client.chat.completions.create(
-    model="llama3-70b-8192",
+    model="chat:default",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
 
 # Streaming
 stream = client.chat.completions.create(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     messages=[{"role": "user", "content": "Tell me a story"}],
     stream=True
 )
@@ -307,7 +307,7 @@ const client = new OpenAI({
 });
 
 const stream = await client.chat.completions.create({
-  model: "llama3-70b-8192",
+  model: "chat:default",
   messages: [{ role: "user", content: "Hello!" }],
   stream: true,
 });
@@ -322,21 +322,21 @@ TokenScavenger supports configurable model groups for simplified routing:
 
 ```toml
 [[model_groups]]
-name = "free:llama-70b"
+name = "free:frontier-70b"
 target = [
-  { provider = "groq", model = "llama3-70b-8192" },
-  "gemini-2.0-flash",
+  { provider = "cerebras", model = "llama-3.3-70b" },
+  "gemini-2.5-flash",
 ]
 
 [[model_groups]]
 name = "fast-chat"
-target = ["llama3.1-8b"]
+target = ["gemini-2.5-flash-lite"]
 ```
 
 Then use the group name in your request:
 
 ```json
-{"model": "free:llama-70b", "messages": [...]}
+{"model": "free:frontier-70b", "messages": [...]}
 ```
 
 ### Mastering Model Groups
@@ -349,9 +349,9 @@ If you want to ensure your "smart chat" always works even if a specific provider
 
 1. Create a model group named `smart-chat`.
 2. Add multiple target models in order of preference:
-   - `groq/llama3-70b-8192` (Fastest)
-   - `cerebras/llama3.1-70b` (Alternative)
-   - `google/gemini-1.5-pro` (Fallback)
+   - `groq/openai/gpt-oss-120b` (Frontier open-weight)
+   - `cerebras/llama-3.3-70b` (Alternative)
+   - `google/gemini-2.5-flash` (Fallback)
 3. Point your code to `model="smart-chat"`.
 4. TokenScavenger will try them in the exact order you defined. If Groq is unhealthy or rate-limited, it automatically fails over to Cerebras, then Gemini.
 

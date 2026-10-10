@@ -79,9 +79,54 @@ impl ProviderAdapter for OpenRouterAdapter {
         &self,
         ctx: &ProviderContext,
     ) -> Result<Vec<DiscoveredModel>, ProviderError> {
-        let models = shared::openai_discover_models(ctx, "openrouter").await?;
-        // Filter to only free models (pricing.prompt == "0")
-        Ok(models)
+        let url = crate::providers::shared::with_trailing_slash(&ctx.base_url)
+            .join("models")
+            .map_err(|e| ProviderError::Other(e.to_string()))?;
+
+        let config = ProviderConfig {
+            id: "openrouter".into(),
+            api_key: ctx.api_key.clone(),
+            ..Default::default()
+        };
+
+        let resp = ProviderHttp::get(&ctx.client, url, bearer_auth(&config)).await?;
+        let status = resp.status();
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::MalformedResponse(e.to_string()))?;
+
+        if !status.is_success() {
+            return Err(ProviderError::Other(format!("Discovery failed: {body}")));
+        }
+
+        let entries = body
+            .get("data")
+            .and_then(|data| data.as_array())
+            .cloned()
+            .unwrap_or_default();
+        // Fail open when the payload carries no pricing info at all
+        // (fixtures, proxies): preserve the previous keep-everything behavior.
+        let has_pricing = entries
+            .iter()
+            .any(|entry| entry.get("pricing").and_then(|p| p.get("prompt")).is_some());
+        Ok(entries
+            .iter()
+            .filter_map(|entry| {
+                let id = entry.get("id")?.as_str()?;
+                if has_pricing && !is_openrouter_free_model(id, entry.get("pricing")) {
+                    return None;
+                }
+                Some(DiscoveredModel {
+                    provider_id: "openrouter".into(),
+                    upstream_model_id: id.to_string(),
+                    display_name: Some(id.to_string()),
+                    endpoint_compatibility: vec!["chat".into()],
+                    context_window: entry.get("context_length").and_then(|value| value.as_u64()),
+                    free_tier: true,
+                })
+            })
+            .collect())
     }
     async fn chat_completions(
         &self,
@@ -107,6 +152,23 @@ impl ProviderAdapter for OpenRouterAdapter {
         tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
     ) -> Result<(), ProviderError> {
         crate::providers::shared::openai_stream_completions(ctx, request, "openrouter", tx).await
+    }
+}
+
+/// True when an OpenRouter `/models` entry is a free model: the stable
+/// `openrouter/free` router, any `:free`-suffixed variant, or a zero-price
+/// `pricing.prompt` ("0" string or 0 number).
+fn is_openrouter_free_model(id: &str, pricing: Option<&serde_json::Value>) -> bool {
+    if id == "openrouter/free" || id.ends_with(":free") {
+        return true;
+    }
+    let Some(pricing) = pricing else {
+        return false;
+    };
+    match pricing.get("prompt") {
+        Some(serde_json::Value::String(price)) => price == "0",
+        Some(serde_json::Value::Number(price)) => price.as_f64() == Some(0.0),
+        _ => false,
     }
 }
 
@@ -1131,5 +1193,35 @@ impl ProviderAdapter for CohereAdapter {
         tx: tokio::sync::mpsc::Sender<crate::api::openai::stream::StreamEvent>,
     ) -> Result<(), ProviderError> {
         crate::providers::shared::openai_stream_completions(ctx, request, "cohere", tx).await
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::is_openrouter_free_model;
+
+    #[test]
+    fn openrouter_free_filter_keeps_routers_and_zero_price_models() {
+        assert!(is_openrouter_free_model("openrouter/free", None));
+        assert!(is_openrouter_free_model(
+            "meta-llama/llama-3.3-70b-instruct:free",
+            None
+        ));
+        assert!(is_openrouter_free_model(
+            "qwen/qwen3-coder:free",
+            Some(&serde_json::json!({"prompt": "0", "completion": "0"}))
+        ));
+        assert!(is_openrouter_free_model(
+            "some/model",
+            Some(&serde_json::json!({"prompt": "0"}))
+        ));
+        assert!(!is_openrouter_free_model(
+            "anthropic/claude-sonnet-4",
+            Some(&serde_json::json!({"prompt": "0.003"}))
+        ));
+        assert!(!is_openrouter_free_model("some/model", None));
+        assert!(!is_openrouter_free_model(
+            "some/model",
+            Some(&serde_json::json!({}))
+        ));
     }
 }

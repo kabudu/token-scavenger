@@ -100,6 +100,18 @@ pub struct AppState {
 
     /// Start time for uptime tracking.
     pub start_time: std::time::Instant,
+
+    /// Process-local subtask affinity. Restart clears pins.
+    pub affinity: Arc<crate::router::affinity::AffinityStore>,
+
+    /// Exact classifier-decision cache. Raw prompts are not stored.
+    pub classifier_cache: Cache<String, crate::router::classifier::CachedClassification>,
+
+    /// In-flight classifier admission. There is no waiting queue.
+    pub classifier_admission: Arc<crate::router::classifier::ClassifierAdmission>,
+
+    /// Paid adaptive/classifier spend reservations.
+    pub budget_ledger: Arc<crate::usage::reservations::BudgetLedger>,
 }
 
 impl AppState {
@@ -157,6 +169,15 @@ impl AppState {
             shutdown_rx,
             background_handles: Arc::new(std::sync::Mutex::new(Vec::new())),
             start_time: std::time::Instant::now(),
+            affinity: Arc::new(crate::router::affinity::AffinityStore::new()),
+            classifier_cache: Cache::builder()
+                .max_capacity(config.routing.agent.classifier.cache_capacity.max(1))
+                .time_to_live(std::time::Duration::from_secs(
+                    config.routing.agent.classifier.cache_ttl_seconds.max(1),
+                ))
+                .build(),
+            classifier_admission: Arc::new(crate::router::classifier::ClassifierAdmission::new()),
+            budget_ledger: Arc::new(crate::usage::reservations::BudgetLedger::new()),
         }
     }
 

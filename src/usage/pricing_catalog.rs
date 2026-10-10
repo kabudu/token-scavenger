@@ -704,7 +704,10 @@ async fn fetch_rate(
     })
 }
 
-fn normalize_model_id<'a>(provider_id: &str, model_id: &'a str) -> std::borrow::Cow<'a, str> {
+pub(crate) fn normalize_model_id<'a>(
+    provider_id: &str,
+    model_id: &'a str,
+) -> std::borrow::Cow<'a, str> {
     if provider_id == "deepseek" {
         if model_id == "deepseek-chat" || model_id == "deepseek-reasoner" {
             return std::borrow::Cow::Borrowed(model_id);

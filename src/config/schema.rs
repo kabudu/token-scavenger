@@ -276,6 +276,10 @@ pub struct RoutingConfig {
     /// is translated back into OpenAI-compatible SSE events.
     #[serde(default)]
     pub recover_empty_stream_with_non_streaming: bool,
+    /// Opt-in subtask tiers, rules, and scoped conversation affinity.
+    /// Disabled by default; literal models keep their current route.
+    #[serde(default)]
+    pub agent: AgentRoutingConfig,
 }
 
 impl Default for RoutingConfig {
@@ -290,6 +294,229 @@ impl Default for RoutingConfig {
             provider_order: Vec::new(),
             stream_first_content_timeout_ms: default_stream_first_content_timeout_ms(),
             recover_empty_stream_with_non_streaming: false,
+            agent: AgentRoutingConfig::default(),
+        }
+    }
+}
+
+/// Opt-in subtask routing. `enabled = false` preserves existing route semantics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRoutingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: AgentRoutingMode,
+    #[serde(default = "default_session_idle_ttl")]
+    pub session_idle_ttl_seconds: u64,
+    #[serde(default = "default_session_max_lifetime")]
+    pub session_max_lifetime_seconds: u64,
+    #[serde(default = "default_max_sessions")]
+    pub max_sessions: usize,
+    #[serde(default = "default_max_sessions_per_project")]
+    pub max_sessions_per_project: usize,
+    #[serde(default = "default_max_agent_candidates")]
+    pub max_candidates: usize,
+    #[serde(default)]
+    pub profiles: HashMap<String, AgentProfileConfig>,
+    #[serde(default)]
+    pub rules: Vec<AgentRuleConfig>,
+    #[serde(default)]
+    pub classifier: AgentClassifierConfig,
+}
+
+impl Default for AgentRoutingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: AgentRoutingMode::Rules,
+            session_idle_ttl_seconds: default_session_idle_ttl(),
+            session_max_lifetime_seconds: default_session_max_lifetime(),
+            max_sessions: default_max_sessions(),
+            max_sessions_per_project: default_max_sessions_per_project(),
+            max_candidates: default_max_agent_candidates(),
+            profiles: HashMap::new(),
+            rules: Vec::new(),
+            classifier: AgentClassifierConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRoutingMode {
+    #[default]
+    Rules,
+    Shadow,
+    Adaptive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTier {
+    Economy,
+    Standard,
+    Advanced,
+}
+
+impl AgentTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Economy => "economy",
+            Self::Standard => "standard",
+            Self::Advanced => "advanced",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "economy" => Some(Self::Economy),
+            "standard" => Some(Self::Standard),
+            "advanced" => Some(Self::Advanced),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AffinityMode {
+    Off,
+    #[default]
+    Prefer,
+    Required,
+}
+
+impl AffinityMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Prefer => "prefer",
+            Self::Required => "required",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "prefer" => Some(Self::Prefer),
+            "required" => Some(Self::Required),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProfileConfig {
+    pub default_tier: AgentTier,
+    pub economy_group: String,
+    pub standard_group: String,
+    pub advanced_group: String,
+    #[serde(default)]
+    pub affinity: AffinityMode,
+}
+
+impl AgentProfileConfig {
+    pub fn group_for(&self, tier: AgentTier) -> &str {
+        match tier {
+            AgentTier::Economy => &self.economy_group,
+            AgentTier::Standard => &self.standard_group,
+            AgentTier::Advanced => &self.advanced_group,
+        }
+    }
+
+    pub fn groups(&self) -> [&str; 3] {
+        [
+            self.economy_group.as_str(),
+            self.standard_group.as_str(),
+            self.advanced_group.as_str(),
+        ]
+    }
+}
+
+/// Ordered operator rule. The first matching rule for a profile wins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuleConfig {
+    pub profile: String,
+    #[serde(default)]
+    pub task_type: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub tools_required: Option<bool>,
+    #[serde(default)]
+    pub json_required: Option<bool>,
+    #[serde(default)]
+    pub vision_required: Option<bool>,
+    #[serde(default)]
+    pub min_input_bytes: Option<u64>,
+    #[serde(default)]
+    pub max_input_bytes: Option<u64>,
+    pub tier: AgentTier,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifierScope {
+    #[default]
+    SubtaskBoundary,
+    PerRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentClassifierConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider_id: String,
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default)]
+    pub include_task_excerpt: bool,
+    #[serde(default)]
+    pub scope: ClassifierScope,
+    #[serde(default = "default_classifier_confidence")]
+    pub confidence_threshold: f64,
+    #[serde(default = "default_classifier_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_classifier_input_bytes")]
+    pub max_input_bytes: usize,
+    #[serde(default = "default_classifier_output_tokens")]
+    pub max_output_tokens: u32,
+    #[serde(default = "default_classifier_concurrency")]
+    pub max_concurrency: usize,
+    #[serde(default = "default_classifier_concurrency_per_project")]
+    pub max_concurrency_per_project: usize,
+    #[serde(default = "default_classifier_cache_capacity")]
+    pub cache_capacity: u64,
+    #[serde(default = "default_classifier_cache_ttl")]
+    pub cache_ttl_seconds: u64,
+    /// Fraction of unresolved shadow/adaptive decisions that may call the classifier.
+    #[serde(default = "default_classifier_sample_rate")]
+    pub sample_rate: f64,
+    /// Projects allowed to send text to the configured classifier.
+    /// Empty means no project, including the default project, may classify.
+    #[serde(default)]
+    pub allowed_project_ids: Vec<String>,
+}
+
+impl Default for AgentClassifierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider_id: String::new(),
+            model_id: String::new(),
+            include_task_excerpt: false,
+            scope: ClassifierScope::SubtaskBoundary,
+            confidence_threshold: default_classifier_confidence(),
+            timeout_ms: default_classifier_timeout_ms(),
+            max_input_bytes: default_classifier_input_bytes(),
+            max_output_tokens: default_classifier_output_tokens(),
+            max_concurrency: default_classifier_concurrency(),
+            max_concurrency_per_project: default_classifier_concurrency_per_project(),
+            cache_capacity: default_classifier_cache_capacity(),
+            cache_ttl_seconds: default_classifier_cache_ttl(),
+            sample_rate: default_classifier_sample_rate(),
+            allowed_project_ids: Vec::new(),
         }
     }
 }
@@ -390,6 +617,48 @@ fn default_request_timeout_ms() -> u64 {
 }
 fn default_log_max_files() -> usize {
     7
+}
+fn default_session_idle_ttl() -> u64 {
+    600
+}
+fn default_session_max_lifetime() -> u64 {
+    3600
+}
+fn default_max_sessions() -> usize {
+    10_000
+}
+fn default_max_sessions_per_project() -> usize {
+    1_000
+}
+fn default_max_agent_candidates() -> usize {
+    256
+}
+fn default_classifier_confidence() -> f64 {
+    0.8
+}
+fn default_classifier_timeout_ms() -> u64 {
+    300
+}
+fn default_classifier_input_bytes() -> usize {
+    8192
+}
+fn default_classifier_output_tokens() -> u32 {
+    128
+}
+fn default_classifier_concurrency() -> usize {
+    32
+}
+fn default_classifier_concurrency_per_project() -> usize {
+    4
+}
+fn default_classifier_cache_capacity() -> u64 {
+    10_000
+}
+fn default_classifier_cache_ttl() -> u64 {
+    300
+}
+fn default_classifier_sample_rate() -> f64 {
+    1.0
 }
 fn default_stream_first_content_timeout_ms() -> HashMap<String, u64> {
     HashMap::from([

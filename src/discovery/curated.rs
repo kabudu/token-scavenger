@@ -13,46 +13,53 @@ pub struct DiscoveredModel {
 
 /// Built-in curated model catalog shipped with the binary.
 /// This is the baseline that discovery augments.
+///
+/// IDs are refreshed against upstream free-tier offerings (October 2026).
+/// Retired IDs (Groq `llama3-*-8192`/`mixtral-*`, Gemini 1.5/2.0,
+/// OpenRouter `stealth/*` previews) were removed; live provider discovery
+/// remains the source of truth and corrects any drift here.
 pub fn curated_catalog() -> Vec<DiscoveredModel> {
     vec![
-        // Groq
+        // Groq: Llama 3.x versatile/instant IDs were retired in August 2026.
+        // Current free-tier lineup is GPT-OSS plus Compound.
         DiscoveredModel {
             provider_id: "groq".into(),
-            upstream_model_id: "llama3-70b-8192".into(),
-            display_name: Some("Llama 3 70B".into()),
+            upstream_model_id: "openai/gpt-oss-120b".into(),
+            display_name: Some("GPT-OSS 120B (Groq)".into()),
             endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(8192),
+            context_window: Some(131_072),
             free_tier: true,
         },
         DiscoveredModel {
             provider_id: "groq".into(),
-            upstream_model_id: "llama3-8b-8192".into(),
-            display_name: Some("Llama 3 8B".into()),
+            upstream_model_id: "openai/gpt-oss-20b".into(),
+            display_name: Some("GPT-OSS 20B (Groq)".into()),
             endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(8192),
+            context_window: Some(131_072),
             free_tier: true,
         },
         DiscoveredModel {
             provider_id: "groq".into(),
-            upstream_model_id: "mixtral-8x7b-32768".into(),
-            display_name: Some("Mixtral 8x7B".into()),
+            upstream_model_id: "groq/compound-mini".into(),
+            display_name: Some("Compound Mini (Groq)".into()),
             endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(32768),
+            context_window: Some(128_000),
             free_tier: true,
         },
-        // Google
+        // Google: Gemini 1.5 family is retired and 2.0 Flash is deprecated
+        // for new keys. 2.5 Flash-class models are the current free tier.
         DiscoveredModel {
             provider_id: "google".into(),
-            upstream_model_id: "gemini-2.0-flash".into(),
-            display_name: Some("Gemini 2.0 Flash".into()),
+            upstream_model_id: "gemini-2.5-flash".into(),
+            display_name: Some("Gemini 2.5 Flash".into()),
             endpoint_compatibility: vec!["chat".into()],
             context_window: Some(1_048_576),
             free_tier: true,
         },
         DiscoveredModel {
             provider_id: "google".into(),
-            upstream_model_id: "gemini-1.5-flash".into(),
-            display_name: Some("Gemini 1.5 Flash".into()),
+            upstream_model_id: "gemini-2.5-flash-lite".into(),
+            display_name: Some("Gemini 2.5 Flash-Lite".into()),
             endpoint_compatibility: vec!["chat".into()],
             context_window: Some(1_048_576),
             free_tier: true,
@@ -68,26 +75,34 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
         },
         DiscoveredModel {
             provider_id: "openrouter".into(),
-            upstream_model_id: "stealth/ox-alpha".into(),
-            display_name: Some("Ox Alpha (Stealth Preview)".into()),
-            endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(1_048_576),
-            free_tier: true,
-        },
-        DiscoveredModel {
-            provider_id: "openrouter".into(),
-            upstream_model_id: "stealth/union-alpha".into(),
-            display_name: Some("Union Alpha (Stealth Preview)".into()),
-            endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(262_144),
-            free_tier: true,
-        },
-        DiscoveredModel {
-            provider_id: "openrouter".into(),
             upstream_model_id: "meta-llama/llama-3.3-70b-instruct:free".into(),
             display_name: Some("Llama 3.3 70B (Free)".into()),
             endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(8192),
+            context_window: Some(131_072),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "openrouter".into(),
+            upstream_model_id: "cohere/north-mini-code:free".into(),
+            display_name: Some("North Mini Code (Free)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(256_000),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "openrouter".into(),
+            upstream_model_id: "openai/gpt-oss-20b:free".into(),
+            display_name: Some("GPT-OSS 20B (Free)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(131_072),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "openrouter".into(),
+            upstream_model_id: "google/gemma-3-27b-it:free".into(),
+            display_name: Some("Gemma 3 27B (Free)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(131_072),
             free_tier: true,
         },
         // Cloudflare
@@ -96,7 +111,7 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             upstream_model_id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into(),
             display_name: Some("Llama 3.3 70B (Cloudflare)".into()),
             endpoint_compatibility: vec!["chat".into()],
-            context_window: Some(8192),
+            context_window: Some(128_000),
             free_tier: true,
         },
         // Cerebras
@@ -105,6 +120,40 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             upstream_model_id: "llama3.1-8b".into(),
             display_name: Some("Llama 3.1 8B".into()),
             endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(128_000),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "cerebras".into(),
+            upstream_model_id: "llama-3.3-70b".into(),
+            display_name: Some("Llama 3.3 70B (Cerebras)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(131_072),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "cerebras".into(),
+            upstream_model_id: "qwen-3-32b".into(),
+            display_name: Some("Qwen3 32B (Cerebras)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(131_072),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "cerebras".into(),
+            upstream_model_id: "gpt-oss-120b".into(),
+            display_name: Some("GPT-OSS 120B (Cerebras)".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(131_072),
+            free_tier: true,
+        },
+        // Google embeddings: seeded so /v1/embeddings is routable on a
+        // fresh database; live discovery also retains embedContent models.
+        DiscoveredModel {
+            provider_id: "google".into(),
+            upstream_model_id: "gemini-embedding-001".into(),
+            display_name: Some("Gemini Embedding 001".into()),
+            endpoint_compatibility: vec!["embeddings".into()],
             context_window: Some(8192),
             free_tier: true,
         },
@@ -134,11 +183,20 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             context_window: Some(128_000),
             free_tier: true,
         },
-        // Z AI
+        // Z AI: glm-4-flash remains permanently free; GLM 4.5 Flash is the
+        // current free flagship.
         DiscoveredModel {
             provider_id: "zai".into(),
             upstream_model_id: "glm-4-flash".into(),
             display_name: Some("GLM-4 Flash".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(128_000),
+            free_tier: true,
+        },
+        DiscoveredModel {
+            provider_id: "zai".into(),
+            upstream_model_id: "glm-4.5-flash".into(),
+            display_name: Some("GLM-4.5 Flash".into()),
             endpoint_compatibility: vec!["chat".into()],
             context_window: Some(128_000),
             free_tier: true,
@@ -161,7 +219,8 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             context_window: Some(128_000),
             free_tier: true,
         },
-        // DeepSeek paid fallback
+        // DeepSeek paid fallback: deepseek-chat/deepseek-reasoner aliases
+        // were retired in July 2026 in favor of the v4 family.
         DiscoveredModel {
             provider_id: "deepseek".into(),
             upstream_model_id: "deepseek-v4-flash".into(),
@@ -193,6 +252,14 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
             display_name: Some("Grok 4.20 Reasoning".into()),
             endpoint_compatibility: vec!["chat".into()],
             context_window: Some(2_000_000),
+            free_tier: false,
+        },
+        DiscoveredModel {
+            provider_id: "xai".into(),
+            upstream_model_id: "grok-code-fast-1".into(),
+            display_name: Some("Grok Code Fast 1".into()),
+            endpoint_compatibility: vec!["chat".into()],
+            context_window: Some(256_000),
             free_tier: false,
         },
         // Local OpenAI-compatible providers. These are conservative examples;
@@ -235,6 +302,27 @@ pub fn curated_catalog() -> Vec<DiscoveredModel> {
         },
     ]
 }
+
+/// Retired upstream model IDs that must not appear in the curated catalog.
+/// Covered by a maintained test so future refreshes cannot reintroduce them.
+pub const RETIRED_UPSTREAM_IDS: &[&str] = &[
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-2.0-flash",
+    "stealth/ox-alpha",
+    "stealth/union-alpha",
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "qwen/qwen3-32b",
+    // Advertised as free by OpenRouter discovery but live calls return
+    // 404 "unavailable for free" (verified October 2026).
+    "qwen/qwen3-coder:free",
+];
 
 /// Insert curated model catalog rows into the models table so that
 /// `filter_by_model_enabled` can find them. Uses INSERT OR IGNORE to

@@ -162,39 +162,121 @@ pub fn infer_model_intelligence(
     }
 }
 
+async fn load_intelligence_rows(
+    db: &sqlx::SqlitePool,
+    pairs: &[(String, String)],
+) -> std::collections::HashMap<(String, String), IntelligenceRow> {
+    let mut rows = std::collections::HashMap::new();
+    for chunk in pairs.chunks(60) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let placeholders = chunk
+            .iter()
+            .map(|_| "(?, ?)")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT m.provider_id, m.upstream_model_id, m.supports_chat, m.supports_embeddings,
+                    m.supports_tools, m.supports_json_mode, m.supports_vision, m.metadata_json,
+                    p.discovery_state, m.discovered_at, m.updated_at
+             FROM models m
+             LEFT JOIN providers p ON p.provider_id = m.provider_id
+             WHERE (m.provider_id, m.upstream_model_id) IN (VALUES {placeholders})"
+        );
+        let mut query = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(&sql);
+        for (provider_id, model_id) in chunk {
+            query = query.bind(provider_id).bind(model_id);
+        }
+        let Ok(fetched) = query.fetch_all(db).await else {
+            continue;
+        };
+        for (
+            provider_id,
+            model_id,
+            supports_chat,
+            supports_embeddings,
+            supports_tools,
+            supports_json_mode,
+            supports_vision,
+            metadata_json,
+            discovery_state,
+            discovered_at,
+            updated_at,
+        ) in fetched
+        {
+            rows.insert(
+                (provider_id, model_id),
+                (
+                    supports_chat,
+                    supports_embeddings,
+                    supports_tools,
+                    supports_json_mode,
+                    supports_vision,
+                    metadata_json,
+                    discovery_state,
+                    discovered_at,
+                    updated_at,
+                ),
+            );
+        }
+    }
+    rows
+}
+
 pub async fn model_compatibility(
     state: &AppState,
     attempt: &RouteAttempt,
     requirements: ModelRequestRequirements,
 ) -> CompatibilityDecision {
-    let row = sqlx::query_as::<
-        _,
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        "SELECT m.supports_chat, m.supports_embeddings, m.supports_tools, m.supports_json_mode,
-                m.supports_vision, m.metadata_json, p.discovery_state, m.discovered_at, m.updated_at
-         FROM models m
-         LEFT JOIN providers p ON p.provider_id = m.provider_id
-         WHERE m.provider_id = ? AND m.upstream_model_id = ?",
+    let rows = load_intelligence_rows(
+        &state.db,
+        &[(attempt.provider_id.clone(), attempt.model_id.clone())],
     )
-    .bind(&attempt.provider_id)
-    .bind(&attempt.model_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    .await;
+    let Some(row) = rows.get(&(attempt.provider_id.clone(), attempt.model_id.clone())) else {
+        return CompatibilityDecision {
+            compatible: true,
+            reasons: vec!["model intelligence unavailable; using provider capability".to_string()],
+        };
+    };
+    compatibility_from_row(&attempt.provider_id, &attempt.model_id, row, requirements)
+}
 
-    let Some((
+type IntelligenceRow = (
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+fn compatibility_from_row(
+    provider_id: &str,
+    model_id: &str,
+    row: &IntelligenceRow,
+    requirements: ModelRequestRequirements,
+) -> CompatibilityDecision {
+    let (
         supports_chat,
         supports_embeddings,
         supports_tools,
@@ -204,35 +286,30 @@ pub async fn model_compatibility(
         provider_discovery_state,
         discovered_at,
         updated_at,
-    )) = row
-    else {
-        return CompatibilityDecision {
-            compatible: true,
-            reasons: vec!["model intelligence unavailable; using provider capability".to_string()],
-        };
-    };
+    ) = row;
 
     let intelligence = infer_model_intelligence(
-        &attempt.provider_id,
-        &attempt.model_id,
+        provider_id,
+        model_id,
         metadata_json.as_deref(),
-        supports_embeddings,
+        *supports_embeddings,
         provider_discovery_state.as_deref(),
         discovered_at.as_deref(),
         updated_at.as_deref(),
     );
 
     let mut reasons = Vec::new();
-    if !supports_chat {
+    if !*supports_chat {
         reasons.push("filtered by model chat capability".to_string());
     }
-    if requirements.requires_tools && !(supports_tools && intelligence.supports_tools) {
+    if requirements.requires_tools && !(*supports_tools && intelligence.supports_tools) {
         reasons.push("filtered by model tool-call capability".to_string());
     }
-    if requirements.requires_json_mode && !(supports_json_mode && intelligence.supports_json_mode) {
+    if requirements.requires_json_mode && !(*supports_json_mode && intelligence.supports_json_mode)
+    {
         reasons.push("filtered by model JSON-mode capability".to_string());
     }
-    if requirements.requires_vision && !(supports_vision || intelligence.supports_vision) {
+    if requirements.requires_vision && !(*supports_vision || intelligence.supports_vision) {
         reasons.push("filtered by model vision capability".to_string());
     }
     if let (Some(required), Some(context_window)) = (
@@ -257,9 +334,24 @@ pub async fn filter_by_model_intelligence(
     state: &AppState,
     requirements: ModelRequestRequirements,
 ) -> Vec<RouteAttempt> {
+    let pairs = plan
+        .iter()
+        .map(|attempt| (attempt.provider_id.clone(), attempt.model_id.clone()))
+        .collect::<Vec<_>>();
+    let rows = load_intelligence_rows(&state.db, &pairs).await;
     let mut filtered = Vec::with_capacity(plan.len());
     for attempt in plan {
-        let decision = model_compatibility(state, &attempt, requirements).await;
+        let decision = match rows.get(&(attempt.provider_id.clone(), attempt.model_id.clone())) {
+            Some(row) => {
+                compatibility_from_row(&attempt.provider_id, &attempt.model_id, row, requirements)
+            }
+            None => CompatibilityDecision {
+                compatible: true,
+                reasons: vec![
+                    "model intelligence unavailable; using provider capability".to_string(),
+                ],
+            },
+        };
         if decision.compatible {
             filtered.push(attempt);
         } else {
@@ -320,6 +412,11 @@ struct SmartModelGroup {
     targets: Vec<serde_json::Value>,
 }
 
+/// Built-in task-category model groups seeded on first run (October 2026 IDs).
+/// Every target below must exist in [`crate::discovery::curated::curated_catalog`];
+/// a maintained test enforces that invariant. Free-tier targets come first and
+/// paid fallbacks last. The retired `preview:ox-alpha` / `preview:union-alpha`
+/// stealth groups were removed; a database migration prunes unmodified copies.
 fn smart_model_groups() -> Vec<SmartModelGroup> {
     vec![
         SmartModelGroup {
@@ -327,43 +424,79 @@ fn smart_model_groups() -> Vec<SmartModelGroup> {
             targets: vec![target("openrouter", "openrouter/free")],
         },
         SmartModelGroup {
-            name: "preview:ox-alpha",
-            targets: vec![target("openrouter", "stealth/ox-alpha")],
-        },
-        SmartModelGroup {
-            name: "preview:union-alpha",
-            targets: vec![target("openrouter", "stealth/union-alpha")],
+            name: "chat:default",
+            targets: vec![
+                target("google", "gemini-2.5-flash"),
+                target("cerebras", "llama-3.3-70b"),
+                target("groq", "openai/gpt-oss-120b"),
+            ],
         },
         SmartModelGroup {
             name: "fast:chat",
             targets: vec![
-                target("groq", "llama3-8b-8192"),
+                target("groq", "openai/gpt-oss-20b"),
+                target("google", "gemini-2.5-flash-lite"),
                 target("cerebras", "llama3.1-8b"),
-                target("google", "gemini-2.0-flash"),
                 target("ollama", "llama3.2"),
             ],
         },
         SmartModelGroup {
             name: "cheap:code",
             targets: vec![
+                target("openrouter", "cohere/north-mini-code:free"),
+                target("siliconflow", "deepseek-ai/DeepSeek-V3"),
                 target("ollama", "qwen2.5-coder:7b"),
                 target("mistral", "open-mistral-nemo"),
-                target("siliconflow", "deepseek-ai/DeepSeek-V3"),
             ],
         },
         SmartModelGroup {
             name: "reasoning:deep",
             targets: vec![
-                target("xai", "grok-4.20-reasoning"),
-                target("deepseek", "deepseek-v4-pro"),
+                target("cerebras", "gpt-oss-120b"),
+                target("groq", "openai/gpt-oss-120b"),
                 target("siliconflow", "deepseek-ai/DeepSeek-V3"),
+                target("deepseek", "deepseek-v4-pro"),
+                target("xai", "grok-4.20-reasoning"),
             ],
         },
         SmartModelGroup {
             name: "vision:balanced",
             targets: vec![
-                target("google", "gemini-2.0-flash"),
+                target("google", "gemini-2.5-flash"),
+                target("openrouter", "google/gemma-3-27b-it:free"),
                 target("github-models", "gpt-4o-mini"),
+            ],
+        },
+        SmartModelGroup {
+            name: "longctx:frontier",
+            targets: vec![
+                target("google", "gemini-2.5-flash"),
+                target("openrouter", "openrouter/free"),
+                target("zai", "glm-4.5-flash"),
+            ],
+        },
+        SmartModelGroup {
+            name: "agent-economy",
+            targets: vec![
+                target("groq", "openai/gpt-oss-20b"),
+                target("google", "gemini-2.5-flash-lite"),
+                target("cerebras", "llama3.1-8b"),
+            ],
+        },
+        SmartModelGroup {
+            name: "agent-standard",
+            targets: vec![
+                target("google", "gemini-2.5-flash"),
+                target("cerebras", "llama-3.3-70b"),
+                target("groq", "openai/gpt-oss-120b"),
+            ],
+        },
+        SmartModelGroup {
+            name: "agent-advanced",
+            targets: vec![
+                target("cerebras", "gpt-oss-120b"),
+                target("openrouter", "cohere/north-mini-code:free"),
+                target("deepseek", "deepseek-v4-pro"),
             ],
         },
     ]
@@ -378,12 +511,18 @@ fn infer_family(provider_id: &str, model_id: &str) -> String {
         "llama".to_string()
     } else if model_id.contains("gemini") {
         "gemini".to_string()
+    } else if model_id.contains("gemma") {
+        "gemma".to_string()
     } else if model_id.contains("mistral") || model_id.contains("mixtral") {
         "mistral".to_string()
     } else if model_id.contains("deepseek") {
         "deepseek".to_string()
     } else if model_id.contains("qwen") {
         "qwen".to_string()
+    } else if model_id.contains("gpt-oss") {
+        "gpt-oss".to_string()
+    } else if model_id.contains("glm") {
+        "glm".to_string()
     } else if model_id.contains("grok") {
         "grok".to_string()
     } else if provider_id == "local" || provider_id == "ollama" || provider_id == "mlx" {
@@ -420,6 +559,8 @@ fn infer_context_window(model_id: &str) -> Option<u64> {
         Some(128_000)
     } else if model_id.contains("gemini") {
         Some(1_048_576)
+    } else if model_id.contains("gpt-oss") || model_id.contains("gemma-3") {
+        Some(131_072)
     } else if model_id.contains("grok-4") {
         Some(2_000_000)
     } else {
@@ -428,19 +569,22 @@ fn infer_context_window(model_id: &str) -> Option<u64> {
 }
 
 fn infer_vision(provider_id: &str, model_id: &str) -> bool {
+    if model_id.contains("embed") {
+        return false;
+    }
     model_id.contains("vision")
         || model_id.contains("gpt-4o")
         || model_id.contains("gemini")
-        || model_id == "stealth/ox-alpha"
+        || model_id.contains("gemma-3")
         || (provider_id == "google" && model_id.contains("flash"))
 }
 
 fn infer_reasoning(model_id: &str) -> bool {
     model_id.contains("reason")
         || model_id.contains("deepseek")
+        || model_id.contains("gpt-oss")
         || model_id.contains("grok-4")
         || model_id.contains("r1")
-        || model_id == "stealth/ox-alpha"
 }
 
 fn freshness(
@@ -522,24 +666,36 @@ mod tests {
         assert!(reasoning.task_tags.contains(&"reasoning".to_string()));
 
         let vision =
-            infer_model_intelligence("google", "gemini-2.0-flash", None, false, None, None, None);
+            infer_model_intelligence("google", "gemini-2.5-flash", None, false, None, None, None);
         assert!(vision.supports_vision);
         assert!(vision.modalities.contains(&"vision".to_string()));
 
-        let ox_alpha = infer_model_intelligence(
-            "openrouter",
-            "stealth/ox-alpha",
-            Some(r#"{"context_window":1048576}"#),
+        let gpt_oss = infer_model_intelligence(
+            "groq",
+            "openai/gpt-oss-120b",
+            Some(r#"{"context_window":131072}"#),
             false,
             None,
             None,
             None,
         );
-        assert!(ox_alpha.supports_reasoning);
-        assert!(ox_alpha.supports_vision);
-        assert!(ox_alpha.supports_tools);
-        assert!(ox_alpha.supports_json_mode);
-        assert_eq!(ox_alpha.context_window, Some(1_048_576));
+        assert!(gpt_oss.supports_reasoning);
+        assert!(gpt_oss.task_tags.contains(&"reasoning".to_string()));
+        assert!(gpt_oss.supports_tools);
+        assert!(gpt_oss.supports_json_mode);
+        assert_eq!(gpt_oss.context_window, Some(131_072));
+
+        let gemma = infer_model_intelligence(
+            "openrouter",
+            "google/gemma-3-27b-it:free",
+            None,
+            false,
+            None,
+            None,
+            None,
+        );
+        assert!(gemma.supports_vision);
+        assert_eq!(gemma.family, "gemma");
     }
 
     #[test]

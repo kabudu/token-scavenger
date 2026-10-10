@@ -71,6 +71,26 @@ pub async fn record_event(state: &AppState, event: TraceEventRecord<'_>) {
     .await;
 }
 
+pub async fn record_agent_decision(
+    state: &AppState,
+    request_id: &str,
+    decision: &crate::router::planner::AgentDecision,
+) {
+    record_event(
+        state,
+        TraceEventRecord {
+            request_id,
+            event_type: "agent_decision",
+            provider_id: None,
+            model_id: None,
+            outcome: Some(decision.source.as_str()),
+            latency_ms: Some(decision.classifier_latency_ms as i64),
+            details: crate::router::planner::decision_json(decision),
+        },
+    )
+    .await;
+}
+
 pub async fn record_route_plan(
     state: &AppState,
     request_id: &str,
