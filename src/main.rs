@@ -56,6 +56,11 @@ enum Command {
         #[command(subcommand)]
         action: tokenscavenger::cli::ServiceAction,
     },
+    /// Inspect the Apple Silicon MLX runtime/server (read-only).
+    Mlx {
+        #[command(subcommand)]
+        action: tokenscavenger::cli::mlx_cmd::MlxAction,
+    },
 }
 
 #[tokio::main]
@@ -78,6 +83,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Command::Service { action }) => {
             tokenscavenger::cli::service::handle_service_command(*action)?;
+            return Ok(());
+        }
+        Some(Command::Mlx { action }) => {
+            use tokenscavenger::cli::mlx_cmd::MlxAction;
+            match action {
+                MlxAction::Status { base_url, json } => {
+                    tokenscavenger::cli::mlx_cmd::run_mlx_status(base_url.clone(), *json).await?;
+                }
+            }
             return Ok(());
         }
         None => {

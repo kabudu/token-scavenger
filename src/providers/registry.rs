@@ -121,6 +121,12 @@ pub const SUPPORTED_PROVIDERS: &[ProviderCatalogEntry] = &[
         default_base_url: "http://127.0.0.1:1234/v1",
         free_only_default: true,
     },
+    ProviderCatalogEntry {
+        id: "mlx",
+        display_name: "MLX Server (mlx-lm)",
+        default_base_url: "http://127.0.0.1:8080/v1",
+        free_only_default: true,
+    },
 ];
 
 /// Registry of all available provider adapters.
@@ -211,6 +217,7 @@ fn create_adapter(id: &str) -> Option<Arc<dyn ProviderAdapter>> {
         "ollama" => Some(Arc::new(crate::providers::local::OllamaAdapter)),
         "llama-cpp" | "llamacpp" => Some(Arc::new(crate::providers::local::LlamaCppAdapter)),
         "lmstudio" | "lm-studio" => Some(Arc::new(crate::providers::local::LmStudioAdapter)),
+        "mlx" | "mlx-lm" => Some(Arc::new(crate::providers::local::MlxAdapter)),
         _ => None,
     }
 }

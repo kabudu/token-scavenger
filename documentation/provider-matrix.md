@@ -1,6 +1,6 @@
 # Provider Support Matrix
 
-TokenScavenger ships with 18 built-in provider adapters. This document details each provider's API format, capabilities, free-tier limits, paid fallback behavior, and known quirks.
+TokenScavenger ships with 19 built-in provider adapters. This document details each provider's API format, capabilities, free-tier limits, paid fallback behavior, and known quirks.
 
 ## Legend
 
@@ -19,6 +19,7 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | Ollama | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 | llama.cpp Server | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 | LM Studio | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| MLX Server (mlx-lm) | OpenAI-compat | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 | Groq | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Google Gemini | Native | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OpenRouter | OpenAI-compat | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ (:free suffix) |
@@ -91,6 +92,22 @@ TokenScavenger ships with 18 built-in provider adapters. This document details e
 | **Free models** | The model selected in LM Studio's local server |
 | **Quirks** | ⚠️ Capabilities depend on the selected local model. |
 | **Docs** | https://lmstudio.ai/docs/app/api/endpoints/openai |
+
+### MLX Server (mlx-lm)
+
+| Property | Value |
+|----------|-------|
+| **Base URL** | `http://127.0.0.1:8080/v1` |
+| **Auth** | None by default (`mlx_lm.server` needs no API key); `Authorization: Bearer <key>` is sent only when `api_key` is configured |
+| **Chat endpoint** | `POST /chat/completions` |
+| **Embeddings endpoint** | `POST /embeddings`, advertised only after probing or override |
+| **Models endpoint** | `GET /models` |
+| **Format** | OpenAI-compatible |
+| **Free models** | The model passed via `mlx_lm.server --model`, e.g. `prism-ml/Ternary-Bonsai-27B-mlx-2bit` (Apple Silicon only) |
+| **Quirks** | ⚠️ Capabilities depend on the served model. Shares the default port `8080` with the llama.cpp server preset — override `base_url` when both run side by side. |
+| **Docs** | https://github.com/ml-explore/mlx-lm |
+| **Routing** | Use provider ID `mlx` (alias `mlx-lm`), or set `[routing].objective = "local_only"` to filter to local upstreams. |
+| **Guide** | [documentation/mlx.md](mlx.md) — install, serve, configure, and check status. |
 
 ### Groq
 

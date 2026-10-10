@@ -666,7 +666,10 @@ fn provider_is_free_only(state: &AppState, provider_id: &str) -> bool {
 }
 
 fn is_local_provider(state: &AppState, provider_id: &str) -> bool {
-    if matches!(provider_id, "local" | "ollama" | "llama-cpp" | "lmstudio") {
+    if matches!(
+        provider_id,
+        "local" | "ollama" | "llama-cpp" | "lmstudio" | "mlx"
+    ) {
         return true;
     }
     let config = state.config();

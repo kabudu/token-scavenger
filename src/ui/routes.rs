@@ -742,6 +742,16 @@ pub async fn render_providers(state: &AppState) -> String {
     }
     let content = format!(
         r#"
+        <div class="glass-card p-6 mb-6">
+            <div class="flex items-center justify-between gap-4 mb-3">
+                <div>
+                    <h3 class="font-bold">MLX Runtime (Apple Silicon)</h3>
+                    <p class="text-xs text-slate-500 mt-1">Read-only detection. TokenScavenger never installs, downloads, starts, or stops the MLX server.</p>
+                </div>
+                <span id="mlx-status-badge" class="text-xs text-slate-500">Checking…</span>
+            </div>
+            <div id="mlx-status-body" class="text-sm text-slate-400">Checking MLX status…</div>
+        </div>
         <div class="glass-card provider-add-card p-6 mb-6">
             <div class="flex items-center justify-between gap-4 mb-5">
                 <div>
@@ -835,7 +845,33 @@ pub async fn render_providers(state: &AppState) -> String {
             btn.classList.remove('btn-loading');
         }
     }
+    function escMlx(s) {{ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }}
+    async function loadMlxStatus() {{
+        const body = document.getElementById('mlx-status-body');
+        const badge = document.getElementById('mlx-status-badge');
+        if (!body || !badge) return;
+        try {{
+            const r = await fetch('/admin/mlx/status');
+            if (!r.ok) throw new Error('status ' + r.status);
+            const s = await r.json();
+            badge.textContent = s.server_reachable ? 'Server reachable' : (s.runtime_installed ? 'Runtime installed, server down' : 'Not set up');
+            let html = '<div>Platform: ' + (s.supported_platform ? 'Apple Silicon macOS' : 'Not Apple Silicon — MLX unsupported here') + '</div>';
+            html += '<div>Runtime: ' + escMlx(s.runtime_detail) + '</div>';
+            html += '<div>Server: ' + escMlx(s.base_url) + ' — ' + (s.server_reachable ? 'reachable' : 'not reachable') + '</div>';
+            if (s.server_reachable && s.served_models && s.served_models.length) {{
+                html += '<div>Served models: ' + escMlx(s.served_models.join(', ')) + '</div>';
+            }}
+            if (!s.server_reachable) {{
+                html += '<div class="mt-2">Serve a model manually:</div><pre class="mt-1">' + escMlx(s.serve_command) + '</pre><div class="text-xs text-slate-500 mt-1">See documentation/mlx.md for install and run steps.</div>';
+            }}
+            body.innerHTML = html;
+        }} catch (e) {{
+            badge.textContent = 'Status unavailable';
+            body.textContent = 'Could not load MLX status.';
+        }}
+    }}
     syncProviderDefaults();
+    loadMlxStatus();
     </script>"#
         .replace("__PROVIDER_DEFAULTS__", &provider_defaults);
     render_shell("Providers", "providers", &content, &scripts, state)

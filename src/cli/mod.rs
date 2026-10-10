@@ -1,4 +1,5 @@
 pub mod config_cmd;
+pub mod mlx_cmd;
 pub mod service;
 pub mod setup;
 
