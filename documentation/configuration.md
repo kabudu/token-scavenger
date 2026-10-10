@@ -73,8 +73,7 @@ provider_order = [                  # Fallback ordering
 "cheap:code" = "min_cost"
 
 [routing.stream_first_content_timeout_ms]
-"preview:ox-alpha" = 180000
-"preview:union-alpha" = 180000
+"reasoning:deep" = 180000
 "openrouter/another-slow-model" = 150000
 
 [routing.agent]
@@ -412,15 +411,23 @@ serially stall the refresh cycle.
 | `name` | *(required)* | Public model group name used in the `model` field of requests |
 | `target` | *(required)* | Single target or ordered target array. Strings are model IDs that can route through any eligible provider. Objects pin a model to one provider: `{ provider = "nvidia", model = "google/gemma-4-31b-it" }`. |
 
-TokenScavenger seeds editable smart groups on first run:
+TokenScavenger seeds editable smart groups on first run (October 2026 lineup):
 
-- `fast:chat`
-- `cheap:code`
-- `reasoning:deep`
-- `vision:balanced`
+- `chat:default`: everyday chat across Gemini 2.5 Flash, Cerebras Llama 3.3 70B, Groq GPT-OSS 120B
+- `fast:chat`: latency-first small models
+- `cheap:code`: code-focused free tier, led by a verified-live free code model
+- `reasoning:deep`: reasoning flagships, free first with paid tails
+- `vision:balanced`: vision-capable free tier
+- `longctx:frontier`: long-context free tier
+- `free:openrouter`: OpenRouter's `openrouter/free` router
+- `agent-economy`, `agent-standard`, `agent-advanced`: default targets for the
+  opt-in subtask routing tiers (`economy_group`, `standard_group`,
+  `advanced_group`)
 
 They use the same `model_groups` table and are inserted only when absent, so
-operator-edited groups are never overwritten by startup seeding.
+operator-edited groups are never overwritten by startup seeding. A database
+migration refreshes pristine copies of renamed groups and prunes the retired
+`preview:ox-alpha` / `preview:union-alpha` stealth preview groups.
 
 ## Example Configurations
 
@@ -468,22 +475,21 @@ api_key = "${MISTRAL_API_KEY}"
 
 [[model_groups]]
 name = "fast"
-target = ["llama3.1-8b", { provider = "groq", model = "llama3-8b-8192" }]
+target = ["gemini-2.5-flash-lite", { provider = "groq", model = "openai/gpt-oss-20b" }]
 
 [[model_groups]]
 name = "powerful"
 target = [
-  { provider = "groq", model = "llama3-70b-8192" },
-  "gemini-2.0-flash",
+  { provider = "google", model = "gemini-2.5-flash" },
+  { provider = "cerebras", model = "llama-3.3-70b" },
   { provider = "openrouter", model = "meta-llama/llama-3.3-70b-instruct:free" },
 ]
 
-# TokenScavenger also seeds an operator-overridable `free:openrouter` group
-# targeting { provider = "openrouter", model = "openrouter/free" }.
-# The separate `preview:ox-alpha` group targets the temporary, data-retaining
-# { provider = "openrouter", model = "stealth/ox-alpha" } stealth preview.
-# The `preview:union-alpha` group targets the equivalent
-# { provider = "openrouter", model = "stealth/union-alpha" } stealth preview.
+# TokenScavenger also seeds operator-overridable task-category groups such as
+# `chat:default`, `cheap:code`, `reasoning:deep`, and `vision:balanced`.
+# The retired OpenRouter `stealth/*` preview groups (`preview:ox-alpha`,
+# `preview:union-alpha`) were removed in October 2026; existing databases have
+# pristine copies pruned automatically by migration.
 ```
 
 ### Free-first with paid fallback

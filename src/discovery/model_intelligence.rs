@@ -412,6 +412,11 @@ struct SmartModelGroup {
     targets: Vec<serde_json::Value>,
 }
 
+/// Built-in task-category model groups seeded on first run (October 2026 IDs).
+/// Every target below must exist in [`crate::discovery::curated::curated_catalog`];
+/// a maintained test enforces that invariant. Free-tier targets come first and
+/// paid fallbacks last. The retired `preview:ox-alpha` / `preview:union-alpha`
+/// stealth groups were removed; a database migration prunes unmodified copies.
 fn smart_model_groups() -> Vec<SmartModelGroup> {
     vec![
         SmartModelGroup {
@@ -419,43 +424,79 @@ fn smart_model_groups() -> Vec<SmartModelGroup> {
             targets: vec![target("openrouter", "openrouter/free")],
         },
         SmartModelGroup {
-            name: "preview:ox-alpha",
-            targets: vec![target("openrouter", "stealth/ox-alpha")],
-        },
-        SmartModelGroup {
-            name: "preview:union-alpha",
-            targets: vec![target("openrouter", "stealth/union-alpha")],
+            name: "chat:default",
+            targets: vec![
+                target("google", "gemini-2.5-flash"),
+                target("cerebras", "llama-3.3-70b"),
+                target("groq", "openai/gpt-oss-120b"),
+            ],
         },
         SmartModelGroup {
             name: "fast:chat",
             targets: vec![
-                target("groq", "llama3-8b-8192"),
+                target("groq", "openai/gpt-oss-20b"),
+                target("google", "gemini-2.5-flash-lite"),
                 target("cerebras", "llama3.1-8b"),
-                target("google", "gemini-2.0-flash"),
                 target("ollama", "llama3.2"),
             ],
         },
         SmartModelGroup {
             name: "cheap:code",
             targets: vec![
+                target("openrouter", "cohere/north-mini-code:free"),
+                target("siliconflow", "deepseek-ai/DeepSeek-V3"),
                 target("ollama", "qwen2.5-coder:7b"),
                 target("mistral", "open-mistral-nemo"),
-                target("siliconflow", "deepseek-ai/DeepSeek-V3"),
             ],
         },
         SmartModelGroup {
             name: "reasoning:deep",
             targets: vec![
-                target("xai", "grok-4.20-reasoning"),
-                target("deepseek", "deepseek-v4-pro"),
+                target("cerebras", "gpt-oss-120b"),
+                target("groq", "openai/gpt-oss-120b"),
                 target("siliconflow", "deepseek-ai/DeepSeek-V3"),
+                target("deepseek", "deepseek-v4-pro"),
+                target("xai", "grok-4.20-reasoning"),
             ],
         },
         SmartModelGroup {
             name: "vision:balanced",
             targets: vec![
-                target("google", "gemini-2.0-flash"),
+                target("google", "gemini-2.5-flash"),
+                target("openrouter", "google/gemma-3-27b-it:free"),
                 target("github-models", "gpt-4o-mini"),
+            ],
+        },
+        SmartModelGroup {
+            name: "longctx:frontier",
+            targets: vec![
+                target("google", "gemini-2.5-flash"),
+                target("openrouter", "openrouter/free"),
+                target("zai", "glm-4.5-flash"),
+            ],
+        },
+        SmartModelGroup {
+            name: "agent-economy",
+            targets: vec![
+                target("groq", "openai/gpt-oss-20b"),
+                target("google", "gemini-2.5-flash-lite"),
+                target("cerebras", "llama3.1-8b"),
+            ],
+        },
+        SmartModelGroup {
+            name: "agent-standard",
+            targets: vec![
+                target("google", "gemini-2.5-flash"),
+                target("cerebras", "llama-3.3-70b"),
+                target("groq", "openai/gpt-oss-120b"),
+            ],
+        },
+        SmartModelGroup {
+            name: "agent-advanced",
+            targets: vec![
+                target("cerebras", "gpt-oss-120b"),
+                target("openrouter", "cohere/north-mini-code:free"),
+                target("deepseek", "deepseek-v4-pro"),
             ],
         },
     ]
@@ -470,12 +511,18 @@ fn infer_family(provider_id: &str, model_id: &str) -> String {
         "llama".to_string()
     } else if model_id.contains("gemini") {
         "gemini".to_string()
+    } else if model_id.contains("gemma") {
+        "gemma".to_string()
     } else if model_id.contains("mistral") || model_id.contains("mixtral") {
         "mistral".to_string()
     } else if model_id.contains("deepseek") {
         "deepseek".to_string()
     } else if model_id.contains("qwen") {
         "qwen".to_string()
+    } else if model_id.contains("gpt-oss") {
+        "gpt-oss".to_string()
+    } else if model_id.contains("glm") {
+        "glm".to_string()
     } else if model_id.contains("grok") {
         "grok".to_string()
     } else if provider_id == "local" || provider_id == "ollama" {
@@ -512,6 +559,8 @@ fn infer_context_window(model_id: &str) -> Option<u64> {
         Some(128_000)
     } else if model_id.contains("gemini") {
         Some(1_048_576)
+    } else if model_id.contains("gpt-oss") || model_id.contains("gemma-3") {
+        Some(131_072)
     } else if model_id.contains("grok-4") {
         Some(2_000_000)
     } else {
@@ -520,19 +569,22 @@ fn infer_context_window(model_id: &str) -> Option<u64> {
 }
 
 fn infer_vision(provider_id: &str, model_id: &str) -> bool {
+    if model_id.contains("embed") {
+        return false;
+    }
     model_id.contains("vision")
         || model_id.contains("gpt-4o")
         || model_id.contains("gemini")
-        || model_id == "stealth/ox-alpha"
+        || model_id.contains("gemma-3")
         || (provider_id == "google" && model_id.contains("flash"))
 }
 
 fn infer_reasoning(model_id: &str) -> bool {
     model_id.contains("reason")
         || model_id.contains("deepseek")
+        || model_id.contains("gpt-oss")
         || model_id.contains("grok-4")
         || model_id.contains("r1")
-        || model_id == "stealth/ox-alpha"
 }
 
 fn freshness(
@@ -614,24 +666,36 @@ mod tests {
         assert!(reasoning.task_tags.contains(&"reasoning".to_string()));
 
         let vision =
-            infer_model_intelligence("google", "gemini-2.0-flash", None, false, None, None, None);
+            infer_model_intelligence("google", "gemini-2.5-flash", None, false, None, None, None);
         assert!(vision.supports_vision);
         assert!(vision.modalities.contains(&"vision".to_string()));
 
-        let ox_alpha = infer_model_intelligence(
-            "openrouter",
-            "stealth/ox-alpha",
-            Some(r#"{"context_window":1048576}"#),
+        let gpt_oss = infer_model_intelligence(
+            "groq",
+            "openai/gpt-oss-120b",
+            Some(r#"{"context_window":131072}"#),
             false,
             None,
             None,
             None,
         );
-        assert!(ox_alpha.supports_reasoning);
-        assert!(ox_alpha.supports_vision);
-        assert!(ox_alpha.supports_tools);
-        assert!(ox_alpha.supports_json_mode);
-        assert_eq!(ox_alpha.context_window, Some(1_048_576));
+        assert!(gpt_oss.supports_reasoning);
+        assert!(gpt_oss.task_tags.contains(&"reasoning".to_string()));
+        assert!(gpt_oss.supports_tools);
+        assert!(gpt_oss.supports_json_mode);
+        assert_eq!(gpt_oss.context_window, Some(131_072));
+
+        let gemma = infer_model_intelligence(
+            "openrouter",
+            "google/gemma-3-27b-it:free",
+            None,
+            false,
+            None,
+            None,
+            None,
+        );
+        assert!(gemma.supports_vision);
+        assert_eq!(gemma.family, "gemma");
     }
 
     #[test]
