@@ -14,11 +14,15 @@ pub async fn build_model_list(state: &AppState) -> ModelListResponse {
 
     // Insert curated entries first
     for m in &curated {
+        let supports_embeddings = m
+            .endpoint_compatibility
+            .iter()
+            .any(|kind| kind == "embeddings");
         let metadata = crate::discovery::model_intelligence::intelligence_metadata(
             &m.provider_id,
             &m.upstream_model_id,
             m.context_window,
-            false,
+            supports_embeddings,
         )
         .to_string();
         models_map.insert(
@@ -111,6 +115,10 @@ pub async fn get_all_models(state: &AppState) -> serde_json::Value {
         std::collections::BTreeMap::new();
 
     for model in crate::discovery::curated::curated_catalog() {
+        let supports_embeddings = model
+            .endpoint_compatibility
+            .iter()
+            .any(|kind| kind == "embeddings");
         models_map.insert(
             (model.provider_id.clone(), model.upstream_model_id.clone()),
             serde_json::json!({
@@ -128,9 +136,9 @@ pub async fn get_all_models(state: &AppState) -> serde_json::Value {
                         &model.provider_id,
                         &model.upstream_model_id,
                         model.context_window,
-                        false,
+                        supports_embeddings,
                     ).to_string()),
-                    false,
+                    supports_embeddings,
                     None,
                     None,
                     None,

@@ -81,6 +81,11 @@ impl ProviderError {
 }
 
 /// The core trait every provider adapter must implement.
+// Newer clippy deduces `#[must_use]` from the `async_trait` expansion and
+// then flags it as doubled against the already-`#[must_use]` boxed future.
+// The attribute below keeps `-D warnings` green across toolchains; the async
+// methods themselves are unchanged.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     /// Unique provider identifier (e.g., "groq", "google").

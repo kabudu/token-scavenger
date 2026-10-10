@@ -362,7 +362,7 @@ Logs are structured JSON by default, suitable for ingestion by Loki, ELK, or Dat
   "level": "INFO",
   "request_id": "ts-abc123",
   "provider_id": "groq",
-  "model": "llama3-70b-8192",
+  "model": "chat:default",
   "latency_ms": 342,
   "http_status": 200,
   "fields": { "message": "Chat completion succeeded" }

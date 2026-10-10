@@ -3189,51 +3189,153 @@ async fn test_smart_model_groups_are_seeded_without_overwriting_operator_groups(
 
     tokenscavenger::discovery::model_intelligence::seed_smart_model_groups(&pool).await;
 
-    let fast = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM model_groups WHERE name = 'fast:chat'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let reasoning = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM model_groups WHERE name = 'reasoning:deep'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let openrouter_free = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM model_groups WHERE name = 'free:openrouter'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let ox_alpha = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM model_groups WHERE name = 'preview:ox-alpha'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let union_alpha = sqlx::query_as::<_, (String,)>(
-        "SELECT target_json FROM model_groups WHERE name = 'preview:union-alpha'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    async fn group_target(pool: &SqlitePool, name: &str) -> String {
+        sqlx::query_as::<_, (String,)>("SELECT target_json FROM model_groups WHERE name = ?")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .0
+    }
 
-    assert_eq!(fast.0, "[\"operator-model\"]");
-    assert!(reasoning.0.contains("grok-4.20-reasoning"));
+    let fast = group_target(&pool, "fast:chat").await;
+    let reasoning = group_target(&pool, "reasoning:deep").await;
+    let openrouter_free = group_target(&pool, "free:openrouter").await;
+    let chat_default = group_target(&pool, "chat:default").await;
+    let longctx = group_target(&pool, "longctx:frontier").await;
+    let agent_standard = group_target(&pool, "agent-standard").await;
+
+    assert_eq!(fast, "[\"operator-model\"]");
+    assert!(reasoning.contains("gpt-oss-120b"));
+    assert!(reasoning.contains("grok-4.20-reasoning"));
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&openrouter_free.0).unwrap(),
+        serde_json::from_str::<serde_json::Value>(&openrouter_free).unwrap(),
         serde_json::json!([{"provider": "openrouter", "model": "openrouter/free"}])
     );
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&ox_alpha.0).unwrap(),
-        serde_json::json!([{"provider": "openrouter", "model": "stealth/ox-alpha"}])
+    assert!(chat_default.contains("gemini-2.5-flash"));
+    assert!(longctx.contains("glm-4.5-flash"));
+    assert!(agent_standard.contains("llama-3.3-70b"));
+
+    // Retired stealth preview groups are no longer seeded.
+    for retired in ["preview:ox-alpha", "preview:union-alpha"] {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM model_groups WHERE name = ?")
+            .bind(retired)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "{retired} must not be seeded");
+    }
+}
+
+#[tokio::test]
+async fn test_curated_catalog_has_no_retired_ids_and_groups_resolve_to_catalog() {
+    use tokenscavenger::discovery::curated::{RETIRED_UPSTREAM_IDS, curated_catalog};
+
+    let catalog = curated_catalog();
+    assert!(!catalog.is_empty());
+    for model in &catalog {
+        assert!(
+            !RETIRED_UPSTREAM_IDS.contains(&model.upstream_model_id.as_str()),
+            "retired model {} still in curated catalog",
+            model.upstream_model_id
+        );
+    }
+
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    tokenscavenger::discovery::model_intelligence::seed_smart_model_groups(&pool).await;
+
+    let catalog_keys: std::collections::HashSet<(String, String)> = catalog
+        .iter()
+        .map(|model| (model.provider_id.clone(), model.upstream_model_id.clone()))
+        .collect();
+    let supported: std::collections::HashSet<String> =
+        tokenscavenger::providers::registry::SUPPORTED_PROVIDERS
+            .iter()
+            .map(|entry| entry.id.to_string())
+            .collect();
+
+    let groups =
+        sqlx::query_as::<_, (String, String)>("SELECT name, target_json FROM model_groups")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(groups.len() >= 9);
+    for (name, target_json) in &groups {
+        let targets: serde_json::Value = serde_json::from_str(target_json).unwrap();
+        let targets = targets.as_array().unwrap();
+        assert!(!targets.is_empty(), "group {name} has no targets");
+        for target in targets {
+            let provider = target.get("provider").and_then(|v| v.as_str()).unwrap();
+            let model = target
+                .get("model")
+                .or_else(|| target.get("model_id"))
+                .and_then(|v| v.as_str())
+                .unwrap();
+            assert!(
+                supported.contains(provider),
+                "group {name} targets unknown provider {provider}"
+            );
+            assert!(
+                catalog_keys.contains(&(provider.to_string(), model.to_string())),
+                "group {name} targets {provider}/{model} missing from curated catalog"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_curated_embedding_model_is_routable_for_embeddings_only() {
+    let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::migrate!("src/db/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO providers (provider_id, display_name) VALUES ('google', 'Google')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    tokenscavenger::discovery::curated::seed_curated_models(&pool).await;
+
+    let row: (bool, bool, bool) = sqlx::query_as(
+        "SELECT supports_chat, supports_embeddings, supports_vision FROM models \
+         WHERE provider_id = 'google' AND upstream_model_id = 'gemini-embedding-001'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!row.0, "embedding seed must not advertise chat");
+    assert!(row.1, "embedding seed must advertise embeddings");
+    assert!(!row.2, "embedding seed must not advertise vision");
+
+    let state = AppState::new(
+        Config::default(),
+        pool,
+        Default::default(),
+        tokio::sync::broadcast::channel(1).0,
     );
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&union_alpha.0).unwrap(),
-        serde_json::json!([{"provider": "openrouter", "model": "stealth/union-alpha"}])
-    );
+    let attempt = tokenscavenger::router::selection::RouteAttempt {
+        provider_id: "google".into(),
+        model_id: "gemini-embedding-001".into(),
+        priority: 0,
+    };
+    let for_embeddings = tokenscavenger::router::selection::filter_by_model_enabled_for_endpoint(
+        vec![attempt.clone()],
+        &state,
+        tokenscavenger::providers::traits::EndpointKind::Embeddings,
+    )
+    .await;
+    assert_eq!(for_embeddings.len(), 1);
+    let for_chat = tokenscavenger::router::selection::filter_by_model_enabled_for_endpoint(
+        vec![attempt],
+        &state,
+        tokenscavenger::providers::traits::EndpointKind::ChatCompletions,
+    )
+    .await;
+    assert!(for_chat.is_empty());
 }
 
 #[tokio::test]

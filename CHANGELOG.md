@@ -13,6 +13,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [0.7.0] - 2026-10-10
+
+### Added
+
+- Seeded task-category smart model groups out of the box: `chat:default`,
+  `longctx:frontier`, `agent-economy`, `agent-standard`, and `agent-advanced`,
+  alongside the refreshed `fast:chat`, `cheap:code`, `reasoning:deep`,
+  `vision:balanced`, and `free:openrouter` groups.
+- Seeded a Google `gemini-embedding-001` catalog row so `/v1/embeddings` is
+  routable on fresh databases; Google discovery now also retains
+  `embedContent` models instead of dropping them.
+
+### Changed
+
+- Refreshed the curated model catalog to October 2026 free-tier IDs (Groq
+  GPT-OSS plus Compound, Gemini 2.5 Flash-class, Cerebras Llama 3.3/Qwen3,
+  OpenRouter `:free` rotation including North Mini Code, GLM-4.5 Flash) and
+  removed retired IDs. A database migration refreshes pristine seeded groups
+  and prunes the retired `preview:ox-alpha` / `preview:union-alpha` groups.
+- OpenRouter discovery now returns only free models (`openrouter/free`,
+  `:free` suffix, or zero-price `pricing.prompt`).
+
+### Fixed
+
+- Fixed the Google adapter silently dropping image parts from multipart chat
+  messages; data-URL images are now sent as Gemini `inlineData`, so vision
+  requests through Google actually see the image.
+- Fixed `/v1/embeddings` returning 503 for valid embedding models that had no
+  catalog row, since only models with an explicit table row are routable.
+
 ## [0.6.1] - 2026-09-22
 
 ### Added
